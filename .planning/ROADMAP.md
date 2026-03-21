@@ -19,7 +19,7 @@ coherent, verifiable capability before the next begins.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Active Highlighting** - Notes in the Monaco editor light up in sync with the audio scheduler
+- [x] **Phase 1: Active Highlighting** - Notes in the Monaco editor light up in sync with the audio scheduler (completed 2026-03-21)
 - [ ] **Phase 2: Pianoroll Visualizers** - Rolling pianoroll canvas + inline view zones + toolbar layout wired
 - [ ] **Phase 3: Audio Visualizers** - Scope, Spectrum, Spiral, and Pitchwheel canvas visualizers
 - [ ] **Phase 4: Monaco Intelligence** - Strudel tokenizer, completions, hover docs, and error squiggles
@@ -37,10 +37,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The highlight clears automatically when the note's audio duration expires
   4. Multiple simultaneous notes (chords) each get independent highlight and clear cycles without interfering
   5. The decoration uses CSS class `strudel-active-hap` with the correct design token colors from tokens.ts
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 01-01-PLAN.md — useHighlighting hook + tests + CSS fix
-- [ ] 01-02-PLAN.md — Wire hook into StrudelEditor + visual verification
+- [x] 01-02-PLAN.md — Wire hook into StrudelEditor + visual verification
 
 ### Phase 2: Pianoroll Visualizers
 **Goal**: Users can see a rolling pianoroll displaying all playing notes in real time, both as a full panel below the editor and inline beneath individual pattern lines, with a toolbar that controls layout and visualizer selection.
@@ -96,7 +96,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Active Highlighting | 1/2 | In Progress|  |
+| 1. Active Highlighting | 2/2 | Complete   | 2026-03-21 |
 | 2. Pianoroll Visualizers | 0/TBD | Not started | - |
 | 3. Audio Visualizers | 0/TBD | Not started | - |
 | 4. Monaco Intelligence | 0/TBD | Not started | - |
