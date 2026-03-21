@@ -28,11 +28,11 @@
 
 ### Active Highlighting
 
-- [ ] **HIGH-01**: Monaco characters that generated a playing note are highlighted with accent-colored background and outline
-- [ ] **HIGH-02**: Highlights fire at the exact moment audio plays (delayed by scheduledAheadMs from HapEvent)
-- [ ] **HIGH-03**: Highlights clear automatically when the note ends (audioDuration from HapEvent)
-- [ ] **HIGH-04**: Multiple simultaneous haps (chords) each get independent highlight/clear cycles
-- [ ] **HIGH-05**: Highlights use decoration class `strudel-active-hap` with correct design token colors
+- [x] **HIGH-01**: Monaco characters that generated a playing note are highlighted with accent-colored background and outline
+- [x] **HIGH-02**: Highlights fire at the exact moment audio plays (delayed by scheduledAheadMs from HapEvent)
+- [x] **HIGH-03**: Highlights clear automatically when the note ends (audioDuration from HapEvent)
+- [x] **HIGH-04**: Multiple simultaneous haps (chords) each get independent highlight/clear cycles
+- [x] **HIGH-05**: Highlights use decoration class `strudel-active-hap` with correct design token colors
 
 ### Visualizers — Pianoroll
 
@@ -123,11 +123,11 @@
 |-------------|-------|--------|
 | ENG-01..08 | Existing | Complete |
 | EDIT-01..07 | Existing | Complete |
-| HIGH-01 | Phase 1 | Pending |
-| HIGH-02 | Phase 1 | Pending |
-| HIGH-03 | Phase 1 | Pending |
-| HIGH-04 | Phase 1 | Pending |
-| HIGH-05 | Phase 1 | Pending |
+| HIGH-01 | Phase 1 | Complete |
+| HIGH-02 | Phase 1 | Complete |
+| HIGH-03 | Phase 1 | Complete |
+| HIGH-04 | Phase 1 | Complete |
+| HIGH-05 | Phase 1 | Complete |
 | PIANO-01 | Phase 2 | Pending |
 | PIANO-02 | Phase 2 | Pending |
 | PIANO-03 | Phase 2 | Pending |

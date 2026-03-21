@@ -37,9 +37,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The highlight clears automatically when the note's audio duration expires
   4. Multiple simultaneous notes (chords) each get independent highlight and clear cycles without interfering
   5. The decoration uses CSS class `strudel-active-hap` with the correct design token colors from tokens.ts
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 01-01-PLAN.md — useHighlighting hook + tests + CSS fix
+- [x] 01-01-PLAN.md — useHighlighting hook + tests + CSS fix
 - [ ] 01-02-PLAN.md — Wire hook into StrudelEditor + visual verification
 
 ### Phase 2: Pianoroll Visualizers
@@ -96,7 +96,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Active Highlighting | 0/2 | Planning complete | - |
+| 1. Active Highlighting | 1/2 | In Progress|  |
 | 2. Pianoroll Visualizers | 0/TBD | Not started | - |
 | 3. Audio Visualizers | 0/TBD | Not started | - |
 | 4. Monaco Intelligence | 0/TBD | Not started | - |
