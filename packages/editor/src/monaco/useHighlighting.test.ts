@@ -66,8 +66,8 @@ describe('useHighlighting', () => {
     act(() => { vi.advanceTimersByTime(1) })
     expect(editor.createDecorationsCollection).toHaveBeenCalledTimes(1)
 
-    const decorationArg = editor.createDecorationsCollection.mock.calls[0][0]
-    expect(decorationArg[0].options.className).toContain('strudel-active-hap')
+    const decorationArg = (editor.createDecorationsCollection.mock.calls[0] as unknown[])[0] as unknown[]
+    expect((decorationArg[0] as any).options.className).toContain('strudel-active-hap')
   })
 
   it('(HIGH-02) decoration not created at 99ms, created at 100ms (exact timing)', () => {
@@ -212,7 +212,7 @@ describe('useHighlighting', () => {
 
     act(() => { vi.advanceTimersByTime(100) })
     expect(editor.createDecorationsCollection).toHaveBeenCalledTimes(1)
-    const decorations = editor.createDecorationsCollection.mock.calls[0][0]
-    expect(decorations[0].options.className).toContain('strudel-active-hap')
+    const decorations = (editor.createDecorationsCollection.mock.calls[0] as unknown[])[0] as unknown[]
+    expect((decorations[0] as any).options.className).toContain('strudel-active-hap')
   })
 })

@@ -21,6 +21,7 @@ interface StrudelMonacoProps {
     editor: Monaco.editor.IStandaloneCodeEditor,
     monaco: typeof Monaco
   ) => void
+  soundNames?: string[]
 }
 
 export function StrudelMonaco({
@@ -30,11 +31,14 @@ export function StrudelMonaco({
   theme = 'dark',
   readOnly = false,
   onMount,
+  soundNames = [],
 }: StrudelMonacoProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
+  const monacoRef = useRef<typeof Monaco | null>(null)
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
+    monacoRef.current = monaco
     defineStrudelMonacoTheme(monaco)
     registerStrudelLanguage(monaco)
 
@@ -61,6 +65,46 @@ export function StrudelMonaco({
 
     onMount?.(editor, monaco)
   }
+
+  // Register s("...") completion provider when sound names become available after engine init.
+  // Disposable is recreated when soundNames changes so the list stays current.
+  useEffect(() => {
+    const monaco = monacoRef.current
+    if (!monaco || soundNames.length === 0) return
+
+    const disposable = monaco.languages.registerCompletionItemProvider('strudel', {
+      triggerCharacters: ['"', "'", ' '],
+      provideCompletionItems(model, position) {
+        const lineContent = model.getLineContent(position.lineNumber)
+        const textBefore = lineContent.substring(0, position.column - 1)
+
+        // Match: s(" or .s(" (possibly with already-typed prefix inside the string)
+        // Covers: s("bd ...cursor"), stack(s("...cursor")), .s("...cursor"), sound("...cursor")
+        if (!/(?:^|[\s,(])(?:s|sound)\(["']([^"']*)$/.test(textBefore)) {
+          return { suggestions: [] }
+        }
+
+        const word = model.getWordUntilPosition(position)
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        }
+
+        return {
+          suggestions: soundNames.map((name) => ({
+            label: name,
+            kind: monaco.languages.CompletionItemKind.Value,
+            insertText: name,
+            range,
+          })),
+        }
+      },
+    })
+
+    return () => disposable.dispose()
+  }, [soundNames])
 
   // Sync external code changes without resetting cursor position
   useEffect(() => {

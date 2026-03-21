@@ -1,0 +1,231 @@
+import { HapStream } from './HapStream'
+import { LiveRecorder } from './LiveRecorder'
+import { OfflineRenderer } from './OfflineRenderer'
+import type { HapEvent } from './HapStream'
+
+type HapHandler = (event: HapEvent) => void
+
+/**
+ * Single source of truth for audio in struCode.
+ * Wraps @strudel/webaudio (which wraps superdough) via webaudioRepl().
+ *
+ * API surface matches ARCHITECTURE.md.
+ * One instance per page. Must be init()'d after a user gesture.
+ */
+export class StrudelEngine {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private repl: any = null
+  private audioCtx: AudioContext | null = null
+  private analyserNode: AnalyserNode | null = null
+  private hapStream: HapStream = new HapStream()
+  private initialized = false
+  // Resolve function for the current in-flight evaluate() call
+  private evalResolve: ((result: { error?: Error }) => void) | null = null
+  // Runtime audio error handler (e.g. "sound X not found" during scheduling)
+  private runtimeErrorHandler: ((err: Error) => void) | null = null
+  // Sound names registered after init() — used for editor autocompletion
+  private loadedSoundNames: string[] = []
+
+  async init(): Promise<void> {
+    if (this.initialized) return
+
+    // Load all strudel modules up-front so evalScope can register their
+    // exports (note, s, gain, stack, etc.) into globalThis.  The eval'd user
+    // code runs inside Function() with no special scope, so every function it
+    // calls must be a global.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod] = await Promise.all([
+      import('@strudel/core') as Promise<any>,
+      import('@strudel/mini') as Promise<any>,
+      import('@strudel/tonal') as Promise<any>,
+      import('@strudel/webaudio') as Promise<any>,
+      import('@strudel/soundfonts') as Promise<any>,
+      import('@strudel/xen') as Promise<any>,
+      import('@strudel/midi') as Promise<any>,
+    ])
+
+    // Register all module exports into globalThis so eval'd patterns can use them
+    // (note, s, gain, stack, etc. must be globals — user code runs in Function())
+    // midi: uses onTrigger (additive) — highlighting still fires for every hap.
+    //        enableWebMidi() is NOT called here; users call it explicitly (triggers browser permission prompt).
+    // drawMod (@strudel/draw) intentionally excluded: it injects a full-screen canvas
+    // into document.body (id="test-canvas") the first time any draw function runs.
+    // struCode uses its own visualizer system, so strudel's canvas draw functions
+    // (pianoroll, drawFrequencyScope, etc.) are not exposed to user code.
+    await coreMod.evalScope(coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod)
+
+    // Set up mini-notation string parser (parses "c3 e3 g3" strings as patterns)
+    miniMod.miniAllStrings()
+
+    // Transpiler converts $: pattern syntax → pattern.p("$") and handles
+    // mini-notation template literals. Required for $: to work correctly.
+    const { transpiler } = await import('@strudel/transpiler')
+
+    const { initAudio, getAudioContext, webaudioOutput, webaudioRepl } = webaudioMod
+
+    await initAudio()
+    // Register built-in oscillator synths (sine, sawtooth, square, triangle, user, one)
+    // and noise generators (pink, white, brown, crackle).
+    // Without this, superdough throws "sound sine not found! Is it loaded?"
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(webaudioMod as any).registerSynthSounds()
+    // Register ZZFX procedural sounds (zzfx, z_sine, z_sawtooth, z_triangle, z_square, z_tan, z_noise).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(webaudioMod as any).registerZZFXSounds()
+    // Register all 128 GM soundfont instruments (piano, bass, guitar, strings, etc.).
+    // Fonts are lazy-loaded from felixroos.github.io/webaudiofontdata on first use.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(soundfontsMod as any).registerSoundfonts()
+    // Load Dirt-Samples manifest so bd, hh, sd, cp, rim, cr, rd etc. resolve at runtime.
+    // Individual samples are lazy-loaded on first play; only the index JSON is fetched here.
+    // Worklet-based effects (crush, coarse, distort, djf, bytebeat) are loaded by initAudio() above.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (webaudioMod as any).samples('github:tidalcycles/Dirt-Samples/master')
+    // Snapshot all registered sound names (synths + Dirt-Samples) for editor autocompletion.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const soundMapData: Record<string, unknown> = (webaudioMod as any).soundMap?.get() ?? {}
+    this.loadedSoundNames = Object.keys(soundMapData).filter(k => !k.startsWith('_'))
+    this.audioCtx = getAudioContext()
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const audioCtx = this.audioCtx!
+
+    // Build an analyser and insert it before the hardware output.
+    // connectToDestination from superdough adds a node into the output chain.
+    this.analyserNode = audioCtx.createAnalyser()
+    this.analyserNode.fftSize = 2048
+    const { connectToDestination } = webaudioMod
+    // connectToDestination wires a node as a "tap" on superdough's master output
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(connectToDestination as any)(this.analyserNode)
+    this.analyserNode.connect(audioCtx.destination)
+
+    // Wrap the native output trigger so we can fan events to HapStream subscribers
+    const hapStream = this.hapStream
+    const audioCtxRef = audioCtx
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const wrappedOutput = async (hap: any, time: number, cps: number, endTime: number, s: number) => {
+      // Emit to all visualizers / highlighters BEFORE triggering audio
+      hapStream.emit(hap, time, cps, endTime, audioCtxRef.currentTime)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return await (webaudioOutput as any)(hap, time, cps, endTime, s)
+      } catch (err) {
+        // Route scheduler-time errors (e.g. "sound X not found", "cannot parse as numeral")
+        // through the registered handler so they surface in the editor UI, not just the console.
+        const error = err instanceof Error ? err : new Error(String(err))
+        this.runtimeErrorHandler?.(error)
+      }
+    }
+
+    this.repl = webaudioRepl({
+      transpiler,
+      defaultOutput: wrappedOutput,
+      onEvalError: (err: Error) => {
+        this.evalResolve?.({ error: err })
+        this.evalResolve = null
+      },
+    })
+
+    this.initialized = true
+  }
+
+  async evaluate(code: string): Promise<{ error?: Error }> {
+    if (!this.initialized) await this.init()
+
+    // repl.evaluate() never rejects — errors go to the onEvalError callback
+    // set during repl construction. We bridge via evalResolve.
+    return new Promise((resolve) => {
+      this.evalResolve = resolve
+      this.repl.evaluate(code).then(() => {
+        // If onEvalError didn't fire, evaluation succeeded
+        if (this.evalResolve) { this.evalResolve({}); this.evalResolve = null }
+      })
+    })
+  }
+
+  play(): void {
+    this.repl?.scheduler?.start()
+  }
+
+  stop(): void {
+    this.repl?.scheduler?.stop()
+  }
+
+  async record(durationSeconds: number): Promise<Blob> {
+    if (!this.analyserNode || !this.audioCtx) {
+      throw new Error('StrudelEngine not initialized — call init() first')
+    }
+    return LiveRecorder.capture(this.analyserNode, this.audioCtx, durationSeconds)
+  }
+
+  async renderOffline(
+    code: string,
+    duration: number,
+    sampleRate?: number
+  ): Promise<Blob> {
+    return OfflineRenderer.render(
+      code,
+      duration,
+      sampleRate ?? this.audioCtx?.sampleRate ?? 44100
+    )
+  }
+
+  async renderStems(
+    stems: Record<string, string>,
+    duration: number,
+    onProgress?: (stem: string, i: number, total: number) => void
+  ): Promise<Record<string, Blob>> {
+    const keys = Object.keys(stems)
+    const sampleRate = this.audioCtx?.sampleRate ?? 44100
+
+    const blobs = await Promise.all(
+      keys.map(async (key, i) => {
+        const blob = await OfflineRenderer.render(stems[key], duration, sampleRate)
+        onProgress?.(key, i + 1, keys.length)
+        return [key, blob] as [string, Blob]
+      })
+    )
+    return Object.fromEntries(blobs)
+  }
+
+  getAnalyser(): AnalyserNode {
+    if (!this.analyserNode) throw new Error('StrudelEngine not initialized')
+    return this.analyserNode
+  }
+
+  getAudioContext(): AudioContext {
+    if (!this.audioCtx) throw new Error('StrudelEngine not initialized')
+    return this.audioCtx
+  }
+
+  on(_event: 'hap', handler: HapHandler): void {
+    this.hapStream.on(handler)
+  }
+
+  off(_event: 'hap', handler: HapHandler): void {
+    this.hapStream.off(handler)
+  }
+
+  getHapStream(): HapStream {
+    return this.hapStream
+  }
+
+  /** Register a handler for runtime audio errors (fires during scheduling, not evaluation). */
+  setRuntimeErrorHandler(handler: (err: Error) => void): void {
+    this.runtimeErrorHandler = handler
+  }
+
+  /** Returns all sound names registered after init() — useful for editor autocompletion. */
+  getSoundNames(): string[] {
+    return this.loadedSoundNames
+  }
+
+  dispose(): void {
+    this.repl?.scheduler?.stop()
+    this.hapStream.dispose()
+    this.analyserNode?.disconnect()
+    this.initialized = false
+    this.repl = null
+  }
+}

@@ -83,6 +83,7 @@ export function StrudelEditor({
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [bpm, setBpm] = useState<number | undefined>(120)
   const [hapStream, setHapStream] = useState<HapStream | null>(null)
+  const [soundNames, setSoundNames] = useState<string[]>([])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<StrudelEngine | null>(null)
@@ -119,6 +120,17 @@ export function StrudelEditor({
     await engine.init()
     setHapStream(engine.getHapStream())
 
+    // Route runtime audio errors (scheduler-time, e.g. "sound X not found") into the UI.
+    engine.setRuntimeErrorHandler((err) => {
+      setErrorMsg(err.message)
+      onError?.(err)
+    })
+
+    // Collect sound names once for Monaco autocompletion (no-op on subsequent plays).
+    if (soundNames.length === 0) {
+      setSoundNames(engine.getSoundNames())
+    }
+
     clearHighlights()
     const { error } = await engine.evaluate(code)
     if (error) {
@@ -139,7 +151,7 @@ export function StrudelEditor({
     engine.play()
     setIsPlaying(true)
     onPlay?.()
-  }, [code, onPlay, onError, clearHighlights])
+  }, [code, onPlay, onError, clearHighlights, soundNames])
 
   const handleStop = useCallback(() => {
     engineRef.current?.stop()
@@ -257,6 +269,7 @@ export function StrudelEditor({
           theme={monoTheme}
           readOnly={readOnly}
           onMount={handleMonacoMount}
+          soundNames={soundNames}
         />
       </div>
 
