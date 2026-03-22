@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Active Highlighting** - Notes in the Monaco editor light up in sync with the audio scheduler (completed 2026-03-21)
 - [x] **Phase 2: Pianoroll Visualizers** - Rolling pianoroll canvas + inline view zones + toolbar layout wired (completed 2026-03-22)
 - [x] **Phase 3: Audio Visualizers** - Scope, FScope, Spectrum, Spiral, Pitchwheel, Wordfall canvas visualizers (completed 2026-03-22)
-- [ ] **Phase 4: VizRenderer Abstraction** - Replace p5-coupled SketchFactory with renderer-agnostic VizRenderer interface
+- [x] **Phase 4: VizRenderer Abstraction** - Replace p5-coupled SketchFactory with renderer-agnostic VizRenderer interface (completed 2026-03-22)
 - [ ] **Phase 5: Per-Track Data** - Expose per-track PatternSchedulers via monkey-patching Pattern.prototype.p
 - [ ] **Phase 6: Inline Zones via Abstraction** - Refactor viewZones.ts to use VizRendererSource, any renderer works inline
 - [ ] **Phase 7: Additional Renderers** - Canvas 2D, Three.js, Shadertoy GLSL renderer implementations
@@ -91,10 +91,10 @@ Plans:
   5. StrudelEditorProps uses vizDescriptors/vizRenderer instead of vizSketch
   6. useVizRenderer hook replaces useP5Sketch with renderer-agnostic lifecycle
   7. mountVizRenderer shared utility works for both VizPanel and viewZones
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 04-01-PLAN.md — Source refactor: types, P5VizRenderer, mountVizRenderer, useVizRenderer, defaultDescriptors, VizPanel, VizPicker, viewZones, StrudelEditor, index.ts
-- [ ] 04-02-PLAN.md — Test migration: create P5VizRenderer/useVizRenderer/defaultDescriptors tests, migrate VizPanel/VizPicker/viewZones tests
+- [x] 04-02-PLAN.md — Test migration: create P5VizRenderer/useVizRenderer/defaultDescriptors tests, migrate VizPanel/VizPicker/viewZones tests
 **Canonical refs**: THESIS.md (Section 3-4), memory/project_viz_renderer_plan.md
 
 ### Phase 5: Per-Track Data
@@ -186,7 +186,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 1. Active Highlighting | 2/2 | Complete | 2026-03-21 |
 | 2. Pianoroll Visualizers | 3/3 | Complete | 2026-03-22 |
 | 3. Audio Visualizers | N/A | Complete | 2026-03-22 |
-| 4. VizRenderer Abstraction | 0/2 | Planning | - |
+| 4. VizRenderer Abstraction | 2/2 | Complete   | 2026-03-22 |
 | 5. Per-Track Data | 0/TBD | Not started | - |
 | 6. Inline Zones via Abstraction | 0/TBD | Not started | - |
 | 7. Additional Renderers | 0/TBD | Not started | - |
