@@ -93,7 +93,7 @@ Plans:
   7. mountVizRenderer shared utility works for both VizPanel and viewZones
 **Plans:** 2 plans
 Plans:
-- [ ] 04-01-PLAN.md — Source refactor: types, P5VizRenderer, mountVizRenderer, useVizRenderer, defaultDescriptors, VizPanel, VizPicker, viewZones, StrudelEditor, index.ts
+- [x] 04-01-PLAN.md — Source refactor: types, P5VizRenderer, mountVizRenderer, useVizRenderer, defaultDescriptors, VizPanel, VizPicker, viewZones, StrudelEditor, index.ts
 - [ ] 04-02-PLAN.md — Test migration: create P5VizRenderer/useVizRenderer/defaultDescriptors tests, migrate VizPanel/VizPicker/viewZones tests
 **Canonical refs**: THESIS.md (Section 3-4), memory/project_viz_renderer_plan.md
 

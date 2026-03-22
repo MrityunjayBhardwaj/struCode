@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 2 pianoroll viz not rendering — clock fix attempted, still broken
-last_updated: "2026-03-22T05:02:04.956Z"
+stopped_at: Completed 04-vizrenderer-abstraction/04-01-PLAN.md
+last_updated: "2026-03-22T10:14:14.546Z"
 progress:
-  total_phases: 5
+  total_phases: 11
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 7
+  completed_plans: 6
 ---
 
 # Project State
@@ -17,40 +17,35 @@ progress:
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-03-21)
+See: THESIS.md (platform vision — Motif)
 
-**Core value:** A standalone, embeddable Strudel editor that plays audio, exports WAV, and gives real-time visual feedback — clean enough to drop into any React app as a single import.
-**Current focus:** Phase 02 — pianoroll-visualizers
+**Core value:** A renderer-agnostic, engine-agnostic live coding platform delivered as an embeddable React component library — the infrastructure layer for live coding music.
+**Current focus:** Phase 04 — vizrenderer-abstraction
 
 ## Current Position
 
-Phase: 02 (pianoroll-visualizers) — EXECUTING
-Plan: 3 of 3
+Phase: 04 (vizrenderer-abstraction) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 5
+- Average duration: ~3m
+- Total execution time: ~15 minutes
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend:**
-
-- Last 5 plans: -
-- Trend: -
-
-*Updated after each plan completion*
-| Phase 01-active-highlighting P01 | 3 | 2 tasks | 3 files |
-| Phase 01-active-highlighting P02 | 5 | 2 tasks | 1 files |
+| Phase 01-active-highlighting P01 | 3m | 2 tasks | 3 files |
+| Phase 01-active-highlighting P02 | 5m | 2 tasks | 1 files |
 | Phase 02-pianoroll-visualizers P01 | 3m | 1 tasks | 10 files |
 | Phase 02-pianoroll-visualizers P02 | 2m | 2 tasks | 4 files |
 | Phase 02-pianoroll-visualizers P03 | 3m | 2 tasks | 4 files |
+| Phase 03-audio-visualizers | Done outside GSD | 7 sketches | ~10 files |
+| Phase 04-vizrenderer-abstraction P01 | 12 | 3 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -61,20 +56,19 @@ Recent decisions affecting current work:
 
 - [Existing]: Engine layer (StrudelEngine, HapStream, OfflineRenderer, WavEncoder, noteToMidi) fully implemented — do not rewrite
 - [Existing]: webaudioRepl chosen over raw Scheduler for better superdough integration
-- [Existing]: queryArc() used in OfflineRenderer — AudioWorklet cannot be re-registered in OfflineAudioContext
-- [Init]: Core + export first, then layer features — natural build order confirmed as: Highlighting → Pianoroll → Audio Vizs → Monaco → Polish
-- [Phase 01-active-highlighting]: Per-hap IEditorDecorationsCollection: each hap gets its own collection for independent clear() calls without affecting other active haps
-- [Phase 01-active-highlighting]: Canvas ctx.fillStyle color parsing for per-note color injection — graceful fallback to base class if canvas unavailable in test/SSR environments
-- [Phase 01-active-highlighting]: useHighlighting call placed before handlePlay/handleStop so clearHighlights binding is available in callback closures — React const bindings are not hoisted
-- [Phase 01-active-highlighting]: setHapStream(engine.getHapStream()) on every play call is safe — HapStream instance is stable per engine lifetime, useState skips re-render on identity equality
-- [Phase 02-pianoroll-visualizers]: Unknown sounds fall back to --accent, not --stem-melody — no melody branch in getColor()
-- [Phase 02-pianoroll-visualizers]: ResizeObserver created in same useEffect as p5 instance to share cleanup closure
-- [Phase 02-pianoroll-visualizers]: Pure math functions exported from PianorollSketch for direct unit testing without p5 mock
-- [Phase 02-pianoroll-visualizers]: VizPanel does not contain ResizeObserver — useP5Sketch handles canvas resize internally
-- [Phase 02-pianoroll-visualizers]: data-active attribute uses string 'true' not boolean to match DOM attribute conventions in tests
-- [Phase 02-pianoroll-visualizers]: viewZones.ts named as imperative module (not useViewZones.ts) — hooks reserve use* prefix
-- [Phase 02-pianoroll-visualizers]: addInlineViewZones receives engine.getAnalyser() synchronously to bypass React state timing for view zones
-- [Phase 02-pianoroll-visualizers]: viewZoneCleanupRef pattern: store cleanup fn in ref, caller calls before each new addInlineViewZones invocation
+- [Phase 01]: Per-hap IEditorDecorationsCollection for independent clear() calls
+- [Phase 02]: ResizeObserver created in same useEffect as p5 instance to share cleanup closure
+- [Phase 02]: viewZones.ts named as imperative module (not useViewZones.ts)
+- [Phase 03]: All 7 viz modes implemented via p5.js SketchFactory pattern
+- [Phase 03]: Analyser wired as side-tap on superdough's destinationGain (not connectToDestination)
+- [Phase 03]: PatternScheduler exposed from StrudelEngine for pianoroll/spiral/pitchwheel sketches
+- [THESIS]: Project evolving from struCode to Motif — renderer-agnostic, engine-agnostic platform
+- [THESIS]: VizRenderer interface replaces SketchFactory — hard break on vizSketch prop
+- [THESIS]: VizDescriptor + DEFAULT_VIZ_DESCRIPTORS pattern for extensibility
+- [THESIS]: Per-track data via monkey-patching Pattern.prototype.p during evaluate
+- [Phase 04-01]: VizRenderer interface with 5 lifecycle methods is the foundational abstraction — all future renderers implement this interface
+- [Phase 04-01]: P5SketchFactory kept as internal type (not exported) — P5VizRenderer is the only consumer
+- [Phase 04-01]: VizDescriptor uses factory: () => VizRenderer so each mount creates a fresh renderer instance
 
 ### Pending Todos
 
@@ -82,12 +76,11 @@ None yet.
 
 ### Blockers/Concerns
 
-- Active highlighting requires `scheduledAheadMs` delay — highlights must fire at audioTime, not schedule time (see HapEvent shape)
-- Monaco view zones reset on editor re-layout — inline pianoroll must re-add after every evaluate()
-- Phase 2 pianoroll inline view zones depend on Phase 1 decorations infrastructure being in place
+- Hard break on `vizSketch` prop — consumers must update to `vizDescriptors`/`vizRenderer`
+- p5 v2 API differences (windowWidth removed, canvas not typed) — documented in memory
 
 ## Session Continuity
 
-Last session: 2026-03-22T05:02:04.953Z
-Stopped at: Phase 2 pianoroll viz not rendering — clock fix attempted, still broken
-Resume file: .planning/phases/02-pianoroll-visualizers/02-VERIFICATION.md
+Last session: 2026-03-22T10:14:14.544Z
+Stopped at: Completed 04-vizrenderer-abstraction/04-01-PLAN.md
+Resume file: None

@@ -1,7 +1,8 @@
-# Requirements: struCode
+# Requirements: Motif (formerly struCode)
 
 **Defined:** 2026-03-21
-**Core Value:** A standalone, embeddable Strudel editor that plays audio, exports WAV, and gives real-time visual feedback — clean enough to drop into any React app as a single import.
+**Updated:** 2026-03-22 (revised roadmap — THESIS phases A-G integrated)
+**Core Value:** A renderer-agnostic, engine-agnostic live coding platform delivered as an embeddable React component library. The infrastructure layer for live coding music.
 
 ## v1 Requirements
 
@@ -46,12 +47,63 @@
 
 ### Visualizers — Audio Analysis
 
-- [ ] **VIZ-01**: Scope visualizer renders time-domain waveform from AnalyserNode at 60fps
-- [ ] **VIZ-02**: Scope uses zero-crossing trigger for stable waveform display
-- [ ] **VIZ-03**: Spectrum visualizer renders frequency bars from AnalyserNode at 60fps
-- [ ] **VIZ-04**: Spectrum bar colors use hue gradient (purple to blue)
-- [ ] **VIZ-05**: Spiral visualizer maps note events to positions on a rotating spiral (cycle-based)
-- [ ] **VIZ-06**: Pitchwheel visualizer shows 12 pitch classes on a circle; active notes glow
+- [x] **VIZ-01**: Scope visualizer renders time-domain waveform from AnalyserNode at 60fps
+- [x] **VIZ-02**: Scope uses zero-crossing trigger for stable waveform display
+- [x] **VIZ-03**: FScope visualizer renders frequency bars from AnalyserNode at 60fps
+- [x] **VIZ-04**: Spectrum visualizer renders scrolling waterfall with log-frequency Y axis
+- [x] **VIZ-05**: Spiral visualizer maps note events to positions on a rotating spiral (cycle-based)
+- [x] **VIZ-06**: Pitchwheel visualizer shows 12 pitch classes on a circle; active notes glow
+
+### Toolbar & UI
+
+- [x] **UI-01**: VizPicker toolbar component lets user switch between visualizer modes
+- [x] **UI-02**: Layout follows spec: toolbar (40px) + viz-picker (32px) + editor + visualizer panel
+- [x] **UI-03**: vizHeight prop controls visualizer panel height (default 200px)
+- [x] **UI-04**: showToolbar prop hides toolbar (default: shown)
+
+### VizRenderer Abstraction
+
+- [x] **REND-01**: VizRenderer interface defined with mount(container, refs, size, onError), resize(w,h), pause(), resume(), destroy() methods
+- [x] **REND-02**: VizRefs type defined: hapStreamRef, analyserRef, schedulerRef as RefObject refs
+- [x] **REND-03**: P5VizRenderer adapter class wraps existing SketchFactory sketches — mount creates p5 instance, resize calls resizeCanvas, pause/resume call noLoop/loop, destroy calls remove
+- [x] **REND-04**: VizDescriptor type defined: { id, label, requires?, factory: () => VizRenderer }
+- [x] **REND-05**: DEFAULT_VIZ_DESCRIPTORS array exported from package — contains all 7 built-in viz modes wrapped in P5VizRenderer
+- [x] **REND-06**: useVizRenderer hook replaces useP5Sketch — calls mountVizRenderer, wires ResizeObserver, handles cleanup
+- [x] **REND-07**: VizPicker renders from VizDescriptor[] as a dropdown (not hardcoded VizMode tab bar)
+
+### Per-Track Data
+
+- [ ] **TRACK-01**: Pattern.prototype.p monkey-patched during evaluate() to capture per-$: Pattern objects into capturedPatterns map
+- [ ] **TRACK-02**: Pattern.prototype.p always restored in finally block — even on evaluate error
+- [ ] **TRACK-03**: StrudelEngine.getTrackSchedulers() returns Map<string, PatternScheduler> where each value queries its captured Pattern directly via queryArc
+- [ ] **TRACK-04**: Anonymous $: patterns keyed as "$0", "$1" etc; named patterns (d1:) use literal name
+
+### Inline Zones via Abstraction
+
+- [ ] **ZONE-01**: addInlineViewZones accepts VizRendererSource parameter (factory or instance)
+- [ ] **ZONE-02**: Each inline zone resolves track-scoped VizRefs before mount — scheduler from getTrackSchedulers()
+- [ ] **ZONE-03**: Zone div width from editor.getLayoutInfo().contentWidth (not container.clientWidth which is 0 pre-attach)
+- [ ] **ZONE-04**: addInlineViewZones returns { cleanup, pause, resume } — StrudelEditor calls pause on stop, resume on play
+
+### Additional Renderers
+
+- [ ] **EXTRA-01**: Canvas2DVizRenderer implements VizRenderer using raw Canvas 2D API (no p5 dependency)
+- [ ] **EXTRA-02**: Three.js renderer dynamically imports three (~600KB) inside mount() — not a static import
+- [ ] **EXTRA-03**: Shadertoy GLSL renderer wraps mainImage(out vec4, in vec2) in main(), routes gl.getShaderInfoLog to onError
+- [ ] **EXTRA-04**: VizDescriptor.requires field checked before mount — unsupported renderers shown disabled in picker
+
+### Engine Protocol
+
+- [ ] **ENG-P-01**: LiveCodingEngine interface defined: init, evaluate, play, stop, getAnalyser, getPatternScheduler, getTrackSchedulers, getHapStream, dispose
+- [ ] **ENG-P-02**: StrudelEngine refactored to implement LiveCodingEngine without behavioral change
+- [ ] **ENG-P-03**: LiveCodingEditor component accepts engine prop — not hardcoded to StrudelEngine
+- [ ] **ENG-P-04**: At least one proof-of-concept second engine adapter (e.g. SonicPiEngine stub via OSC/WebSocket)
+
+### Normalized Hap Type
+
+- [ ] **HAP-01**: Normalized Hap interface defined: begin, end, pitch?, gain?, duration?, label?, color?, trackId?
+- [ ] **HAP-02**: StrudelEngine maps raw Strudel haps to normalized Hap type in getTrackSchedulers/getPatternScheduler
+- [ ] **HAP-03**: All 7 sketches refactored to consume normalized Hap (not raw Strudel hap shape)
 
 ### Monaco Intelligence
 
@@ -64,13 +116,6 @@
 - [ ] **MON-07**: Inside s("...") — completions for oscillator types and common percussion names
 - [ ] **MON-08**: Error from evaluate() shown as Monaco red squiggles via setModelMarkers
 - [ ] **MON-09**: Hover over a Strudel function shows documentation and an example
-
-### Toolbar & UI
-
-- [x] **UI-01**: VizPicker toolbar component lets user switch between visualizer modes
-- [x] **UI-02**: Layout follows spec: toolbar (40px) + viz-picker (32px) + editor + visualizer panel
-- [x] **UI-03**: vizHeight prop controls visualizer panel height (default 200px)
-- [x] **UI-04**: showToolbar prop hides toolbar (default: shown)
 
 ### Library Polish
 
@@ -111,10 +156,9 @@
 | Feature | Reason |
 |---------|--------|
 | iframe or strudel-editor web component | Replaced by direct @strudel/core integration — no iframe boundary |
-| Application-specific CDN/upload logic | Integrators provide onExport hook — struCode stays generic |
+| Application-specific CDN/upload logic | Integrators provide onExport hook — Motif stays generic |
 | Zustand / Redux state management | Not needed in a component library |
 | Server-side audio rendering | Browser Web Audio API only |
-| p5.js for visualizers | Native Canvas 2D is sufficient; p5 adds 300KB+ bundle weight with no benefit |
 | Real-time sample playback in OfflineRenderer | AudioWorklet cannot be re-registered in OfflineAudioContext — oscillators only |
 
 ## Traceability
@@ -123,55 +167,25 @@
 |-------------|-------|--------|
 | ENG-01..08 | Existing | Complete |
 | EDIT-01..07 | Existing | Complete |
-| HIGH-01 | Phase 1 | Complete |
-| HIGH-02 | Phase 1 | Complete |
-| HIGH-03 | Phase 1 | Complete |
-| HIGH-04 | Phase 1 | Complete |
-| HIGH-05 | Phase 1 | Complete |
-| PIANO-01 | Phase 2 | Complete |
-| PIANO-02 | Phase 2 | Complete |
-| PIANO-03 | Phase 2 | Complete |
-| PIANO-04 | Phase 2 | Complete |
-| PIANO-05 | Phase 2 | Complete |
-| PIANO-06 | Phase 2 | Complete |
-| PIANO-07 | Phase 2 | Complete |
-| UI-01 | Phase 2 | Complete |
-| UI-02 | Phase 2 | Complete |
-| UI-03 | Phase 2 | Complete |
-| UI-04 | Phase 2 | Complete |
-| VIZ-01 | Phase 3 | Pending |
-| VIZ-02 | Phase 3 | Pending |
-| VIZ-03 | Phase 3 | Pending |
-| VIZ-04 | Phase 3 | Pending |
-| VIZ-05 | Phase 3 | Pending |
-| VIZ-06 | Phase 3 | Pending |
-| MON-01 | Phase 4 | Pending |
-| MON-02 | Phase 4 | Pending |
-| MON-03 | Phase 4 | Pending |
-| MON-04 | Phase 4 | Pending |
-| MON-05 | Phase 4 | Pending |
-| MON-06 | Phase 4 | Pending |
-| MON-07 | Phase 4 | Pending |
-| MON-08 | Phase 4 | Pending |
-| MON-09 | Phase 4 | Pending |
-| LIB-01 | Phase 5 | Pending |
-| LIB-02 | Phase 5 | Pending |
-| LIB-03 | Phase 5 | Pending |
-| LIB-04 | Phase 5 | Pending |
-| LIB-05 | Phase 5 | Pending |
-| LIB-06 | Phase 5 | Pending |
-| LIB-07 | Phase 5 | Pending |
-| LIB-08 | Phase 5 | Pending |
-| APP-01 | Phase 5 | Pending |
-| APP-02 | Phase 5 | Pending |
-| APP-03 | Phase 5 | Pending |
-| APP-04 | Phase 5 | Pending |
+| HIGH-01..05 | Phase 1 | Complete |
+| PIANO-01..07 | Phase 2 | Complete |
+| UI-01..04 | Phase 2 | Complete |
+| VIZ-01..06 | Phase 3 | Complete |
+| REND-01..07 | Phase 4 | Pending |
+| TRACK-01..04 | Phase 5 | Pending |
+| ZONE-01..04 | Phase 6 | Pending |
+| EXTRA-01..04 | Phase 7 | Pending |
+| ENG-P-01..04 | Phase 8 | Pending |
+| HAP-01..03 | Phase 9 | Pending |
+| MON-01..09 | Phase 10 | Pending |
+| LIB-01..08 | Phase 11 | Pending |
+| APP-01..04 | Phase 11 | Pending |
 
 **Coverage:**
-- v1 requirements: 43 active (16 validated/complete, 43 active pending)
-- Mapped to phases: 43/43
+- v1 requirements: 67 active (35 complete, 32 pending)
+- Mapped to phases: 67/67
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-21*
-*Last updated: 2026-03-21 after roadmap creation*
+*Last updated: 2026-03-22 after THESIS roadmap integration*
