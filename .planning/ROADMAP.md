@@ -1,15 +1,17 @@
-# Roadmap: struCode
+# Roadmap: Motif (formerly struCode)
 
 ## Overview
 
-The engine layer and basic editor are already shipped. The remaining work layers
-visual feedback and language intelligence on top of that working foundation: first
-active note highlighting (synchronized to the audio scheduler), then pianoroll
-visualizations (full-panel rolling canvas + inline view zones) with toolbar wiring,
-then audio analysis visualizers (scope, spectrum, spiral, pitchwheel), then Monaco
-language intelligence (tokenizer, completions, hover docs, error squiggles), and
-finally library polish and the public-facing demo site. Each phase delivers a
-coherent, verifiable capability before the next begins.
+The foundation is shipped: engine layer, Monaco editor, active highlighting, and all 7
+p5.js visualizers (pianoroll, wordfall, scope, fscope, spectrum, spiral, pitchwheel).
+
+The remaining work transforms struCode from a Strudel-specific editor into **Motif** — a
+renderer-agnostic, engine-agnostic live coding platform. The architecture introduces three
+decoupled layers: Engine (pluggable language adapters), PatternScheduler API (the agnostic
+boundary), and VizRenderer (extensible visualization). Each phase delivers a coherent,
+verifiable capability before the next begins.
+
+See THESIS.md for the full platform vision.
 
 ## Phases
 
@@ -20,10 +22,16 @@ coherent, verifiable capability before the next begins.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Active Highlighting** - Notes in the Monaco editor light up in sync with the audio scheduler (completed 2026-03-21)
-- [ ] **Phase 2: Pianoroll Visualizers** - Rolling pianoroll canvas + inline view zones + toolbar layout wired
-- [ ] **Phase 3: Audio Visualizers** - Scope, Spectrum, Spiral, and Pitchwheel canvas visualizers
-- [ ] **Phase 4: Monaco Intelligence** - Strudel tokenizer, completions, hover docs, and error squiggles
-- [ ] **Phase 5: Library Polish + Demo Site** - Tests, Storybook, tsup build, README, and public demo app
+- [x] **Phase 2: Pianoroll Visualizers** - Rolling pianoroll canvas + inline view zones + toolbar layout wired (completed 2026-03-22)
+- [x] **Phase 3: Audio Visualizers** - Scope, FScope, Spectrum, Spiral, Pitchwheel, Wordfall canvas visualizers (completed 2026-03-22)
+- [ ] **Phase 4: VizRenderer Abstraction** - Replace p5-coupled SketchFactory with renderer-agnostic VizRenderer interface
+- [ ] **Phase 5: Per-Track Data** - Expose per-track PatternSchedulers via monkey-patching Pattern.prototype.p
+- [ ] **Phase 6: Inline Zones via Abstraction** - Refactor viewZones.ts to use VizRendererSource, any renderer works inline
+- [ ] **Phase 7: Additional Renderers** - Canvas 2D, Three.js, Shadertoy GLSL renderer implementations
+- [ ] **Phase 8: Engine Protocol** - Define LiveCodingEngine interface, refactor StrudelEngine, prove multi-engine
+- [ ] **Phase 9: Normalized Hap Type** - Engine-agnostic event format so viz works across all engines
+- [ ] **Phase 10: Monaco Intelligence** - Strudel tokenizer, completions, hover docs, and error squiggles
+- [ ] **Phase 11: Library Polish + Demo Site** - Tests, Storybook, tsup build, README, and public demo app
 
 ## Phase Details
 
@@ -52,26 +60,100 @@ Plans:
   3. An inline pianoroll appears as a Monaco view zone below each `$:` line and re-appears after every evaluate() call
   4. The VizPicker toolbar lets the user switch between visualizer modes (pianoroll, scope, spectrum, spiral, pitchwheel)
   5. The layout follows spec: toolbar (40px) + viz-picker (32px) + editor + visualizer panel; vizHeight and showToolbar props work correctly
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 - [x] 02-01-PLAN.md — Install p5, types, useP5Sketch hook, PianorollSketch factory + stubs
 - [x] 02-02-PLAN.md — VizPanel + VizPicker React components
 - [x] 02-03-PLAN.md — StrudelEditor wiring, inline view zones, visual verification
 
 ### Phase 3: Audio Visualizers
-**Goal**: Users can see real-time audio analysis visualizations — an oscilloscope waveform, a frequency spectrum, a spiral note display, and a pitchwheel — all driven by the live AnalyserNode.
+**Goal**: Users can see real-time audio analysis visualizations — oscilloscope, frequency spectrum, waterfall spectrogram, spiral, pitchwheel, and wordfall — all driven by the live AnalyserNode and PatternScheduler.
 **Depends on**: Phase 2
 **Requirements**: VIZ-01, VIZ-02, VIZ-03, VIZ-04, VIZ-05, VIZ-06
 **Success Criteria** (what must be TRUE):
   1. The Scope visualizer renders a stable time-domain waveform from the AnalyserNode at 60fps, triggered at zero-crossings
-  2. The Spectrum visualizer renders frequency bars at 60fps with a purple-to-blue hue gradient
-  3. The Spiral visualizer maps note events to positions on a rotating cycle-based spiral
-  4. The Pitchwheel visualizer shows 12 pitch classes on a circle, with active notes glowing
+  2. The FScope visualizer renders frequency bars at 60fps with symmetric layout
+  3. The Spectrum visualizer renders scrolling waterfall with log-frequency Y axis
+  4. The Spiral visualizer maps note events to positions on a rotating cycle-based spiral
+  5. The Pitchwheel visualizer shows 12 pitch classes on a circle, with active notes glowing
+  6. The Wordfall visualizer shows vertical pianoroll with note labels
+**Plans:** Completed outside GSD (all 7 sketches implemented in session 2026-03-22)
+
+### Phase 4: VizRenderer Abstraction
+**Goal**: Replace the p5-coupled SketchFactory type with a renderer-agnostic VizRenderer interface. Wrap all 7 existing p5 sketches in a P5VizRenderer adapter. Export VizDescriptor system for extensibility. Zero behavioral change — all existing viz modes work through the new interface.
+**Depends on**: Phase 3
+**Requirements**: REND-01, REND-02, REND-03, REND-04, REND-05, REND-06, REND-07
+**Success Criteria** (what must be TRUE):
+  1. VizRenderer interface exists with mount/resize/pause/resume/destroy methods
+  2. P5VizRenderer adapter wraps all 7 existing SketchFactory sketches without behavioral change
+  3. VizDescriptor type drives VizPicker as a data-driven dropdown (not hardcoded tab bar)
+  4. DEFAULT_VIZ_DESCRIPTORS exported — devs spread and extend without source edits
+  5. StrudelEditorProps uses vizDescriptors/vizRenderer instead of vizSketch
+  6. useVizRenderer hook replaces useP5Sketch with renderer-agnostic lifecycle
+  7. mountVizRenderer shared utility works for both VizPanel and viewZones
+**Plans:** 2 plans
+Plans:
+- [ ] 04-01-PLAN.md — Source refactor: types, P5VizRenderer, mountVizRenderer, useVizRenderer, defaultDescriptors, VizPanel, VizPicker, viewZones, StrudelEditor, index.ts
+- [ ] 04-02-PLAN.md — Test migration: create P5VizRenderer/useVizRenderer/defaultDescriptors tests, migrate VizPanel/VizPicker/viewZones tests
+**Canonical refs**: THESIS.md (Section 3-4), memory/project_viz_renderer_plan.md
+
+### Phase 5: Per-Track Data
+**Goal**: Expose per-track PatternSchedulers from StrudelEngine by capturing patterns during evaluate via monkey-patching Pattern.prototype.p. Each $: block gets its own scheduler that queries its Pattern directly via queryArc.
+**Depends on**: Phase 4
+**Requirements**: TRACK-01, TRACK-02, TRACK-03, TRACK-04
+**Success Criteria** (what must be TRUE):
+  1. StrudelEngine.getTrackSchedulers() returns Map<string, PatternScheduler> after evaluate
+  2. Each track scheduler queries its own Pattern directly (no hap filtering)
+  3. Pattern.prototype.p is always restored in finally block, even on error
+  4. Anonymous $: patterns get keys "$0", "$1" etc; named patterns get literal name
 **Plans**: TBD
 
-### Phase 4: Monaco Intelligence
+### Phase 6: Inline Zones via Abstraction
+**Goal**: Refactor viewZones.ts to accept VizRendererSource. Inline zones are renderer-agnostic — any VizRenderer can render inline, not just PianorollSketch. Track-scoped VizRefs resolved before mount.
+**Depends on**: Phase 4, Phase 5
+**Requirements**: ZONE-01, ZONE-02, ZONE-03, ZONE-04
+**Success Criteria** (what must be TRUE):
+  1. addInlineViewZones accepts VizRendererSource parameter
+  2. Each inline zone gets track-scoped VizRefs (scheduler from getTrackSchedulers)
+  3. Zone width from editor.getLayoutInfo().contentWidth (not container.clientWidth)
+  4. Cleanup returns { cleanup, pause, resume } — pause on stop, resume on play
+**Plans**: TBD
+
+### Phase 7: Additional Renderers
+**Goal**: Implement Canvas 2D, Three.js (dynamic import), and Shadertoy GLSL renderers. Each implements VizRenderer interface. Third-party renderer authors can publish motif-renderer-* packages.
+**Depends on**: Phase 4
+**Requirements**: EXTRA-01, EXTRA-02, EXTRA-03, EXTRA-04
+**Success Criteria** (what must be TRUE):
+  1. Canvas2DVizRenderer renders a basic pianoroll without p5 dependency
+  2. Three.js renderer dynamically imports (~600KB) only when mounted
+  3. Shadertoy GLSL renderer compiles user shaders with onError for compile failures
+  4. VizDescriptor.requires capability check disables unsupported renderers in picker
+**Plans**: TBD
+
+### Phase 8: Engine Protocol
+**Goal**: Define the LiveCodingEngine interface. Refactor StrudelEngine to implement it. Prove multi-engine support by adding a second engine adapter.
+**Depends on**: Phase 5
+**Requirements**: ENG-P-01, ENG-P-02, ENG-P-03, ENG-P-04
+**Success Criteria** (what must be TRUE):
+  1. LiveCodingEngine interface defined with init/evaluate/play/stop/getAnalyser/getPatternScheduler/getTrackSchedulers/dispose
+  2. StrudelEngine implements LiveCodingEngine without behavioral change
+  3. LiveCodingEditor component accepts engine prop (not hardcoded to Strudel)
+  4. At least one proof-of-concept second engine adapter exists
+**Plans**: TBD
+
+### Phase 9: Normalized Hap Type
+**Goal**: Define a normalized Hap interface that engines map their native events to. Viz layer becomes truly engine-agnostic — sketches work with any engine's events without modification.
+**Depends on**: Phase 8
+**Requirements**: HAP-01, HAP-02, HAP-03
+**Success Criteria** (what must be TRUE):
+  1. Normalized Hap interface defined (begin, end, pitch, gain, duration, label, color, trackId)
+  2. StrudelEngine maps Strudel haps to normalized Hap type
+  3. All 7 sketches consume normalized Hap (not raw Strudel hap)
+**Plans**: TBD
+
+### Phase 10: Monaco Intelligence
 **Goal**: The Monaco editor understands Strudel code — syntax elements get distinct colors, users get completions for functions and note names, hovering a function shows docs, and evaluation errors appear as red squiggles.
-**Depends on**: Phase 3
+**Depends on**: Phase 4
 **Requirements**: MON-01, MON-02, MON-03, MON-04, MON-05, MON-06, MON-07, MON-08, MON-09
 **Success Criteria** (what must be TRUE):
   1. Strudel functions (note, s, gain, stack, every, jux, fast, slow, etc.) are highlighted in blue; note names in green; mini-notation operators distinctly colored
@@ -81,9 +163,9 @@ Plans:
   5. Hovering a Strudel function name shows a documentation popup with the function signature and an example
 **Plans**: TBD
 
-### Phase 5: Library Polish + Demo Site
-**Goal**: The @strucode/editor package is ready to publish — tested, documented, built correctly — and packages/app is a polished public-facing demo that showcases all features.
-**Depends on**: Phase 4
+### Phase 11: Library Polish + Demo Site
+**Goal**: The @motif/editor package is ready to publish — tested, documented, built correctly — and packages/app is a polished public-facing demo that showcases all features.
+**Depends on**: Phase 10
 **Requirements**: LIB-01, LIB-02, LIB-03, LIB-04, LIB-05, LIB-06, LIB-07, LIB-08, APP-01, APP-02, APP-03, APP-04
 **Success Criteria** (what must be TRUE):
   1. Vitest test suite passes: WavEncoder header/stereo/mono, noteToMidi conversions, and highlight timing delay are all verified
@@ -96,12 +178,19 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11
+(Phase 7 can run in parallel with 5-6; Phase 10 can run in parallel with 5-9)
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Active Highlighting | 2/2 | Complete   | 2026-03-21 |
-| 2. Pianoroll Visualizers | 2/3 | In Progress|  |
-| 3. Audio Visualizers | 0/TBD | Not started | - |
-| 4. Monaco Intelligence | 0/TBD | Not started | - |
-| 5. Library Polish + Demo Site | 0/TBD | Not started | - |
+| 1. Active Highlighting | 2/2 | Complete | 2026-03-21 |
+| 2. Pianoroll Visualizers | 3/3 | Complete | 2026-03-22 |
+| 3. Audio Visualizers | N/A | Complete | 2026-03-22 |
+| 4. VizRenderer Abstraction | 0/2 | Planning | - |
+| 5. Per-Track Data | 0/TBD | Not started | - |
+| 6. Inline Zones via Abstraction | 0/TBD | Not started | - |
+| 7. Additional Renderers | 0/TBD | Not started | - |
+| 8. Engine Protocol | 0/TBD | Not started | - |
+| 9. Normalized Hap Type | 0/TBD | Not started | - |
+| 10. Monaco Intelligence | 0/TBD | Not started | - |
+| 11. Library Polish + Demo Site | 0/TBD | Not started | - |
