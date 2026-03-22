@@ -25,7 +25,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Pianoroll Visualizers** - Rolling pianoroll canvas + inline view zones + toolbar layout wired (completed 2026-03-22)
 - [x] **Phase 3: Audio Visualizers** - Scope, FScope, Spectrum, Spiral, Pitchwheel, Wordfall canvas visualizers (completed 2026-03-22)
 - [x] **Phase 4: VizRenderer Abstraction** - Replace p5-coupled SketchFactory with renderer-agnostic VizRenderer interface (completed 2026-03-22)
-- [ ] **Phase 5: Per-Track Data** - Expose per-track PatternSchedulers via monkey-patching Pattern.prototype.p
+- [x] **Phase 5: Per-Track Data** - Expose per-track PatternSchedulers via monkey-patching Pattern.prototype.p (completed 2026-03-22)
 - [ ] **Phase 6: Inline Zones via Abstraction** - Refactor viewZones.ts to use VizRendererSource, any renderer works inline
 - [ ] **Phase 7: Additional Renderers** - Canvas 2D, Three.js, Shadertoy GLSL renderer implementations
 - [ ] **Phase 8: Engine Protocol** - Define LiveCodingEngine interface, refactor StrudelEngine, prove multi-engine
@@ -106,9 +106,9 @@ Plans:
   2. Each track scheduler queries its own Pattern directly (no hap filtering)
   3. Pattern.prototype.p is always restored in finally block, even on error
   4. Anonymous $: patterns get keys "$0", "$1" etc; named patterns get literal name
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [ ] 05-01-PLAN.md — TDD: getTrackSchedulers() with setter-intercept pattern capture
+- [x] 05-01-PLAN.md — TDD: getTrackSchedulers() with setter-intercept pattern capture
 
 ### Phase 6: Inline Zones via Abstraction
 **Goal**: Refactor viewZones.ts to accept VizRendererSource. Inline zones are renderer-agnostic — any VizRenderer can render inline, not just PianorollSketch. Track-scoped VizRefs resolved before mount.
@@ -189,7 +189,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 2. Pianoroll Visualizers | 3/3 | Complete | 2026-03-22 |
 | 3. Audio Visualizers | N/A | Complete | 2026-03-22 |
 | 4. VizRenderer Abstraction | 2/2 | Complete   | 2026-03-22 |
-| 5. Per-Track Data | 0/1 | Not started | - |
+| 5. Per-Track Data | 1/1 | Complete   | 2026-03-22 |
 | 6. Inline Zones via Abstraction | 0/TBD | Not started | - |
 | 7. Additional Renderers | 0/TBD | Not started | - |
 | 8. Engine Protocol | 0/TBD | Not started | - |
