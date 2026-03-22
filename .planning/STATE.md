@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 06-inline-zones-via-abstraction/06-01-PLAN.md
-last_updated: "2026-03-22T18:01:46.786Z"
+stopped_at: Completed 06-inline-zones-via-abstraction/06-02-PLAN.md
+last_updated: "2026-03-22T18:14:55.136Z"
 progress:
   total_phases: 11
   completed_phases: 5
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 10
+  completed_plans: 10
 ---
 
 # Project State
@@ -49,6 +49,7 @@ Plan: 1 of 1
 | Phase 04-vizrenderer-abstraction P02 | 5 | 2 tasks | 3 files |
 | Phase 05-per-track-data P01 | 8 | 2 tasks | 2 files |
 | Phase 06 P01 | 137 | 2 tasks | 3 files |
+| Phase 06-inline-zones-via-abstraction P02 | 2m | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,7 @@ Recent decisions affecting current work:
 - [Phase 05-per-track-data]: anonIndex reset to 0 per evaluate() call mirrors Strudel's hush() resetting anonymousIndex; prevents key desync on re-evaluate
 - [Phase 06]: InlineZoneHandle object return pattern replaces bare () => void — enables pause/resume lifecycle without destroying zones
 - [Phase 06]: pause() on stop freezes inline zones at last frame; cleanup() called only before re-adding zones on next play
+- [Phase 06]: resume() placed after inline zone if-block in handlePlay — fires unconditionally, no-op on fresh zones, unfreezes paused zones
 
 ### Pending Todos
 
@@ -90,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-22T18:01:46.784Z
-Stopped at: Completed 06-inline-zones-via-abstraction/06-01-PLAN.md
+Last session: 2026-03-22T18:14:55.134Z
+Stopped at: Completed 06-inline-zones-via-abstraction/06-02-PLAN.md
 Resume file: None

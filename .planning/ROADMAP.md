@@ -119,7 +119,7 @@ Plans:
   2. Each inline zone gets track-scoped VizRefs (scheduler from getTrackSchedulers)
   3. Zone width from editor.getLayoutInfo().contentWidth (not container.clientWidth)
   4. Cleanup returns { cleanup, pause, resume } — pause on stop, resume on play
-**Plans:** 1/1 plans complete
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
 
@@ -134,7 +134,7 @@ Plans:
   4. VizDescriptor.requires capability check disables unsupported renderers in picker
 **Plans:** 1 plan
 Plans:
-- [ ] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
+- [x] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
 
 ### Phase 8: Engine Protocol
 **Goal**: Define the LiveCodingEngine interface. Refactor StrudelEngine to implement it. Prove multi-engine support by adding a second engine adapter.
@@ -202,7 +202,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 3. Audio Visualizers | N/A | Complete | 2026-03-22 |
 | 4. VizRenderer Abstraction | 2/2 | Complete   | 2026-03-22 |
 | 5. Per-Track Data | 1/1 | Complete   | 2026-03-22 |
-| 6. Inline Zones via Abstraction | 1/1 | Complete   | 2026-03-22 |
+| 6. Inline Zones via Abstraction | 2/2 | Complete   | 2026-03-22 |
 | 7. Additional Renderers | 0/TBD | Not started | - |
 | 8. Engine Protocol | 0/TBD | Not started | - |
 | 9. Normalized Hap Type | 0/TBD | Not started | - |
