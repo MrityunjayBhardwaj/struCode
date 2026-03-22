@@ -2,9 +2,9 @@
 
 # struCode
 
-**A professional Monaco-based editor for [Strudel.js](https://strudel.cc) — built as an embeddable React component library.**
+![struCode screenshot](assets/v1_5_scrst.png)
 
-![struCode screenshot](assets/v1_scrst.png)
+**A professional Monaco-based editor for [Strudel.js](https://strudel.cc) — built as an embeddable React component library.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
