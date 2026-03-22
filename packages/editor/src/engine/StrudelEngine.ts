@@ -28,6 +28,8 @@ export class StrudelEngine {
   private loadedSoundNames: string[] = []
   // Per-track PatternSchedulers captured during the last evaluate() call
   private trackSchedulers: Map<string, PatternScheduler> = new Map()
+  // Per-track viz requests captured during the last evaluate() call
+  private vizRequests: Map<string, string> = new Map()
 
   async init(): Promise<void> {
     if (this.initialized) return
@@ -139,6 +141,7 @@ export class StrudelEngine {
     if (!this.initialized) await this.init()
 
     const capturedPatterns = new Map<string, any>() // eslint-disable-line @typescript-eslint/no-explicit-any
+    const capturedVizRequests = new Map<string, string>()
     let anonIndex = 0
 
     // Dynamic import — Pattern is from @strudel/core which is already loaded after init()
@@ -147,6 +150,36 @@ export class StrudelEngine {
 
     // Save current descriptor (may be value descriptor from previous injectPatternMethods)
     const savedDescriptor = Object.getOwnPropertyDescriptor(Pattern.prototype, 'p')
+    const savedVizDescriptor = Object.getOwnPropertyDescriptor(Pattern.prototype, 'viz')
+
+    // Install .viz() capture — tags pattern instance with requested viz name.
+    // Resolved later in the .p() wrapper when the track key becomes known.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Object.defineProperty(Pattern.prototype, 'viz', {
+      configurable: true,
+      writable: true,
+      value: function(this: any, vizName: string) { // eslint-disable-line @typescript-eslint/no-explicit-any
+        this._pendingViz = vizName
+        return this  // preserve chaining
+      },
+    })
+
+    // Backwards compat: Strudel's ._pianoroll(), ._scope(), etc. → .viz("name")
+    // So existing Strudel code works unmodified in struCode.
+    const legacyVizNames = ['pianoroll', 'punchcard', 'wordfall', 'scope', 'fscope', 'spectrum', 'spiral', 'pitchwheel', 'markCSS']
+    const savedLegacyDescriptors = new Map<string, PropertyDescriptor | undefined>()
+    for (const name of legacyVizNames) {
+      const methodName = `_${name}`
+      savedLegacyDescriptors.set(methodName, Object.getOwnPropertyDescriptor(Pattern.prototype, methodName))
+      Object.defineProperty(Pattern.prototype, methodName, {
+        configurable: true,
+        writable: true,
+        value: function(this: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+          this._pendingViz = name
+          return this
+        },
+      })
+    }
 
     // Install setter trap — fires when injectPatternMethods does Pattern.prototype.p = fn
     // This intercepts the assignment so we can wrap Strudel's fn with our capturing logic.
@@ -166,6 +199,12 @@ export class StrudelEngine {
                 anonIndex++
               }
               capturedPatterns.set(captureId, this)
+
+              // Resolve pending .viz() request — .viz() fires BEFORE .p() in chain
+              if (this._pendingViz) {
+                capturedVizRequests.set(captureId, this._pendingViz)
+                delete this._pendingViz
+              }
             }
             return strudelFn.call(this, id)
           },
@@ -197,6 +236,7 @@ export class StrudelEngine {
             },
           })
         }
+        this.vizRequests = capturedVizRequests
       }
 
       return result
@@ -206,6 +246,22 @@ export class StrudelEngine {
         Object.defineProperty(Pattern.prototype, 'p', savedDescriptor)
       } else {
         delete (Pattern.prototype as any).p // eslint-disable-line @typescript-eslint/no-explicit-any
+      }
+
+      // Restore Pattern.prototype.viz — same pattern as .p restoration above
+      if (savedVizDescriptor) {
+        Object.defineProperty(Pattern.prototype, 'viz', savedVizDescriptor)
+      } else {
+        delete (Pattern.prototype as any).viz // eslint-disable-line @typescript-eslint/no-explicit-any
+      }
+
+      // Restore legacy ._vizName() methods
+      for (const [methodName, desc] of savedLegacyDescriptors) {
+        if (desc) {
+          Object.defineProperty(Pattern.prototype, methodName, desc)
+        } else {
+          delete (Pattern.prototype as any)[methodName] // eslint-disable-line @typescript-eslint/no-explicit-any
+        }
       }
     }
   }
@@ -302,6 +358,16 @@ export class StrudelEngine {
    */
   getTrackSchedulers(): Map<string, PatternScheduler> {
     return this.trackSchedulers
+  }
+
+  /**
+   * Returns per-track viz requests captured during the last evaluate() call.
+   * Maps track keys ("$0", "$1", "d1") to viz descriptor IDs ("pianoroll", "scope").
+   * Only patterns that called .viz("name") in user code appear in this map.
+   * Empty Map before first evaluate or if no patterns use .viz().
+   */
+  getVizRequests(): Map<string, string> {
+    return this.vizRequests
   }
 
   /** Register a handler for runtime audio errors (fires during scheduling, not evaluation). */
