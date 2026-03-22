@@ -73,17 +73,17 @@
 
 ### Per-Track Data
 
-- [ ] **TRACK-01**: Pattern.prototype.p monkey-patched during evaluate() to capture per-$: Pattern objects into capturedPatterns map
-- [ ] **TRACK-02**: Pattern.prototype.p always restored in finally block — even on evaluate error
-- [ ] **TRACK-03**: StrudelEngine.getTrackSchedulers() returns Map<string, PatternScheduler> where each value queries its captured Pattern directly via queryArc
-- [ ] **TRACK-04**: Anonymous $: patterns keyed as "$0", "$1" etc; named patterns (d1:) use literal name
+- [x] **TRACK-01**: Pattern.prototype.p monkey-patched during evaluate() to capture per-$: Pattern objects into capturedPatterns map
+- [x] **TRACK-02**: Pattern.prototype.p always restored in finally block — even on evaluate error
+- [x] **TRACK-03**: StrudelEngine.getTrackSchedulers() returns Map<string, PatternScheduler> where each value queries its captured Pattern directly via queryArc
+- [x] **TRACK-04**: Anonymous $: patterns keyed as "$0", "$1" etc; named patterns (d1:) use literal name
 
 ### Inline Zones via Abstraction
 
-- [ ] **ZONE-01**: addInlineViewZones accepts VizRendererSource parameter (factory or instance)
-- [ ] **ZONE-02**: Each inline zone resolves track-scoped VizRefs before mount — scheduler from getTrackSchedulers()
-- [ ] **ZONE-03**: Zone div width from editor.getLayoutInfo().contentWidth (not container.clientWidth which is 0 pre-attach)
-- [ ] **ZONE-04**: addInlineViewZones returns { cleanup, pause, resume } — StrudelEditor calls pause on stop, resume on play
+- [x] **ZONE-01**: addInlineViewZones accepts VizRendererSource parameter (factory or instance)
+- [x] **ZONE-02**: Each inline zone resolves track-scoped VizRefs before mount — scheduler from getTrackSchedulers()
+- [x] **ZONE-03**: Zone div width from editor.getLayoutInfo().contentWidth (not container.clientWidth which is 0 pre-attach)
+- [x] **ZONE-04**: addInlineViewZones returns { cleanup, pause, resume } — StrudelEditor calls pause on stop, resume on play
 
 ### Additional Renderers
 

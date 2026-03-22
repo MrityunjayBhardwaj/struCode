@@ -26,7 +26,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Audio Visualizers** - Scope, FScope, Spectrum, Spiral, Pitchwheel, Wordfall canvas visualizers (completed 2026-03-22)
 - [x] **Phase 4: VizRenderer Abstraction** - Replace p5-coupled SketchFactory with renderer-agnostic VizRenderer interface (completed 2026-03-22)
 - [x] **Phase 5: Per-Track Data** - Expose per-track PatternSchedulers via monkey-patching Pattern.prototype.p (completed 2026-03-22)
-- [ ] **Phase 6: Inline Zones via Abstraction** - Refactor viewZones.ts to use VizRendererSource, any renderer works inline
+- [x] **Phase 6: Inline Zones via Abstraction** - Refactor viewZones.ts to use VizRendererSource, any renderer works inline (completed 2026-03-22)
 - [ ] **Phase 7: Additional Renderers** - Canvas 2D, Three.js, Shadertoy GLSL renderer implementations
 - [ ] **Phase 8: Engine Protocol** - Define LiveCodingEngine interface, refactor StrudelEngine, prove multi-engine
 - [ ] **Phase 9: Normalized Hap Type** - Engine-agnostic event format so viz works across all engines
@@ -119,9 +119,9 @@ Plans:
   2. Each inline zone gets track-scoped VizRefs (scheduler from getTrackSchedulers)
   3. Zone width from editor.getLayoutInfo().contentWidth (not container.clientWidth)
   4. Cleanup returns { cleanup, pause, resume } — pause on stop, resume on play
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [ ] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
+- [x] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
 
 ### Phase 7: Additional Renderers
 **Goal**: Implement Canvas 2D, Three.js (dynamic import), and Shadertoy GLSL renderers. Each implements VizRenderer interface. Third-party renderer authors can publish motif-renderer-* packages.
@@ -202,7 +202,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 3. Audio Visualizers | N/A | Complete | 2026-03-22 |
 | 4. VizRenderer Abstraction | 2/2 | Complete   | 2026-03-22 |
 | 5. Per-Track Data | 1/1 | Complete   | 2026-03-22 |
-| 6. Inline Zones via Abstraction | 0/TBD | Not started | - |
+| 6. Inline Zones via Abstraction | 1/1 | Complete   | 2026-03-22 |
 | 7. Additional Renderers | 0/TBD | Not started | - |
 | 8. Engine Protocol | 0/TBD | Not started | - |
 | 9. Normalized Hap Type | 0/TBD | Not started | - |
