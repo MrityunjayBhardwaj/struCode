@@ -26,7 +26,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Audio Visualizers** - Scope, FScope, Spectrum, Spiral, Pitchwheel, Wordfall canvas visualizers (completed 2026-03-22)
 - [x] **Phase 4: VizRenderer Abstraction** - Replace p5-coupled SketchFactory with renderer-agnostic VizRenderer interface (completed 2026-03-22)
 - [x] **Phase 5: Per-Track Data** - Expose per-track PatternSchedulers via monkey-patching Pattern.prototype.p (completed 2026-03-22)
-- [x] **Phase 6: Inline Zones via Abstraction** - Refactor viewZones.ts to use VizRendererSource, any renderer works inline (completed 2026-03-22)
+- [ ] **Phase 6: Inline Zones via Abstraction** - Per-pattern .viz("name") opt-in replacing blanket inlinePianoroll prop (REPLANNED 2026-03-23)
 - [ ] **Phase 7: Additional Renderers** - Canvas 2D, Three.js, Shadertoy GLSL renderer implementations
 - [ ] **Phase 8: Engine Protocol** - Define LiveCodingEngine interface, refactor StrudelEngine, prove multi-engine
 - [ ] **Phase 9: Normalized Hap Type** - Engine-agnostic event format so viz works across all engines
@@ -110,18 +110,21 @@ Plans:
 Plans:
 - [x] 05-01-PLAN.md — TDD: getTrackSchedulers() with setter-intercept pattern capture
 
-### Phase 6: Inline Zones via Abstraction
-**Goal**: Refactor viewZones.ts to accept VizRendererSource. Inline zones are renderer-agnostic — any VizRenderer can render inline, not just PianorollSketch. Track-scoped VizRefs resolved before mount.
+### Phase 6: Inline Zones via Abstraction (REPLANNED)
+**Goal**: Replace the blanket `inlinePianoroll` prop with per-pattern `.viz("name")` opt-in. Register `.viz()` on Pattern.prototype during evaluate(), capture viz requests per track, and refactor viewZones.ts to create zones only for opted-in patterns with the correct viz type resolved from VizDescriptor[].
 **Depends on**: Phase 4, Phase 5
 **Requirements**: ZONE-01, ZONE-02, ZONE-03, ZONE-04
 **Success Criteria** (what must be TRUE):
-  1. addInlineViewZones accepts VizRendererSource parameter
-  2. Each inline zone gets track-scoped VizRefs (scheduler from getTrackSchedulers)
-  3. Zone width from editor.getLayoutInfo().contentWidth (not container.clientWidth)
-  4. Cleanup returns { cleanup, pause, resume } — pause on stop, resume on play
-**Plans:** 2/2 plans complete
+  1. `.viz("pianoroll")` chained on a pattern causes an inline zone with pianoroll to appear after that pattern's block
+  2. Patterns without `.viz()` get no inline zone
+  3. Any viz type from DEFAULT_VIZ_DESCRIPTORS works (e.g. `.viz("scope")`, `.viz("spectrum")`)
+  4. Zone appears after the LAST LINE of the pattern block (not after the `$:` line)
+  5. InlineZoneHandle pause/resume lifecycle works (pause on stop, resume on play)
+  6. `inlinePianoroll` prop removed from StrudelEditorProps
+**Plans:** 2 plans
 Plans:
-- [x] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
+- [ ] 06-01-PLAN.md — Register .viz() capture in StrudelEngine + refactor viewZones.ts to opt-in + update tests
+- [ ] 06-02-PLAN.md — Wire StrudelEditor with vizRequests, remove inlinePianoroll prop, visual verification
 
 ### Phase 7: Additional Renderers
 **Goal**: Implement Canvas 2D, Three.js (dynamic import), and Shadertoy GLSL renderers. Each implements VizRenderer interface. Third-party renderer authors can publish motif-renderer-* packages.
@@ -132,9 +135,7 @@ Plans:
   2. Three.js renderer dynamically imports (~600KB) only when mounted
   3. Shadertoy GLSL renderer compiles user shaders with onError for compile failures
   4. VizDescriptor.requires capability check disables unsupported renderers in picker
-**Plans:** 1 plan
-Plans:
-- [x] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
+**Plans:** TBD
 
 ### Phase 8: Engine Protocol
 **Goal**: Define the LiveCodingEngine interface. Refactor StrudelEngine to implement it. Prove multi-engine support by adding a second engine adapter.
@@ -145,9 +146,7 @@ Plans:
   2. StrudelEngine implements LiveCodingEngine without behavioral change
   3. LiveCodingEditor component accepts engine prop (not hardcoded to Strudel)
   4. At least one proof-of-concept second engine adapter exists
-**Plans:** 1 plan
-Plans:
-- [ ] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
+**Plans:** TBD
 
 ### Phase 9: Normalized Hap Type
 **Goal**: Define a normalized Hap interface that engines map their native events to. Viz layer becomes truly engine-agnostic — sketches work with any engine's events without modification.
@@ -157,9 +156,7 @@ Plans:
   1. Normalized Hap interface defined (begin, end, pitch, gain, duration, label, color, trackId)
   2. StrudelEngine maps Strudel haps to normalized Hap type
   3. All 7 sketches consume normalized Hap (not raw Strudel hap)
-**Plans:** 1 plan
-Plans:
-- [ ] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
+**Plans:** TBD
 
 ### Phase 10: Monaco Intelligence
 **Goal**: The Monaco editor understands Strudel code — syntax elements get distinct colors, users get completions for functions and note names, hovering a function shows docs, and evaluation errors appear as red squiggles.
@@ -171,9 +168,7 @@ Plans:
   3. Inside `note("...")` or `s("...")`, completions offer context-appropriate values (note names, oscillator types, percussion names)
   4. After an evaluate() error, the error location is underlined with red squiggles in Monaco; hovering shows the message
   5. Hovering a Strudel function name shows a documentation popup with the function signature and an example
-**Plans:** 1 plan
-Plans:
-- [ ] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
+**Plans:** TBD
 
 ### Phase 11: Library Polish + Demo Site
 **Goal**: The @motif/editor package is ready to publish — tested, documented, built correctly — and packages/app is a polished public-facing demo that showcases all features.
@@ -185,9 +180,7 @@ Plans:
   3. Storybook stories exist for StrudelEditor (default, pianoroll, scope, read-only) and each visualizer component in isolation
   4. The packages/app demo site loads in a browser with play/stop/export working, all visualizer modes switchable, and an examples gallery of 3-5 starter patterns
   5. README.md contains npm install instructions and a minimal working usage example that an integrator can copy
-**Plans:** 1 plan
-Plans:
-- [ ] 06-01-PLAN.md — Refactor viewZones.ts + wire StrudelEditor with InlineZoneHandle
+**Plans:** TBD
 
 ## Progress
 
@@ -202,7 +195,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 3. Audio Visualizers | N/A | Complete | 2026-03-22 |
 | 4. VizRenderer Abstraction | 2/2 | Complete   | 2026-03-22 |
 | 5. Per-Track Data | 1/1 | Complete   | 2026-03-22 |
-| 6. Inline Zones via Abstraction | 2/2 | Complete   | 2026-03-22 |
+| 6. Inline Zones via Abstraction | 0/2 | Replanned | - |
 | 7. Additional Renderers | 0/TBD | Not started | - |
 | 8. Engine Protocol | 0/TBD | Not started | - |
 | 9. Normalized Hap Type | 0/TBD | Not started | - |
