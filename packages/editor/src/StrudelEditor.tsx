@@ -170,17 +170,19 @@ export function StrudelEditor({
       return
     }
 
-    // Re-add inline pianoroll view zones (they reset after evaluate).
+    // Re-add inline view zones for patterns that called .viz() (they reset after evaluate).
     // addInlineViewZones receives engine.getAnalyser() directly (synchronous),
     // bypassing the React state timing — view zones get the analyser immediately.
-    if (_inlinePianoroll && editorRef.current) {
+    const vizRequests = engine.getVizRequests()
+    if (vizRequests.size > 0 && editorRef.current) {
       viewZoneCleanupRef.current?.cleanup()
       viewZoneCleanupRef.current = addInlineViewZones(
         editorRef.current,
-        currentSource,
         engine.getHapStream(),
         engine.getAnalyser(),
-        engine.getTrackSchedulers()
+        engine.getTrackSchedulers(),
+        vizRequests,
+        vizDescriptors
       )
     }
 
@@ -199,7 +201,7 @@ export function StrudelEditor({
     engine.play()
     setIsPlaying(true)
     onPlay?.()
-  }, [code, onPlay, onError, clearHighlights, soundNames, _inlinePianoroll, currentSource])
+  }, [code, onPlay, onError, clearHighlights, soundNames, vizDescriptors])
 
   const handleStop = useCallback(() => {
     engineRef.current?.stop()

@@ -25,13 +25,10 @@ vi.mock('../visualizers/mountVizRenderer', () => ({
   })),
 }))
 
-const mockSource = () => ({
-  mount: vi.fn(),
-  resize: vi.fn(),
-  pause: vi.fn(),
-  resume: vi.fn(),
-  destroy: vi.fn(),
-})
+const mockVizDescriptors = [
+  { id: 'pianoroll', label: 'Piano Roll', factory: () => ({ mount: vi.fn(), resize: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn() }) },
+  { id: 'scope', label: 'Scope', factory: () => ({ mount: vi.fn(), resize: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn() }) },
+]
 
 function makeEditor(code: string) {
   const zoneIds: string[] = []
@@ -77,9 +74,10 @@ describe('addInlineViewZones', () => {
   it('calls editor.changeViewZones when code has $: lines', () => {
     const code = 'setcps(0.5)\n$: note("c3").s("sine")'
     const { editor, changeViewZones } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
 
     expect(changeViewZones).toHaveBeenCalled()
   })
@@ -87,9 +85,10 @@ describe('addInlineViewZones', () => {
   it('adds a zone for each $: line with heightInPx 120', () => {
     const code = '$: note("c3").s("sine")\n$: note("e3").s("sine")'
     const { editor, addedZones } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll'], ['$1', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
 
     expect(addedZones).toHaveLength(2)
     expect(addedZones[0].heightInPx).toBe(120)
@@ -100,8 +99,8 @@ describe('addInlineViewZones', () => {
     const code = 'setcps(0.5)\nnote("c3").s("sine")'
     const { editor, addedZones } = makeEditor(code)
 
-    // eslint-disable-next-line @typescript-eslant/no-explicit-any
-    addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    addInlineViewZones(editor as any, null, null, new Map(), new Map(), mockVizDescriptors as any)
 
     expect(addedZones).toHaveLength(0)
   })
@@ -109,9 +108,10 @@ describe('addInlineViewZones', () => {
   it('returns an InlineZoneHandle with cleanup, pause, resume', () => {
     const code = '$: note("c3")'
     const { editor } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handle = addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    const handle = addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
 
     expect(typeof handle.cleanup).toBe('function')
     expect(typeof handle.pause).toBe('function')
@@ -121,9 +121,10 @@ describe('addInlineViewZones', () => {
   it('handle.cleanup() calls editor.changeViewZones to remove zones', () => {
     const code = '$: note("c3")\n$: note("e3")'
     const { editor, removedIds, changeViewZones } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll'], ['$1', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handle = addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    const handle = addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
     handle.cleanup()
 
     // changeViewZones called once for add, once for remove
@@ -134,14 +135,15 @@ describe('addInlineViewZones', () => {
   it('second call triggers cleanup of first call zones before adding new ones', () => {
     const code = '$: note("c3")'
     const { editor, changeViewZones } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handle1 = addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    const handle1 = addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
     // Simulate external cleanup tracking by simulating what StrudelEditor does:
     // call cleanup() before adding new zones (the caller's responsibility).
     handle1.cleanup()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
 
     // add, remove (cleanup1), add (second call) = 3
     expect(changeViewZones).toHaveBeenCalledTimes(3)
@@ -155,7 +157,7 @@ describe('addInlineViewZones', () => {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handle = addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    const handle = addInlineViewZones(editor as any, null, null, new Map(), new Map(), mockVizDescriptors as any)
 
     expect(typeof handle.cleanup).toBe('function')
     expect(typeof handle.pause).toBe('function')
@@ -169,25 +171,24 @@ describe('addInlineViewZones', () => {
   it('adds zone afterLineNumber matching the $: line (1-indexed)', () => {
     const code = 'setcps(0.5)\n$: note("c3")'
     const { editor, addedZones } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
 
     // Line 2 (1-indexed) is the $: line
     expect(addedZones[0].afterLineNumber).toBe(2)
   })
 
-  it('passes source to mountVizRenderer', () => {
+  it('resolves factory from vizDescriptors by vizName', () => {
     const code = '$: note("c3")'
     const { editor } = makeEditor(code)
-    const source = vi.fn(() => ({ mount: vi.fn(), resize: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn() }))
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, source, null, null, new Map())
+    const vizRequests = new Map([['$0', 'pianoroll']])
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any) // eslint-disable-line @typescript-eslint/no-explicit-any
 
     expect(mountVizRenderer).toHaveBeenCalledWith(
       expect.any(HTMLDivElement),
-      source,
+      mockVizDescriptors[0].factory,
       expect.any(Object),
       expect.any(Object),
       expect.any(Function)
@@ -199,9 +200,10 @@ describe('addInlineViewZones', () => {
     const { editor } = makeEditor(code)
     const mockScheduler = { now: vi.fn(), query: vi.fn() }
     const trackSchedulers = new Map([['$0', mockScheduler]])
+    const vizRequests = new Map([['$0', 'pianoroll'], ['$1', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, mockSource, null, null, trackSchedulers)
+    addInlineViewZones(editor as any, null, null, trackSchedulers, vizRequests, mockVizDescriptors as any)
 
     // mountVizRenderer called twice; first call should have schedulerRef.current === mockScheduler
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -212,9 +214,10 @@ describe('addInlineViewZones', () => {
   it('uses editor.getLayoutInfo().contentWidth for initial size', () => {
     const code = '$: note("c3")'
     const { editor } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((mountVizRenderer as any).mock.calls[0][3]).toEqual({ w: 800, h: 120 })
@@ -223,9 +226,10 @@ describe('addInlineViewZones', () => {
   it('handle.pause() calls renderer.pause() on all renderers', () => {
     const code = '$: note("c3")\n$: note("e3")'
     const { editor } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll'], ['$1', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handle = addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    const handle = addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
     handle.pause()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -236,13 +240,42 @@ describe('addInlineViewZones', () => {
   it('handle.resume() calls renderer.resume() on all renderers', () => {
     const code = '$: note("c3")\n$: note("e3")'
     const { editor } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll'], ['$1', 'pianoroll']])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handle = addInlineViewZones(editor as any, mockSource, null, null, new Map())
+    const handle = addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any)
     handle.resume()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mockRenderer = (mountVizRenderer as any).mock.results[0].value.renderer
     expect(mockRenderer.resume).toHaveBeenCalled()
+  })
+
+  it('adds zone only for $: lines present in vizRequests', () => {
+    const code = '$: note("c3")\n$: note("e3")'
+    const { editor, addedZones } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll']])  // only first pattern
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(addedZones).toHaveLength(1)
+  })
+
+  it('logs warning and skips zone for unknown vizName', () => {
+    const code = '$: note("c3")'
+    const { editor, addedZones } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'nonexistent']])
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(addedZones).toHaveLength(0)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('nonexistent'))
+    warnSpy.mockRestore()
+  })
+
+  it('places zone after last line of multi-line pattern block', () => {
+    const code = '$: note("c4")\n  .s("sine")\n  .viz("pianoroll")'
+    const { editor, addedZones } = makeEditor(code)
+    const vizRequests = new Map([['$0', 'pianoroll']])
+    addInlineViewZones(editor as any, null, null, new Map(), vizRequests, mockVizDescriptors as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(addedZones).toHaveLength(1)
+    expect(addedZones[0].afterLineNumber).toBe(3)  // after last continuation line
   })
 })
