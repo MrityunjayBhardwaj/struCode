@@ -95,6 +95,9 @@ export function StrudelEditor({
   )
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null)
   const [patternScheduler, setPatternScheduler] = useState<PatternScheduler | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [vizCollapsed, setVizCollapsed] = useState(true)
+  const [autoRefresh, setAutoRefresh] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<StrudelEngine | null>(null)
@@ -264,6 +267,32 @@ export function StrudelEditor({
     [isPlaying, handlePlay, handleStop]
   )
 
+  // Auto-refresh: re-evaluate on code change (debounced 500ms) while playing
+  const handlePlayRef = useRef(handlePlay)
+  handlePlayRef.current = handlePlay
+  const codeRef = useRef(code)
+  codeRef.current = code
+  const prevCodeRef = useRef(code)
+  useEffect(() => {
+    if (!autoRefresh || !isPlaying) return
+    if (codeRef.current === prevCodeRef.current) return
+    const id = setTimeout(() => {
+      prevCodeRef.current = codeRef.current
+      handlePlayRef.current()
+    }, 500)
+    return () => clearTimeout(id)
+  }, [autoRefresh, isPlaying, code])
+
+  // Esc key exits fullscreen
+  useEffect(() => {
+    if (!isFullscreen) return
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsFullscreen(false)
+    }
+    window.addEventListener('keydown', handleEsc)
+    return () => window.removeEventListener('keydown', handleEsc)
+  }, [isFullscreen])
+
   // Auto-play on mount
   useEffect(() => {
     if (autoPlay) handlePlay()
@@ -276,6 +305,12 @@ export function StrudelEditor({
   const monoTheme: 'dark' | 'light' =
     typeof theme === 'string' ? theme : 'dark'
 
+  const handleToggleFullscreen = useCallback(() => {
+    setIsFullscreen(prev => !prev)
+  }, [])
+
+  const showVizPanel = _visualizer !== 'off' && !isFullscreen
+
   return (
     <div
       ref={containerRef}
@@ -284,36 +319,80 @@ export function StrudelEditor({
         display: 'flex',
         flexDirection: 'column',
         background: 'var(--background)',
-        border: '1px solid var(--border)',
-        borderRadius: 8,
+        border: isFullscreen ? 'none' : '1px solid var(--border)',
+        borderRadius: isFullscreen ? 0 : 8,
         overflow: 'hidden',
         fontFamily: 'var(--font-mono)',
+        ...(isFullscreen ? {
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+        } : {}),
       }}
     >
       {showToolbar && (
-        <Toolbar
-          isPlaying={isPlaying}
-          bpm={bpm}
-          error={errorMsg}
-          isExporting={isExporting}
-          onPlay={handlePlay}
-          onStop={handleStop}
-          onExport={handleExport}
-        />
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <div style={{ flex: 1 }}>
+            <Toolbar
+              isPlaying={isPlaying}
+              bpm={bpm}
+              error={errorMsg}
+              isExporting={isExporting}
+              onPlay={handlePlay}
+              onStop={handleStop}
+              onExport={handleExport}
+            />
+          </div>
+          <button
+            onClick={() => setAutoRefresh(prev => !prev)}
+            title={autoRefresh ? 'Live mode ON — click to disable' : 'Live mode: auto-update on code change while playing'}
+            style={{
+              background: autoRefresh ? 'rgba(196, 181, 253, 0.15)' : 'none',
+              border: autoRefresh ? '1px solid rgba(196, 181, 253, 0.3)' : '1px solid transparent',
+              borderRadius: 4,
+              color: autoRefresh ? '#c4b5fd' : 'var(--text-secondary, rgba(255,255,255,0.5))',
+              cursor: 'pointer',
+              padding: '3px 7px',
+              fontSize: 11,
+              fontFamily: 'inherit',
+              marginRight: 2,
+            }}
+          >
+            {autoRefresh ? '⟳ live' : '⟳'}
+          </button>
+          <button
+            onClick={handleToggleFullscreen}
+            title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-secondary, rgba(255,255,255,0.5))',
+              cursor: 'pointer',
+              padding: '4px 8px',
+              fontSize: 16,
+              lineHeight: 1,
+              marginRight: 4,
+            }}
+          >
+            {isFullscreen ? '⊠' : '⛶'}
+          </button>
+        </div>
       )}
 
-      <VizPicker
-        descriptors={vizDescriptors}
-        activeId={activeViz}
-        onIdChange={setActiveViz}
-        showVizPicker={showVizPicker ?? true}
-      />
+      {!isFullscreen && (
+        <VizPicker
+          descriptors={vizDescriptors}
+          activeId={activeViz}
+          onIdChange={setActiveViz}
+          showVizPicker={showVizPicker ?? true}
+        />
+      )}
 
       <div style={{ flex: 1, minHeight: 0 }}>
         <StrudelMonaco
           code={code}
           onChange={handleCodeChange}
-          height={height}
+          height={isFullscreen ? '100%' : height}
           theme={monoTheme}
           readOnly={readOnly}
           onMount={handleMonacoMount}
@@ -321,15 +400,52 @@ export function StrudelEditor({
         />
       </div>
 
-      {_visualizer !== 'off' && (
-        <VizPanel
-          key={activeViz}
-          vizHeight={vizHeight}
-          hapStream={hapStream}
-          analyser={analyser}
-          scheduler={patternScheduler}
-          source={vizDescriptors.find(d => d.id === activeViz)?.factory ?? vizDescriptors[0].factory}
-        />
+      {showVizPanel && (
+        <>
+          <button
+            onClick={() => setVizCollapsed(prev => !prev)}
+            style={{
+              background: 'var(--surface, rgba(255,255,255,0.03))',
+              border: 'none',
+              borderTop: '1px solid var(--border, rgba(255,255,255,0.1))',
+              color: 'var(--text-secondary, rgba(255,255,255,0.5))',
+              cursor: 'pointer',
+              padding: '4px 12px',
+              fontSize: 11,
+              fontFamily: 'inherit',
+              textAlign: 'left',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <span style={{
+              display: 'inline-block',
+              transform: vizCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+              transition: 'transform 0.15s ease',
+              fontSize: 10,
+            }}>▼</span>
+            Visualizer — {vizDescriptors.find(d => d.id === activeViz)?.label ?? activeViz}
+          </button>
+          {!vizCollapsed && (
+            <>
+              <VizPicker
+                descriptors={vizDescriptors}
+                activeId={activeViz}
+                onIdChange={setActiveViz}
+                showVizPicker={showVizPicker ?? true}
+              />
+              <VizPanel
+                key={activeViz}
+                vizHeight={vizHeight}
+                hapStream={hapStream}
+                analyser={analyser}
+                scheduler={patternScheduler}
+                source={vizDescriptors.find(d => d.id === activeViz)?.factory ?? vizDescriptors[0].factory}
+              />
+            </>
+          )}
+        </>
       )}
     </div>
   )
