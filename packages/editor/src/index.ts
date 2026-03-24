@@ -1,9 +1,12 @@
-// Main component
+// Main components
 export { StrudelEditor } from './StrudelEditor'
 export type { StrudelEditorProps } from './StrudelEditor'
+export { LiveCodingEditor } from './LiveCodingEditor'
+export type { LiveCodingEditorProps } from './LiveCodingEditor'
 
 // Engine
 export { StrudelEngine } from './engine/StrudelEngine'
+export type { LiveCodingEngine, EngineComponents } from './engine/LiveCodingEngine'
 export { HapStream } from './engine/HapStream'
 export type { HapEvent } from './engine/HapStream'
 export { WavEncoder } from './engine/WavEncoder'
