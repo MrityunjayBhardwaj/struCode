@@ -48,4 +48,27 @@ describe('DEFAULT_VIZ_DESCRIPTORS', () => {
     const b = d.factory()
     expect(a).not.toBe(b)
   })
+
+  it('every descriptor has a requires[] array', () => {
+    for (const d of DEFAULT_VIZ_DESCRIPTORS) {
+      expect(Array.isArray(d.requires), `${d.id} should have requires[]`).toBe(true)
+      expect(d.requires!.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('requires[] contains only valid EngineComponents keys', () => {
+    const validKeys = ['streaming', 'queryable', 'audio', 'inlineViz']
+    for (const d of DEFAULT_VIZ_DESCRIPTORS) {
+      for (const req of d.requires ?? []) {
+        expect(validKeys, `${d.id} has invalid requires key "${req}"`).toContain(req)
+      }
+    }
+  })
+
+  it('factory returns a VizRenderer with update() method', () => {
+    for (const d of DEFAULT_VIZ_DESCRIPTORS) {
+      const renderer = d.factory()
+      expect(typeof renderer.update).toBe('function')
+    }
+  })
 })

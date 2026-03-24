@@ -79,4 +79,71 @@ describe('VizPicker', () => {
     expect(scopeBtn.style.background).toBe('var(--accent-dim)')
     expect(scopeBtn.style.outline).toBe('1px solid var(--accent)')
   })
+
+  it('disables descriptors whose requires are not met by availableComponents', () => {
+    const onIdChange = vi.fn()
+    render(
+      <VizPicker
+        descriptors={DEFAULT_VIZ_DESCRIPTORS}
+        activeId="pianoroll"
+        onIdChange={onIdChange}
+        availableComponents={['streaming']}
+      />
+    )
+    // scope requires ['audio'] -- should be disabled
+    const scopeBtn = screen.getByTestId('viz-btn-scope')
+    expect(scopeBtn.getAttribute('data-disabled')).toBe('true')
+    expect((scopeBtn as HTMLButtonElement).disabled).toBe(true)
+
+    // spiral requires ['streaming'] -- should be enabled
+    const spiralBtn = screen.getByTestId('viz-btn-spiral')
+    expect(spiralBtn.getAttribute('data-disabled')).toBeNull()
+    expect((spiralBtn as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('all descriptors enabled when availableComponents is undefined', () => {
+    const onIdChange = vi.fn()
+    render(
+      <VizPicker
+        descriptors={DEFAULT_VIZ_DESCRIPTORS}
+        activeId="pianoroll"
+        onIdChange={onIdChange}
+      />
+    )
+    const scopeBtn = screen.getByTestId('viz-btn-scope')
+    expect((scopeBtn as HTMLButtonElement).disabled).toBe(false)
+    const spectrumBtn = screen.getByTestId('viz-btn-spectrum')
+    expect((spectrumBtn as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('descriptor with no requires is always enabled', () => {
+    const descriptorNoRequires = [
+      { id: 'custom', label: 'Custom', factory: () => ({ mount: vi.fn(), update: vi.fn(), resize: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn() }) },
+    ]
+    const onIdChange = vi.fn()
+    render(
+      <VizPicker
+        descriptors={descriptorNoRequires as any}
+        activeId="custom"
+        onIdChange={onIdChange}
+        availableComponents={['streaming']}
+      />
+    )
+    const btn = screen.getByTestId('viz-btn-custom')
+    expect((btn as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('disabled button does not fire onIdChange', () => {
+    const onIdChange = vi.fn()
+    render(
+      <VizPicker
+        descriptors={DEFAULT_VIZ_DESCRIPTORS}
+        activeId="pianoroll"
+        onIdChange={onIdChange}
+        availableComponents={['streaming']}
+      />
+    )
+    fireEvent.click(screen.getByTestId('viz-btn-scope'))
+    expect(onIdChange).not.toHaveBeenCalled()
+  })
 })
