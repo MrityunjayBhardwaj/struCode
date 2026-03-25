@@ -58,6 +58,8 @@ export interface LiveCodingEditorProps {
 
   // Advanced
   engineRef?: React.MutableRefObject<LiveCodingEngine | null>
+  /** Monaco language ID (e.g. 'strudel', 'sonicpi'). Defaults to 'strudel'. */
+  language?: string
 }
 
 const DEFAULT_CODE = `// Welcome to struCode`
@@ -87,6 +89,7 @@ export function LiveCodingEditor({
   isExporting: isExportingProp = false,
   onExport: onExportProp,
   engineRef: engineRefProp,
+  language,
 }: LiveCodingEditorProps) {
   const isControlled = controlledCode !== undefined
   const [internalCode, setInternalCode] = useState(
@@ -357,6 +360,7 @@ export function LiveCodingEditor({
           readOnly={readOnly}
           onMount={handleMonacoMount}
           soundNames={soundNames}
+          language={language}
         />
       </div>
 

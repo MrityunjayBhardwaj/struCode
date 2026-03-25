@@ -5,7 +5,7 @@ import MonacoEditorRaw, { type OnMount } from '@monaco-editor/react'
 const MonacoEditor = MonacoEditorRaw as any
 import type * as Monaco from 'monaco-editor'
 import { defineStrudelMonacoTheme } from '../theme/monacoTheme'
-import { registerStrudelLanguage } from './language'
+import { registerStrudelLanguage, registerSonicPiLanguage } from './language'
 
 const DEFAULT_CODE = `// Welcome to struCode
 setcps(120/240)
@@ -22,6 +22,8 @@ interface StrudelMonacoProps {
     monaco: typeof Monaco
   ) => void
   soundNames?: string[]
+  /** Monaco language ID. Defaults to 'strudel'. Use 'sonicpi' for Sonic Pi code. */
+  language?: string
 }
 
 export function StrudelMonaco({
@@ -32,6 +34,7 @@ export function StrudelMonaco({
   readOnly = false,
   onMount,
   soundNames = [],
+  language = 'strudel',
 }: StrudelMonacoProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
@@ -41,6 +44,7 @@ export function StrudelMonaco({
     monacoRef.current = monaco
     defineStrudelMonacoTheme(monaco)
     registerStrudelLanguage(monaco)
+    registerSonicPiLanguage(monaco)
 
     monaco.editor.setTheme(
       theme === 'dark' ? 'strucode-dark' : 'strucode-light'
@@ -122,7 +126,7 @@ export function StrudelMonaco({
   return (
     <MonacoEditor
       height={height}
-      defaultLanguage="strudel"
+      defaultLanguage={language}
       value={code || DEFAULT_CODE}
       onChange={(val: string | undefined) => onChange?.(val ?? '')}
       onMount={handleMount}
