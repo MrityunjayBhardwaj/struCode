@@ -16,6 +16,12 @@ export function defineStrudelMonacoTheme(monaco: typeof Monaco): void {
       { token: 'number',                foreground: 'fb923c' },
       { token: 'comment',               foreground: '6b7280', fontStyle: 'italic' },
       { token: 'keyword',               foreground: 'c4b5fd' },
+      // Sonic Pi tokens
+      { token: 'sonicpi.function',      foreground: '93c5fd', fontStyle: 'bold' },
+      { token: 'sonicpi.music',         foreground: 'a78bfa' },
+      { token: 'sonicpi.symbol',        foreground: 'f472b6' },
+      { token: 'sonicpi.note',          foreground: '86efac' },
+      { token: 'sonicpi.kwarg',         foreground: '6ee7b7' },
     ],
     colors: {
       'editor.background':           '#090912',

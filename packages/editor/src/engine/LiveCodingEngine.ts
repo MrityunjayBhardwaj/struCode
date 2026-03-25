@@ -30,6 +30,12 @@ export interface InlineVizComponent {
    * - afterLine: 1-indexed line number after which to place the view zone
    */
   vizRequests: Map<string, { vizId: string; afterLine: number }>
+  /**
+   * Optional per-track HapStreams for scoped inline viz.
+   * When present, each inline zone subscribes to its track's stream only.
+   * When absent, falls back to the global streaming component.
+   */
+  trackStreams?: Map<string, HapStream>
 }
 
 /**

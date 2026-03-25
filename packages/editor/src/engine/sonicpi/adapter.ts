@@ -4,7 +4,8 @@
  *
  * Responsibilities of the ADAPTER (not the engine):
  *  - SuperSonic CDN loading (bundler-proof dynamic import)
- *  - HapStream bridging (sonicPiWeb events → Motif events)
+ *  - SoundEvent → HapEvent bridging (sonicPiWeb events → Motif events)
+ *  - loc computation (engine provides srcLine, adapter computes char offsets)
  *  - Viz request capture (viz() injected here, not in the engine)
  *  - inlineViz component assembly (afterLine computed from code)
  *
@@ -15,6 +16,9 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — resolved at build time via relative path to sibling project
 import { SonicPiEngine as RawSonicPiEngine } from '../../../../../../sonicPiWeb/src/engine/SonicPiEngine'
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import type { SoundEvent } from '../../../../../../sonicPiWeb/src/engine/SoundEventStream'
 
 import type { LiveCodingEngine, EngineComponents } from '../LiveCodingEngine'
 import { HapStream } from '../HapStream'
@@ -39,18 +43,17 @@ function parseVizRequests(code: string): Map<string, { vizId: string; afterLine:
   const requests = new Map<string, { vizId: string; afterLine: number }>()
   const lines = code.split('\n')
 
-  // Match both JS and Ruby live_loop declarations
   const loopPattern = /live_loop\s*(?:\(\s*["'](\w+)["']|:(\w+)\s)/
-
-  // Track loop blocks: name → { startLine, endLine }
   const loopBlocks = new Map<string, { start: number; end: number }>()
 
   for (let i = 0; i < lines.length; i++) {
-    const loopMatch = lines[i].match(loopPattern)
+    const trimmed = lines[i].trim()
+    // Skip commented-out lines
+    if (trimmed.startsWith('#') || trimmed.startsWith('//')) continue
+    const loopMatch = trimmed.match(loopPattern)
     if (loopMatch) {
       const name = loopMatch[1] ?? loopMatch[2]
       const start = i
-      // Find closing: "end" for Ruby, "}" / ")" for JS
       let depth = 0
       let end = lines.length - 1
       for (let j = i; j < lines.length; j++) {
@@ -64,7 +67,6 @@ function parseVizRequests(code: string): Map<string, { vizId: string; afterLine:
     }
   }
 
-  // Source 1: viz() function calls inside live_loop blocks
   const vizCallPattern = /\bviz\s+:(\w+)|viz\s*\(\s*["':]+(\w+)["']?\s*\)/
   for (const [name, block] of loopBlocks) {
     for (let i = block.start; i <= block.end; i++) {
@@ -72,28 +74,35 @@ function parseVizRequests(code: string): Map<string, { vizId: string; afterLine:
       if (vizMatch) {
         requests.set(name, {
           vizId: vizMatch[1] ?? vizMatch[2],
-          afterLine: block.end + 1, // 1-indexed, after closing end/}
+          afterLine: block.end + 1,
         })
-        break // one viz per loop
+        break
       }
     }
   }
 
-  // Source 2: Comment-based @viz (fallback for tracks without runtime viz)
+  // Source 2: Comment-based @viz — only attach to an ACTIVE (uncommented) preceding loop
   const commentVizPattern = /(?:\/\/|#)\s*@viz\s+(\w+)/
   for (let i = 0; i < lines.length; i++) {
     const vizMatch = lines[i].match(commentVizPattern)
     if (vizMatch) {
-      // Find preceding loop
-      let trackName = `track_${i}`
+      // Scan backwards for a preceding live_loop that is NOT commented out
+      let trackName: string | null = null
       for (let j = i - 1; j >= 0; j--) {
-        const loopMatch = lines[j].match(loopPattern)
+        const trimmed = lines[j].trim()
+        // Skip commented-out lines
+        if (trimmed.startsWith('#') || trimmed.startsWith('//')) continue
+        const loopMatch = trimmed.match(loopPattern)
         if (loopMatch) {
-          trackName = loopMatch[1] ?? loopMatch[2]
+          const name = loopMatch[1] ?? loopMatch[2]
+          // Only attach if this loop is in our active loopBlocks
+          if (loopBlocks.has(name)) {
+            trackName = name
+          }
           break
         }
       }
-      if (!requests.has(trackName)) {
+      if (trackName && !requests.has(trackName)) {
         requests.set(trackName, { vizId: vizMatch[1], afterLine: i + 1 })
       }
     }
@@ -107,10 +116,11 @@ function parseVizRequests(code: string): Map<string, { vizId: string; afterLine:
  * The engine doesn't know about viz — it's an adapter concern.
  */
 function stripVizCalls(code: string): string {
+  // Use [ \t] instead of \s to avoid matching \n — preserves line count
   return code
-    .replace(/^\s*viz\s+:\w+\s*$/gm, '')       // Ruby: viz :scope
-    .replace(/^\s*viz\s*\(\s*["']\w+["']\s*\)\s*$/gm, '') // JS: viz("scope")
-    .replace(/^\s*(?:\/\/|#)\s*@viz\s+\w+\s*$/gm, '')     // Comment: # @viz scope
+    .replace(/^[ \t]*viz[ \t]+:\w+[ \t]*$/gm, '')
+    .replace(/^[ \t]*viz[ \t]*\([ \t]*["']\w+["'][ \t]*\)[ \t]*$/gm, '')
+    .replace(/^[ \t]*(?:\/\/|#)[ \t]*@viz[ \t]+\w+[ \t]*$/gm, '')
 }
 
 export class SonicPiEngine implements LiveCodingEngine {
@@ -119,6 +129,11 @@ export class SonicPiEngine implements LiveCodingEngine {
   private runtimeErrorHandler: ((err: Error) => void) | null = null
   private options: { schedAheadTime?: number }
   private vizRequests = new Map<string, { vizId: string; afterLine: number }>()
+  /** Original code lines + char offsets — for computing loc from srcLine */
+  private originalLines: string[] = []
+  private lineOffsets: number[] = []
+  /** Per-track HapStreams for scoped inline viz (keyed by live_loop name) */
+  private trackStreams = new Map<string, HapStream>()
 
   constructor(options?: { schedAheadTime?: number }) {
     this.options = options ?? {}
@@ -142,22 +157,37 @@ export class SonicPiEngine implements LiveCodingEngine {
 
     await this.raw.init()
 
-    // Forward sonicPiWeb's HapEvents into Motif's HapStream
-    // sonicPiWeb emits flat HapEvents — forward directly via emitEvent()
-    this.raw.components.streaming?.hapStream.on(
-      (e: { audioTime: number; audioDuration: number; scheduledAheadMs: number;
-             midiNote: number | null; s: string | null; color: string | null;
-             loc: Array<{ start: number; end: number }> | null }) => {
+    // Forward sonicPiWeb's SoundEvents into Motif's HapStream
+    // Engine provides srcLine (raw integer), adapter computes loc (char offsets)
+    // Events are routed to both the global stream AND per-track streams
+    this.raw.components.streaming?.eventStream.on(
+      (e: SoundEvent) => {
+        // Compute loc from srcLine + original code
+        let loc: Array<{ start: number; end: number }> | null = null
+        if (e.srcLine && e.srcLine > 0 && e.srcLine <= this.originalLines.length) {
+          const idx = e.srcLine - 1 // srcLine is 1-based
+          const start = this.lineOffsets[idx]
+          const end = start + this.originalLines[idx].length
+          loc = [{ start, end }]
+        }
+
         const event: HapEvent = {
           audioTime: e.audioTime,
           audioDuration: e.audioDuration,
           scheduledAheadMs: e.scheduledAheadMs,
           midiNote: e.midiNote,
           s: e.s,
-          color: e.color,
-          loc: e.loc,
+          color: null,
+          loc,
         }
+
+        // Global stream (for highlighting and panel viz)
         this.hapStream.emitEvent(event)
+
+        // Per-track stream (for scoped inline viz)
+        if (e.trackId) {
+          this.trackStreams.get(e.trackId)?.emitEvent(event)
+        }
       },
     )
 
@@ -169,13 +199,55 @@ export class SonicPiEngine implements LiveCodingEngine {
   async evaluate(code: string): Promise<{ error?: Error }> {
     if (!this.raw) return { error: new Error('Call init() before evaluate()') }
 
+    // Build line offset table from original code (for loc computation)
+    this.originalLines = code.split('\n')
+    this.lineOffsets = []
+    let offset = 0
+    for (const line of this.originalLines) {
+      this.lineOffsets.push(offset)
+      offset += line.length + 1
+    }
+
     // Capture viz requests BEFORE stripping (adapter concern)
     this.vizRequests = parseVizRequests(code)
+
+    // Pre-create per-track HapStreams for all tracks with viz requests.
+    // Reuse existing streams (keeps subscriptions alive across re-evaluate),
+    // create new ones for new tracks, dispose removed ones.
+    const activeTrackIds = new Set(this.vizRequests.keys())
+    for (const id of activeTrackIds) {
+      if (!this.trackStreams.has(id)) {
+        this.trackStreams.set(id, new HapStream())
+      }
+    }
+    for (const [id, stream] of this.trackStreams) {
+      if (!activeTrackIds.has(id)) {
+        stream.dispose()
+        this.trackStreams.delete(id)
+      }
+    }
 
     // Strip viz calls — engine doesn't know about visualization
     const cleanCode = stripVizCalls(code)
 
-    return this.raw.evaluate(cleanCode)
+    // Mute audio during re-evaluate to silence stale loop iterations.
+    // The old loop body may still be mid-sleep — when it resolves, it could
+    // fire one more round of play/sample before the hot-swap takes effect.
+    // Suspending the AudioContext silences that transitional burst.
+    const audioCtx = this.raw.components.audio?.audioCtx
+    const wasRunning = audioCtx?.state === 'running'
+    if (wasRunning) {
+      await audioCtx!.suspend()
+    }
+
+    const result = await this.raw.evaluate(cleanCode)
+
+    // Resume after a brief delay — enough for the old iteration to drain
+    if (wasRunning && audioCtx) {
+      setTimeout(() => audioCtx.resume(), 80)
+    }
+
+    return result
   }
 
   play(): void { this.raw?.play() }
@@ -183,9 +255,13 @@ export class SonicPiEngine implements LiveCodingEngine {
 
   dispose(): void {
     this.hapStream.dispose()
+    for (const stream of this.trackStreams.values()) stream.dispose()
+    this.trackStreams.clear()
     this.raw?.dispose()
     this.raw = null
     this.vizRequests.clear()
+    this.originalLines = []
+    this.lineOffsets = []
   }
 
   setRuntimeErrorHandler(handler: (err: Error) => void): void {
@@ -204,7 +280,10 @@ export class SonicPiEngine implements LiveCodingEngine {
     if (rawComponents.audio) bag.audio = rawComponents.audio
 
     if (this.vizRequests.size > 0) {
-      bag.inlineViz = { vizRequests: this.vizRequests }
+      bag.inlineViz = {
+        vizRequests: this.vizRequests,
+        trackStreams: this.trackStreams.size > 0 ? this.trackStreams : undefined,
+      }
     }
 
     return bag

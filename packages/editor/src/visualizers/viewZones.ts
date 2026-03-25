@@ -58,10 +58,14 @@ export function addInlineViewZones(
       }
 
       const trackScheduler = components.queryable?.trackSchedulers.get(trackKey) ?? null
+      const trackStream = components.inlineViz?.trackStreams?.get(trackKey)
 
-      // Build per-zone component bag: streaming + audio from engine, queryable scoped to track
+      // Build per-zone component bag scoped to this track.
+      // Per-track HapStream isolates event data (highlighting).
+      // Audio component stays global — per-track audio requires engine-level bus routing.
       const zoneComponents: Partial<EngineComponents> = {
         ...components,
+        ...(trackStream ? { streaming: { hapStream: trackStream } } : {}),
         queryable: {
           scheduler: trackScheduler,
           trackSchedulers: components.queryable?.trackSchedulers ?? new Map(),
