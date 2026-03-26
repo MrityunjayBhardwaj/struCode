@@ -1,13 +1,13 @@
 /**
- * Port of Strudel's drawFrequencyScope to p5.js.
- * Live frequency-domain bars: each FFT bin → a vertical bar symmetric around pos=0.75.
- * linear X axis (bin 0..N = low→high freq), bar height = normalized dB amplitude.
- * Mirrors Strudel defaults: scale=0.25, pos=0.75, lean=0.5, min=-100, max=0.
+ * Frequency scope with dual data paths:
+ * 1. AnalyserNode available → live FFT bars (real audio frequency domain)
+ * 2. PatternScheduler only → note frequency bars from events (per-track)
  */
 import type { RefObject } from 'react'
 import type p5 from 'p5'
 import type { HapStream } from '../../engine/HapStream'
 import type { PatternScheduler } from '../types'
+import type { NormalizedHap } from '../../engine/NormalizedHap'
 
 const BG = '#090912'
 const COLOR = '#75baff'
@@ -21,10 +21,14 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v))
 }
 
+function midiToFreq(midi: number): number {
+  return 440 * Math.pow(2, (midi - 69) / 12)
+}
+
 export function FscopeSketch(
   _hapStreamRef: RefObject<HapStream | null>,
   analyserRef: RefObject<AnalyserNode | null>,
-  _schedulerRef: RefObject<PatternScheduler | null>
+  schedulerRef: RefObject<PatternScheduler | null>
 ): (p: p5) => void {
   return (p: p5) => {
     p.setup = () => {
@@ -38,7 +42,7 @@ export function FscopeSketch(
       const H = p.height
       p.background(BG)
 
-      // Baseline at pos * H
+      // Baseline
       p.stroke(40, 50, 70)
       p.strokeWeight(0.5)
       p.noFill()
@@ -46,21 +50,62 @@ export function FscopeSketch(
       p.noStroke()
 
       const analyser = analyserRef.current
-      if (!analyser) return
+      if (analyser) {
+        // Path 1: Real FFT bars from AnalyserNode
+        const bufferSize = analyser.frequencyBinCount
+        const data = new Float32Array(bufferSize)
+        analyser.getFloatFrequencyData(data)
 
-      const bufferSize = analyser.frequencyBinCount
-      const data = new Float32Array(bufferSize)
-      analyser.getFloatFrequencyData(data)
+        const sliceWidth = W / bufferSize
+        p.fill(COLOR)
 
-      const sliceWidth = W / bufferSize
-      p.fill(COLOR)
+        for (let i = 0; i < bufferSize; i++) {
+          const normalized = clamp((data[i] - MIN_DB) / (MAX_DB - MIN_DB), 0, 1)
+          const v = normalized * SCALE
+          const barH = v * H
+          const barY = (POS - v * LEAN) * H
+          p.rect(i * sliceWidth, barY, Math.max(sliceWidth, 1), barH)
+        }
+        return
+      }
 
-      for (let i = 0; i < bufferSize; i++) {
-        const normalized = clamp((data[i] - MIN_DB) / (MAX_DB - MIN_DB), 0, 1)
-        const v = normalized * SCALE
+      // Path 2: Note frequency bars from PatternScheduler events
+      const scheduler = schedulerRef.current
+      if (!scheduler) return
+
+      let now: number
+      try { now = scheduler.now() } catch { return }
+
+      let haps: NormalizedHap[]
+      try { haps = scheduler.query(now - 0.2, now + 0.05) } catch { return }
+
+      const MIN_FREQ = 30
+      const MAX_FREQ = 4000
+      const NUM_BINS = 64
+
+      // Accumulate energy per frequency bin from active events
+      const bins = new Float32Array(NUM_BINS)
+      for (const hap of haps) {
+        const freq = hap.freq ?? (typeof hap.note === 'number' ? midiToFreq(hap.note) : null)
+        if (freq === null || freq < MIN_FREQ) continue
+
+        const logPos = Math.log(freq / MIN_FREQ) / Math.log(MAX_FREQ / MIN_FREQ)
+        const binIdx = clamp(Math.floor(logPos * NUM_BINS), 0, NUM_BINS - 1)
+        const age = now - hap.begin
+        const decay = Math.max(0, 1 - age / 0.5)
+        bins[binIdx] = Math.max(bins[binIdx], decay * hap.gain)
+      }
+
+      const sliceWidth = W / NUM_BINS
+      for (let i = 0; i < NUM_BINS; i++) {
+        if (bins[i] <= 0) continue
+        const v = bins[i] * SCALE
         const barH = v * H
         const barY = (POS - v * LEAN) * H
-        p.rect(i * sliceWidth, barY, Math.max(sliceWidth, 1), barH)
+        const col = p.color(COLOR)
+        ;(col as any).setAlpha(bins[i] * 220)
+        p.fill(col)
+        p.rect(i * sliceWidth, barY, Math.max(sliceWidth - 1, 1), barH)
       }
     }
   }

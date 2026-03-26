@@ -82,18 +82,28 @@ describe('VizPicker', () => {
 
   it('disables descriptors whose requires are not met by availableComponents', () => {
     const onIdChange = vi.fn()
+    const mockFactory = () => ({ mount: vi.fn(), update: vi.fn(), resize: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn() })
+    const descriptors = [
+      ...DEFAULT_VIZ_DESCRIPTORS,
+      { id: 'audio-only', label: 'Audio Only', requires: ['audio' as const], factory: mockFactory },
+    ]
     render(
       <VizPicker
-        descriptors={DEFAULT_VIZ_DESCRIPTORS}
+        descriptors={descriptors as any}
         activeId="pianoroll"
         onIdChange={onIdChange}
         availableComponents={['streaming']}
       />
     )
-    // scope requires ['audio'] -- should be disabled
+    // audio-only requires ['audio'] -- should be disabled when only streaming available
+    const audioBtn = screen.getByTestId('viz-btn-audio-only')
+    expect(audioBtn.getAttribute('data-disabled')).toBe('true')
+    expect((audioBtn as HTMLButtonElement).disabled).toBe(true)
+
+    // scope requires ['streaming'] -- should be enabled (dual data path)
     const scopeBtn = screen.getByTestId('viz-btn-scope')
-    expect(scopeBtn.getAttribute('data-disabled')).toBe('true')
-    expect((scopeBtn as HTMLButtonElement).disabled).toBe(true)
+    expect(scopeBtn.getAttribute('data-disabled')).toBeNull()
+    expect((scopeBtn as HTMLButtonElement).disabled).toBe(false)
 
     // spiral requires ['streaming'] -- should be enabled
     const spiralBtn = screen.getByTestId('viz-btn-spiral')
@@ -135,15 +145,20 @@ describe('VizPicker', () => {
 
   it('disabled button does not fire onIdChange', () => {
     const onIdChange = vi.fn()
+    const mockFactory = () => ({ mount: vi.fn(), update: vi.fn(), resize: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn() })
+    const descriptors = [
+      ...DEFAULT_VIZ_DESCRIPTORS,
+      { id: 'audio-only', label: 'Audio Only', requires: ['audio' as const], factory: mockFactory },
+    ]
     render(
       <VizPicker
-        descriptors={DEFAULT_VIZ_DESCRIPTORS}
+        descriptors={descriptors as any}
         activeId="pianoroll"
         onIdChange={onIdChange}
         availableComponents={['streaming']}
       />
     )
-    fireEvent.click(screen.getByTestId('viz-btn-scope'))
+    fireEvent.click(screen.getByTestId('viz-btn-audio-only'))
     expect(onIdChange).not.toHaveBeenCalled()
   })
 })

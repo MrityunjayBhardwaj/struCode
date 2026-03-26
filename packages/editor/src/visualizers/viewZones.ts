@@ -2,6 +2,7 @@ import type * as Monaco from 'monaco-editor'
 import type { EngineComponents } from '../engine/LiveCodingEngine'
 import type { VizRenderer, VizDescriptor } from './types'
 import { mountVizRenderer } from './mountVizRenderer'
+import { BufferedScheduler } from '../engine/BufferedScheduler'
 
 const VIEW_ZONE_HEIGHT = 150
 
@@ -21,17 +22,11 @@ export interface InlineZoneHandle {
 /**
  * Imperatively adds inline visualization view zones using engine-provided placement info.
  *
- * Named `viewZones.ts` (not `useViewZones.ts`) because this exports a plain imperative
- * function, NOT a React hook.
- *
- * The engine's inlineViz component provides vizRequests: a map of track keys to
- * { vizId, afterLine }. Each entry produces a Monaco view zone placed after the
- * specified line. Unknown viz names are logged to console.warn.
+ * When the engine provides per-track HapStreams but no per-track queryable scheduler,
+ * a BufferedScheduler is auto-created from the HapStream — making every viz type
+ * available for every engine without engine-specific code.
  *
  * Returns an InlineZoneHandle with cleanup/pause/resume for lifecycle management.
- *
- * Note: Zone div is NOT in DOM when mount() fires — initial width uses
- * editor.getLayoutInfo().contentWidth, not container.clientWidth.
  */
 export function addInlineViewZones(
   editor: Monaco.editor.IStandaloneCodeEditor,
@@ -46,8 +41,10 @@ export function addInlineViewZones(
   const zoneIds: string[] = []
   const renderers: VizRenderer[] = []
   const disconnects: (() => void)[] = []
+  const bufferedSchedulers: BufferedScheduler[] = []
 
   const contentWidth = editor.getLayoutInfo().contentWidth
+  const audioCtx = components.audio?.audioCtx
 
   editor.changeViewZones((accessor) => {
     for (const [trackKey, { vizId, afterLine }] of vizRequests) {
@@ -57,15 +54,28 @@ export function addInlineViewZones(
         continue
       }
 
-      const trackScheduler = components.queryable?.trackSchedulers.get(trackKey) ?? null
+      // Per-track queryable: use engine's if available, else auto-create from HapStream
+      let trackScheduler = components.queryable?.trackSchedulers.get(trackKey) ?? null
       const trackStream = components.inlineViz?.trackStreams?.get(trackKey)
 
-      // Build per-zone component bag scoped to this track.
-      // Per-track HapStream isolates event data (highlighting).
-      // Audio component stays global — per-track audio requires engine-level bus routing.
+      if (!trackScheduler && trackStream && audioCtx) {
+        // Auto-inject BufferedScheduler — engine-agnostic queryable from HapStream
+        const buffered = new BufferedScheduler(trackStream, audioCtx)
+        bufferedSchedulers.push(buffered)
+        trackScheduler = buffered
+      }
+
+      // Per-track audio: use track-specific AnalyserNode when available,
+      // otherwise strip global audio so sketches fall to event-driven path
+      const trackAnalyser = components.audio?.trackAnalysers?.get(trackKey)
+      const zoneAudio = trackAnalyser && audioCtx
+        ? { analyser: trackAnalyser, audioCtx, trackAnalysers: components.audio?.trackAnalysers }
+        : (trackStream ? undefined : components.audio) // no track stream = global (Strudel)
+
       const zoneComponents: Partial<EngineComponents> = {
         ...components,
         ...(trackStream ? { streaming: { hapStream: trackStream } } : {}),
+        audio: zoneAudio,
         queryable: {
           scheduler: trackScheduler,
           trackSchedulers: components.queryable?.trackSchedulers ?? new Map(),
@@ -99,6 +109,7 @@ export function addInlineViewZones(
     cleanup() {
       disconnects.forEach(fn => fn())
       renderers.forEach(r => r.destroy())
+      bufferedSchedulers.forEach(s => s.dispose())
       editor.changeViewZones((accessor) => {
         zoneIds.forEach(id => accessor.removeZone(id))
       })
