@@ -17,6 +17,7 @@ import type { VizDescriptor, PatternScheduler } from './visualizers/types'
 import { DEFAULT_VIZ_DESCRIPTORS } from './visualizers/defaultDescriptors'
 import { addInlineViewZones, type InlineZoneHandle } from './visualizers/viewZones'
 import type { LiveCodingEngine, EngineComponents } from './engine/LiveCodingEngine'
+import { BufferedScheduler } from './engine/BufferedScheduler'
 
 export type { StrudelTheme }
 
@@ -112,6 +113,7 @@ export function LiveCodingEditor({
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const viewZoneCleanupRef = useRef<InlineZoneHandle | null>(null)
+  const globalBufferedRef = useRef<BufferedScheduler | null>(null)
 
   // Expose engine to parent via engineRef prop
   useEffect(() => {
@@ -119,6 +121,9 @@ export function LiveCodingEditor({
       engineRefProp.current = engine
     }
   })
+
+  // Cleanup global BufferedScheduler on unmount
+  useEffect(() => () => { globalBufferedRef.current?.dispose() }, [])
 
   // Apply theme tokens to container
   const themeKey = typeof theme === 'string' ? theme : 'dark'
@@ -178,8 +183,17 @@ export function LiveCodingEditor({
     viewZoneCleanupRef.current?.resume()
 
     const queryable = engine.components.queryable
-    if (queryable) {
+    if (queryable?.scheduler) {
+      // Engine provides native queryable (Strudel) — use it directly
+      globalBufferedRef.current?.dispose()
+      globalBufferedRef.current = null
       setPatternScheduler(queryable.scheduler)
+    } else if (streaming && audio) {
+      // No queryable — auto-create BufferedScheduler from global HapStream
+      if (!globalBufferedRef.current) {
+        globalBufferedRef.current = new BufferedScheduler(streaming.hapStream, audio.audioCtx)
+      }
+      setPatternScheduler(globalBufferedRef.current)
     }
 
     engine.play()

@@ -20,6 +20,8 @@ export interface QueryableComponent {
 export interface AudioComponent {
   analyser: AnalyserNode
   audioCtx: AudioContext
+  /** Per-track AnalyserNodes for isolated inline viz. Keyed by track ID (e.g. "drums", "$0"). */
+  trackAnalysers?: Map<string, AnalyserNode>
 }
 
 /** Per-track inline visualization requests with line placement info. */
