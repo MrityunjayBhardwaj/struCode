@@ -369,3 +369,207 @@ export interface PreviewViewProps {
    */
   readonly hidden?: boolean
 }
+
+// ---------------------------------------------------------------------------
+// Task 04 — WorkspaceShell (tab / group / split container)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single tab inside the workspace shell. Tabs are the user-visible units
+ * the shell renders; the shell dispatches rendering by `kind`:
+ *
+ *   - `kind: 'editor'` → `EditorView` bound to `fileId`.
+ *   - `kind: 'preview'` → `PreviewView` bound to `fileId` with the tab's
+ *     `sourceRef` pinned as a tab-level field (so the source dropdown
+ *     inside `PreviewView` drives state up to the shell, which persists
+ *     it per tab — two viz preview tabs of the same file can be pinned to
+ *     different publishers).
+ *
+ * Each tab carries its own `id` separate from `fileId` because multiple
+ * tabs can reference the same file (e.g., an editor tab AND a preview tab
+ * for the same `pianoroll.hydra`, or two preview tabs pinned to different
+ * sources). The shell uses `id` as the reconciliation key and drag-drop
+ * identifier; `fileId` routes to the underlying file store.
+ *
+ * ## PV7 — no rendering-mode field on the tab
+ *
+ * The legacy `EditorGroup.tsx` carried a single state field that enumerated
+ * four rendering modes (panel / inline / background / popout) and
+ * entangled editor and preview concerns. The whole point of Phase 10.2 is
+ * to dissolve that entanglement — a preview tab is a first-class tab,
+ * dispatched by `kind`, not a rendering mode on top of an editor. Any
+ * future "background decoration" support is shaped as a SECOND tab id
+ * stored on `WorkspaceGroupState.backgroundTabId` (Task 08 wires that;
+ * Task 04 reserves the slot), NOT as a mode on the tab itself.
+ */
+export type WorkspaceTab =
+  | { readonly kind: 'editor'; readonly id: string; readonly fileId: string }
+  | {
+      readonly kind: 'preview'
+      readonly id: string
+      readonly fileId: string
+      readonly sourceRef: AudioSourceRef
+    }
+
+/**
+ * A single tab group inside the shell. Groups are the unit the `SplitPane`
+ * layout operates on — N groups render as N panes, each with its own tab
+ * bar and active-tab content area.
+ *
+ * - `id` — stable group identifier; used as drag-drop target id and as the
+ *   React reconciliation key.
+ * - `tabs` — the ordered list of tabs hosted by this group. Order is
+ *   preserved across drag-drop moves and splits. Empty groups are legal
+ *   (the last tab was closed but the group remains) and render an empty
+ *   state prompting the user to drop a tab.
+ * - `activeTabId` — which tab is visible inside this group. `null` when
+ *   the group is empty. Closing the active tab selects the next adjacent
+ *   tab (previous if one exists, else first).
+ * - `backgroundTabId` — Task 08's reservation slot for the `Cmd+K B`
+ *   background-decoration feature. Task 04 declares the field as optional
+ *   for forward-compat so Task 08 can populate it without a shape change
+ *   to this interface. Task 04 itself does NOT render anything based on
+ *   this field.
+ */
+export interface WorkspaceGroupState {
+  readonly id: string
+  readonly tabs: readonly WorkspaceTab[]
+  readonly activeTabId: string | null
+  readonly backgroundTabId?: string
+}
+
+/**
+ * Forward-declared runtime provider shape, used as a prop slot type on
+ * `WorkspaceShell`. Task 05 fleshes this interface out with the concrete
+ * `LiveCodingRuntime` wrapper, `ChromeContext`, engine lifecycle, and
+ * `renderChrome` signature. Task 04 only needs the shape-level fields so
+ * the shell can iterate a `runtimeProviders` prop and look up a provider
+ * by language when a pattern-file editor tab becomes active.
+ *
+ * @remarks
+ * The `createEngine` and `renderChrome` return types are intentionally
+ * `unknown` / `React.ReactNode` here — Task 04 never invokes them. It
+ * just stores the array and hands it to `chromeForTab`. Task 05 will
+ * move this declaration into its own file and flesh out the context
+ * type; the name and `extensions` / `language` / `createEngine` /
+ * `renderChrome` slots are stable across the forward.
+ */
+export interface LiveCodingRuntimeProviderStub {
+  readonly extensions: readonly string[]
+  readonly language: string
+  createEngine(): unknown
+  renderChrome(ctx: unknown): ReactNode
+}
+
+/**
+ * Signature of the optional callback the shell uses to resolve per-tab
+ * runtime chrome for editor-kind tabs. Task 05 will wire this through the
+ * runtime provider registry so pattern-file editors receive a transport
+ * bar. Task 04 accepts the callback as a prop and passes its return value
+ * into `EditorView.chromeSlot`. Returning `undefined` (the default) means
+ * "no chrome for this tab," which is the correct answer for viz / markdown
+ * editors.
+ */
+export type ChromeForTab = (tab: WorkspaceTab) => ReactNode | undefined
+
+/**
+ * Props accepted by `WorkspaceShell`. The shell is uncontrolled — it
+ * seeds group state from `initialTabs` on first mount and manages its own
+ * layout state internally. Tab changes are broadcast via callbacks so
+ * downstream host code (Task 08's command registry, Task 10's app page)
+ * can observe without owning the state.
+ *
+ * @remarks
+ * ## What the shell does NOT do (yet)
+ *
+ * - No `window.addEventListener('keydown', ...)` for Cmd+K V/B/W — Task
+ *   08 adds that, using `onActiveTabChange` to know which tab the command
+ *   should act on.
+ * - No runtime provider instantiation — `runtimeProviders` is a typed
+ *   slot for Task 05 / Task 07 to inject concrete providers. The shell
+ *   never calls `createEngine`; it only passes the list to `chromeForTab`.
+ * - No preview provider registry lookup — `previewProviders` is a slot
+ *   for Task 06 to populate. Task 04 uses a single `previewProviderFor`
+ *   callback to resolve the provider at render time so the shell is
+ *   testable in isolation with a stub.
+ * - No `Cmd+K B` background decoration rendering. The field is reserved
+ *   on `WorkspaceGroupState.backgroundTabId` but Task 04 does not render
+ *   anything based on it.
+ */
+export interface WorkspaceShellProps {
+  /**
+   * Seed tabs for the shell on first mount. Splits into one initial group
+   * holding every seed tab; the first tab becomes the active tab. The
+   * shell does not re-read this prop after mount — changes to `initialTabs`
+   * on re-render are ignored. Callers that need to add tabs later use
+   * commands (Task 08) or the shell's imperative handle (future).
+   */
+  readonly initialTabs?: readonly WorkspaceTab[]
+
+  /**
+   * Theme applied to the shell root via `applyTheme()` on mount and on
+   * every theme change. Defaults to `'dark'`. PV6 / P6 — every top-level
+   * component owns its own theme application.
+   */
+  readonly theme?: WorkspaceTheme
+
+  /**
+   * Explicit height for the shell root. Defaults to `'100%'` so the
+   * shell fills whatever container the host mounts it in.
+   */
+  readonly height?: number | string
+
+  /**
+   * Fires whenever the active tab changes — either because the user
+   * clicked a different tab inside a group, or because the user
+   * switched focus between groups. Task 08 listens so Cmd+K V/B/W can
+   * dispatch against the currently-active tab.
+   *
+   * The callback fires with `null` when no tab is active (every group
+   * is empty). Fires once on mount with the initial active tab (or
+   * `null`) so late subscribers see the initial state.
+   */
+  readonly onActiveTabChange?: (tab: WorkspaceTab | null) => void
+
+  /**
+   * Fires when a tab is closed by the user. Runtime disposal hooks
+   * (Task 05 / Task 07) plug in here to call `runtime.dispose()` on
+   * the closed tab's pattern file. The callback receives the tab that
+   * was just removed; the tab has already been dropped from the group
+   * state by the time this fires.
+   *
+   * CONTEXT U3 — closing a pattern file's last editor tab MUST dispose
+   * its runtime. Task 04 exposes the seam; Task 05 fills it in.
+   */
+  readonly onTabClose?: (closingTab: WorkspaceTab) => void
+
+  /**
+   * Runtime providers available to the shell. Forward-declared slot
+   * type — Task 05 will replace `LiveCodingRuntimeProviderStub` with
+   * the concrete `LiveCodingRuntimeProvider` interface. Task 04 accepts
+   * the array and only hands it to `chromeForTab` (the shell itself
+   * never instantiates engines).
+   */
+  readonly runtimeProviders?: readonly LiveCodingRuntimeProviderStub[]
+
+  /**
+   * Callback the shell uses to look up a preview provider for a given
+   * preview tab. Task 06 will ship the registry that wires the default
+   * implementation; Task 04 accepts the callback directly so tests can
+   * pass a stub provider. Returning `undefined` means "no provider
+   * available" — the shell renders a fallback message in the preview
+   * tab's content area.
+   */
+  readonly previewProviderFor?: (tab: WorkspaceTab & {
+    kind: 'preview'
+  }) => PreviewProvider | undefined
+
+  /**
+   * Callback for resolving per-tab runtime chrome (transport bar for
+   * pattern files). Task 05 fills this in with a lookup into
+   * `runtimeProviders`. Task 04 calls the callback for every editor tab
+   * and passes the return value into `EditorView.chromeSlot`. Returns
+   * `undefined` by default — viz / markdown editors have no chrome.
+   */
+  readonly chromeForTab?: ChromeForTab
+}

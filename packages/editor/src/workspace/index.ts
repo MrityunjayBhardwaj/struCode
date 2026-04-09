@@ -18,6 +18,11 @@
  *          PreviewProvider, PreviewContext, PreviewReloadPolicy
  * - Views: EditorView, PreviewView
  * - Util:  ensureWorkspaceLanguages, toMonacoLanguage
+ *
+ * Task 04:
+ * - Types: WorkspaceTab, WorkspaceGroupState, WorkspaceShellProps,
+ *          ChromeForTab, LiveCodingRuntimeProviderStub
+ * - Shell: WorkspaceShell
  */
 
 export type { WorkspaceFile, WorkspaceLanguage } from './types'
@@ -32,6 +37,13 @@ export type {
   PreviewViewProps,
   WorkspaceTheme,
 } from './types'
+export type {
+  WorkspaceTab,
+  WorkspaceGroupState,
+  WorkspaceShellProps,
+  ChromeForTab,
+  LiveCodingRuntimeProviderStub,
+} from './types'
 export {
   createWorkspaceFile,
   getFile,
@@ -43,6 +55,7 @@ export type { UseWorkspaceFileResult } from './useWorkspaceFile'
 export { workspaceAudioBus } from './WorkspaceAudioBus'
 export { EditorView } from './EditorView'
 export { PreviewView } from './PreviewView'
+export { WorkspaceShell } from './WorkspaceShell'
 export type {
   PreviewProvider,
   PreviewContext,
