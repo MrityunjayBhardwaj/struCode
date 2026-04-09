@@ -12,6 +12,12 @@
  * - Types: AudioSourceRef, AudioPayload, AudioSourceListing,
  *          WorkspaceAudioBus
  * - Bus:   workspaceAudioBus (singleton)
+ *
+ * Task 03:
+ * - Types: EditorViewProps, PreviewViewProps, WorkspaceTheme,
+ *          PreviewProvider, PreviewContext, PreviewReloadPolicy
+ * - Views: EditorView, PreviewView
+ * - Util:  ensureWorkspaceLanguages, toMonacoLanguage
  */
 
 export type { WorkspaceFile, WorkspaceLanguage } from './types'
@@ -20,6 +26,11 @@ export type {
   AudioPayload,
   AudioSourceListing,
   WorkspaceAudioBus,
+} from './types'
+export type {
+  EditorViewProps,
+  PreviewViewProps,
+  WorkspaceTheme,
 } from './types'
 export {
   createWorkspaceFile,
@@ -30,3 +41,14 @@ export {
 export { useWorkspaceFile } from './useWorkspaceFile'
 export type { UseWorkspaceFileResult } from './useWorkspaceFile'
 export { workspaceAudioBus } from './WorkspaceAudioBus'
+export { EditorView } from './EditorView'
+export { PreviewView } from './PreviewView'
+export type {
+  PreviewProvider,
+  PreviewContext,
+  PreviewReloadPolicy,
+} from './PreviewProvider'
+export {
+  ensureWorkspaceLanguages,
+  toMonacoLanguage,
+} from './languages'

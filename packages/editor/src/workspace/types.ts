@@ -16,14 +16,25 @@
  * plain Node environment. Type-only imports (`import type ...`) are erased
  * at compile time and are safe to add when a downstream task needs to
  * reference engine-layer types from the workspace public surface.
+ *
+ * @remarks
+ * Task 03 adds `EditorViewProps` and `PreviewViewProps`. These DO depend
+ * on React types (`ReactNode`) but the imports are type-only and erased at
+ * compile time, so the "no React runtime imports" rule is preserved. The
+ * concrete `PreviewProvider` interface lives in its own file
+ * (`PreviewProvider.ts`) because it contains more than a type — it's a
+ * behavioral contract Task 06 will key a registry on.
  */
 
+import type { ReactNode } from 'react'
 import type {
   AudioComponent,
   InlineVizComponent,
   QueryableComponent,
   StreamingComponent,
 } from '../engine/LiveCodingEngine'
+import type { StrudelTheme } from '../theme/tokens'
+import type { PreviewProvider } from './PreviewProvider'
 
 /**
  * The set of languages a WorkspaceFile may declare. This is an explicit
@@ -218,4 +229,143 @@ export interface WorkspaceAudioBus {
    * trigger this. Returns an unsubscribe function.
    */
   onSourcesChanged(cb: () => void): () => void
+}
+
+// ---------------------------------------------------------------------------
+// Task 03 — View abstractions (EditorView / PreviewView)
+// ---------------------------------------------------------------------------
+
+/**
+ * A theme value accepted by every new workspace top-level component. Every
+ * view owns its own theme application per CONTEXT PV6 — the shell does not
+ * bubble the theme down through inline style inheritance because each
+ * group in the shell's split layout is its own DOM root and CSS custom
+ * properties do not cross React portal boundaries.
+ *
+ * Defaults to `'dark'` when the prop is omitted.
+ */
+export type WorkspaceTheme = 'dark' | 'light' | StrudelTheme
+
+/**
+ * Props accepted by `EditorView` — the Monaco-based editor for a single
+ * workspace file. Task 03 ships the editor with a theme, a chrome slot for
+ * Task 05 to inject runtime transport UI into, and an optional mount
+ * callback so downstream tests and host components can capture the Monaco
+ * editor instance.
+ *
+ * @remarks
+ * ## What this does NOT include (yet)
+ *
+ * - `sourceRef` — Task 07 wires a bus subscription inside `EditorView` to
+ *   drive `.viz()` inline view zones and highlighting; that subscription
+ *   reads its own file's publisher via `{ kind: 'file', fileId }` (D-08)
+ *   and does not need a prop, so no `sourceRef` is exposed here.
+ * - Control over Monaco options (font size, minimap, etc.) — Task 03 hard
+ *   codes the same option set the legacy `EditorGroup.tsx` used. Future
+ *   phases can open this up if embedders need it.
+ * - `onError` — runtime errors belong to the chrome, which Task 05 owns.
+ */
+export interface EditorViewProps {
+  /**
+   * The workspace file id this editor binds to. The hook
+   * `useWorkspaceFile(fileId)` drives the Monaco `value` prop. If the file
+   * is not yet registered (`undefined`), `EditorView` renders a loading
+   * placeholder — the file may be seeded after the editor mounts.
+   */
+  readonly fileId: string
+
+  /**
+   * Theme applied to the editor container via `applyTheme()` on mount
+   * and on every theme change. Defaults to `'dark'`. PV6 — every view
+   * owns its own theme application.
+   */
+  readonly theme?: WorkspaceTheme
+
+  /**
+   * Chrome injected ABOVE the Monaco editor, inside the same DOM root.
+   * Task 05 fills this slot with per-language runtime chrome (e.g.,
+   * transport bar for pattern files). Task 03 accepts whatever the host
+   * passes and renders it verbatim — no wrapping, no styling beyond the
+   * flex container boundary.
+   */
+  readonly chromeSlot?: ReactNode
+
+  /**
+   * Called after Monaco has mounted, with the editor instance and the
+   * Monaco module reference. Downstream tasks (Task 07 — inline view
+   * zones, highlighting) use this to attach behavior to the editor. The
+   * `editor` and `monaco` types are intentionally `unknown` at this
+   * layer — typed consumers cast at the call site.
+   */
+  readonly onMount?: (editor: unknown, monaco: unknown) => void
+}
+
+/**
+ * Props accepted by `PreviewView` — the host for a `PreviewProvider`'s
+ * rendered output. Task 03 ships the view as a controlled component: the
+ * shell (Task 04) owns the `sourceRef` state and passes it down plus an
+ * `onSourceRefChange` callback so the built-in source selector chrome can
+ * drive tab-level state updates.
+ *
+ * @remarks
+ * ## What this does NOT include (yet)
+ *
+ * - A provider registry lookup — Task 06 adds that. Task 03 accepts the
+ *   `provider` directly as a prop so the view can be tested in isolation.
+ * - A `theme` broadcaster that writes to the popout window — the popout
+ *   integration lives inside `usePopoutPreview` (Task 07's scope).
+ * - Error reporting for provider render failures — Task 06 adds an error
+ *   boundary around `provider.render` when the concrete providers land.
+ *   Task 03 trusts the provider to not throw.
+ */
+export interface PreviewViewProps {
+  /**
+   * The workspace file id being previewed. The view subscribes to the
+   * file via `useWorkspaceFile(fileId)` so provider reloads see fresh
+   * content on every content change.
+   */
+  readonly fileId: string
+
+  /**
+   * The provider that knows how to render this file type. Task 06 will
+   * move provider selection inside a registry lookup keyed on
+   * `file.language`; Task 03 accepts the provider directly for isolated
+   * testing. Changing the provider prop mid-life of the view triggers a
+   * fresh render; the view does not dispose the old provider (providers
+   * are stateless value objects).
+   */
+  readonly provider: PreviewProvider
+
+  /**
+   * Which publisher the view subscribes to on the bus. Owned by the
+   * shell (Task 04); this view is controlled. `'default'` follows
+   * most-recent, `{ kind: 'file' }` pins, `'none'` forces demo mode.
+   */
+  readonly sourceRef: AudioSourceRef
+
+  /**
+   * Called when the user picks a different source from the built-in
+   * selector chrome. The view does NOT hold its own `sourceRef` state —
+   * it dispatches to this callback and waits for the controlled prop to
+   * update. The shell (Task 04) wires this callback to its tab state.
+   */
+  readonly onSourceRefChange: (ref: AudioSourceRef) => void
+
+  /**
+   * Theme applied to the view container via `applyTheme()` on mount and
+   * on every theme change. Defaults to `'dark'`. PV6 — every view owns
+   * its own theme application.
+   */
+  readonly theme?: WorkspaceTheme
+
+  /**
+   * `true` when the tab is currently hidden (another tab is active in
+   * this group, or the preview is background-layered under an editor).
+   * The view checks `provider.keepRunningWhenHidden` to decide whether
+   * to pause — if `false`, the view freezes its reload debounce AND
+   * passes `hidden: true` to the provider's render context. On un-hide,
+   * the view triggers one catch-up reload to pick up any content changes
+   * that arrived while hidden.
+   */
+  readonly hidden?: boolean
 }
