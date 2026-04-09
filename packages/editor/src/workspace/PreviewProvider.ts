@@ -168,4 +168,34 @@ export interface PreviewProvider {
    * the ctx fields, not in the return value.
    */
   render(ctx: PreviewContext): ReactNode
+
+  /**
+   * Optional chrome rendered on the EDITOR tab for files this provider
+   * claims. Gives viz files a discoverable action bar (Preview to Side,
+   * Background toggle, Save, Hot-reload toggle) matching the transport
+   * chrome pattern files get from their runtime provider.
+   *
+   * If omitted, the editor tab has no chrome for this file type.
+   */
+  renderEditorChrome?(ctx: PreviewEditorChromeContext): ReactNode
+}
+
+/**
+ * Context handed to `PreviewProvider.renderEditorChrome()`. Contains the
+ * file being edited and action callbacks the chrome can invoke. The shell
+ * wires these callbacks to the command registry and the viz preset bridge.
+ */
+export interface PreviewEditorChromeContext {
+  /** The workspace file this editor tab is bound to. */
+  readonly file: WorkspaceFile
+  /** Open the preview for this file in a sibling split group. */
+  readonly onOpenPreview: () => void
+  /** Toggle the background decoration (viz behind the editor). */
+  readonly onToggleBackground: () => void
+  /** Save the file back to its persistent store (VizPresetStore). */
+  readonly onSave: () => void
+  /** Whether hot-reload is currently enabled. */
+  readonly hotReload: boolean
+  /** Toggle hot-reload on/off. */
+  readonly onToggleHotReload: () => void
 }

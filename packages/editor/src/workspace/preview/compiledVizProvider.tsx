@@ -92,7 +92,8 @@ import type { VizPreset } from '../../visualizers/vizPreset'
 import { compilePreset } from '../../visualizers/vizCompiler'
 import { mountVizRenderer } from '../../visualizers/mountVizRenderer'
 import type { EngineComponents } from '../../engine/LiveCodingEngine'
-import type { PreviewContext, PreviewProvider } from '../PreviewProvider'
+import type { PreviewContext, PreviewEditorChromeContext, PreviewProvider } from '../PreviewProvider'
+import { VizEditorChrome } from './VizEditorChrome'
 
 /**
  * Options accepted by `createCompiledVizProvider`. Both viz providers pass
@@ -179,6 +180,9 @@ export function createCompiledVizProvider(
           fileId={ctx.file.id}
         />
       )
+    },
+    renderEditorChrome: (ctx: PreviewEditorChromeContext): React.ReactNode => {
+      return <VizEditorChrome {...ctx} />
     },
   }
 }

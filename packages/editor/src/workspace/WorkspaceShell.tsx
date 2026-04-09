@@ -117,7 +117,9 @@ import { applyTheme } from '../theme/tokens'
 import { EditorView } from './EditorView'
 import { PreviewView } from './PreviewView'
 import { useKeyboardCommands } from './commands/useKeyboardCommands'
+import { executeCommand } from './commands/CommandRegistry'
 import { getPreviewProviderForLanguage } from './preview/registry'
+import { getFile } from './WorkspaceFile'
 import type { WorkspaceShellActions } from './commands/CommandRegistry'
 import type {
   WorkspaceGroupState,
@@ -428,6 +430,7 @@ export function WorkspaceShell({
    * WorkspaceShellActions object for the command system. Stable reference
    * via useMemo since the callbacks themselves are stable (useCallback).
    */
+  const shellActionsRef = useRef<WorkspaceShellActions>(null as unknown as WorkspaceShellActions)
   const shellActions: WorkspaceShellActions = useMemo(
     () => ({
       addTab: (groupId: string, tab: WorkspaceTab) => {
@@ -442,6 +445,7 @@ export function WorkspaceShell({
     }),
     [splitGroupWithTab, updateGroupBackground, updateGroup],
   )
+  shellActionsRef.current = shellActions
 
   // -------------------------------------------------------------------------
   // Task 08 — Keyboard commands (Cmd+K chord)
@@ -588,7 +592,55 @@ export function WorkspaceShell({
     ): React.ReactNode => {
       switch (tab.kind) {
         case 'editor': {
-          const chromeSlot = chromeForTab?.(tab) ?? undefined
+          // Runtime chrome (pattern files) comes from the host's chromeForTab.
+          // Preview chrome (viz files) comes from the preview provider's
+          // renderEditorChrome — tried as a fallback when no runtime chrome.
+          let chromeSlot = chromeForTab?.(tab) ?? undefined
+          if (!chromeSlot && previewProviderFor) {
+            const previewTab = { ...tab, kind: 'preview' as const, sourceRef: { kind: 'default' as const } }
+            const provider = previewProviderFor(previewTab)
+            if (provider?.renderEditorChrome) {
+              const file = getFile(tab.fileId)
+              if (file) {
+                chromeSlot = provider.renderEditorChrome({
+                  file,
+                  onOpenPreview: () => {
+                    executeCommand('workspace.openPreviewToSide', {
+                      activeTab: tab,
+                      activeGroupId: groupId,
+                      activeGroup: groups.get(groupId) ?? null,
+                      shell: shellActionsRef.current,
+                      getPreviewProvider: (lang) => {
+                        const pTab = { kind: 'preview' as const, id: '', fileId: '', sourceRef: { kind: 'default' as const } }
+                        return previewProviderFor?.({ ...pTab, fileId: tab.fileId }) ?? undefined
+                      },
+                    })
+                  },
+                  onToggleBackground: () => {
+                    executeCommand('workspace.toggleBackgroundPreview', {
+                      activeTab: tab,
+                      activeGroupId: groupId,
+                      activeGroup: groups.get(groupId) ?? null,
+                      shell: shellActionsRef.current,
+                      getPreviewProvider: (lang) => {
+                        const pTab = { kind: 'preview' as const, id: '', fileId: '', sourceRef: { kind: 'default' as const } }
+                        return previewProviderFor?.({ ...pTab, fileId: tab.fileId }) ?? undefined
+                      },
+                    })
+                  },
+                  onSave: () => {
+                    // Save is handled at the app level — emit a custom event
+                    // or call the bridge. For now, dispatch via keyboard (Cmd+S
+                    // is handled by Monaco). TODO: wire flushToPreset in Task 10 app.
+                  },
+                  hotReload: true, // TODO: per-tab hot-reload state in a future iteration
+                  onToggleHotReload: () => {
+                    // TODO: per-tab hot-reload toggle state
+                  },
+                })
+              }
+            }
+          }
           const extras = editorExtrasForTab?.(tab as WorkspaceTab & { kind: 'editor' })
           return (
             <EditorView
