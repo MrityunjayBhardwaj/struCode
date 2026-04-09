@@ -116,6 +116,9 @@ import { SplitPane } from '../visualizers/editor/SplitPane'
 import { applyTheme } from '../theme/tokens'
 import { EditorView } from './EditorView'
 import { PreviewView } from './PreviewView'
+import { useKeyboardCommands } from './commands/useKeyboardCommands'
+import { getPreviewProviderForLanguage } from './preview/registry'
+import type { WorkspaceShellActions } from './commands/CommandRegistry'
 import type {
   WorkspaceGroupState,
   WorkspaceShellProps,
@@ -376,6 +379,118 @@ export function WorkspaceShell({
     },
     [groupOrder, activeGroupId],
   )
+
+  // -------------------------------------------------------------------------
+  // Task 08 — Command-system imperative actions
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create a sibling group to the right of `originGroupId` and insert
+   * `newTab` as its sole tab. Used by `workspace.openPreviewToSide`.
+   */
+  const splitGroupWithTab = useCallback(
+    (originGroupId: string, _direction: 'right', newTab: WorkspaceTab) => {
+      const newId = generateGroupId()
+      setGroups((prev) => {
+        const next = new Map(prev)
+        next.set(newId, {
+          id: newId,
+          tabs: [newTab],
+          activeTabId: newTab.id,
+        })
+        return next
+      })
+      setGroupOrder((prev) => {
+        const idx = prev.indexOf(originGroupId)
+        if (idx === -1) return [...prev, newId]
+        return [...prev.slice(0, idx + 1), newId, ...prev.slice(idx + 1)]
+      })
+    },
+    [],
+  )
+
+  /**
+   * Toggle the background decoration on a group. Set `backgroundTabId` to
+   * show a preview layer behind the editor, or `null` to hide it.
+   */
+  const updateGroupBackground = useCallback(
+    (groupId: string, backgroundTabId: string | null) => {
+      updateGroup(groupId, (g) => ({
+        ...g,
+        backgroundTabId: backgroundTabId ?? undefined,
+      }))
+    },
+    [updateGroup],
+  )
+
+  /**
+   * WorkspaceShellActions object for the command system. Stable reference
+   * via useMemo since the callbacks themselves are stable (useCallback).
+   */
+  const shellActions: WorkspaceShellActions = useMemo(
+    () => ({
+      addTab: (groupId: string, tab: WorkspaceTab) => {
+        updateGroup(groupId, (g) => ({
+          ...g,
+          tabs: [...g.tabs, tab],
+          activeTabId: tab.id,
+        }))
+      },
+      splitGroupWithTab,
+      updateGroupBackground,
+    }),
+    [splitGroupWithTab, updateGroupBackground, updateGroup],
+  )
+
+  // -------------------------------------------------------------------------
+  // Task 08 — Keyboard commands (Cmd+K chord)
+  // -------------------------------------------------------------------------
+
+  // Stable getter refs for the keyboard hook. The hook stores these in a
+  // ref so the listener always reads current state without re-attachment.
+  const getActiveTab = useCallback((): WorkspaceTab | null => activeTab, [activeTab])
+  const getActiveGroupId = useCallback((): string | null => activeGroupId, [activeGroupId])
+  const getActiveGroup = useCallback((): WorkspaceGroupState | null => {
+    return groups.get(activeGroupId) ?? null
+  }, [groups, activeGroupId])
+
+  /**
+   * Bridge the shell's `previewProviderFor` prop (keyed by tab) with the
+   * command system's `getPreviewProvider` (keyed by language). When the
+   * prop is supplied (tests inject stubs here), we construct a synthetic
+   * preview-tab stub with the active editor's fileId so the prop callback
+   * can match on it. Falls back to the module-level registry.
+   */
+  const getPreviewProviderForCommand = useCallback(
+    (language: string) => {
+      // Module-level registry first (production path).
+      const fromRegistry = getPreviewProviderForLanguage(language)
+      if (fromRegistry) return fromRegistry
+
+      // Prop-level fallback (test path): construct a stub preview tab
+      // using the current active editor tab's fileId.
+      if (previewProviderFor) {
+        const currentTab = activeTab
+        const fileId = currentTab?.fileId ?? ''
+        return previewProviderFor({
+          kind: 'preview',
+          id: '__cmd-lookup__',
+          fileId,
+          sourceRef: { kind: 'default' },
+        })
+      }
+      return undefined
+    },
+    [previewProviderFor, activeTab],
+  )
+
+  useKeyboardCommands({
+    getActiveTab,
+    getActiveGroupId,
+    getActiveGroup,
+    shellActions,
+    getPreviewProvider: getPreviewProviderForCommand,
+  })
 
   /**
    * Drag start handler. Writes the payload into the dataTransfer using
@@ -681,8 +796,41 @@ export function WorkspaceShell({
             data-workspace-group-content={group.id}
             style={{ flex: 1, minHeight: 0, position: 'relative' }}
           >
+            {/* Task 08 — Background decoration (Cmd+K B) */}
+            {group.backgroundTabId && activeTabObj?.kind === 'editor' && (() => {
+              const bgProvider = previewProviderFor?.({
+                kind: 'preview',
+                id: group.backgroundTabId!,
+                fileId: activeTabObj.fileId,
+                sourceRef: { kind: 'default' },
+              })
+              if (!bgProvider) return null
+              return (
+                <div
+                  data-workspace-background={group.id}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    zIndex: 0,
+                    opacity: 0.4,
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <PreviewView
+                    fileId={activeTabObj.fileId}
+                    provider={bgProvider}
+                    sourceRef={{ kind: 'default' }}
+                    theme={theme}
+                    hidden={false}
+                    onSourceRefChange={() => {}}
+                  />
+                </div>
+              )
+            })()}
             {activeTabObj ? (
-              renderTabContent(activeTabObj, group.id, isShellActiveGroup)
+              <div style={{ position: 'relative', zIndex: 1, height: '100%' }}>
+                {renderTabContent(activeTabObj, group.id, isShellActiveGroup)}
+              </div>
             ) : (
               <div
                 data-testid={`group-empty-${group.id}`}

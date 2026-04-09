@@ -35,6 +35,13 @@
  * - Built-ins:  HYDRA_VIZ, P5_VIZ (MARKDOWN_HTML deferred per U7)
  * - Bridge:     seedFromPreset, seedFromPresetId, flushToPreset
  *               (viz preset ↔ workspace file, per S6)
+ *
+ * Task 08:
+ * - Types:    WorkspaceCommand, CommandContext, WorkspaceShellActions
+ * - Registry: registerCommand, getCommand, executeCommand
+ * - Hook:     useKeyboardCommands (Cmd+K V/B/W chord detection)
+ * - Built-ins: workspace.openPreviewToSide, workspace.toggleBackgroundPreview,
+ *              workspace.openPreviewInWindow
  */
 
 export type { WorkspaceFile, WorkspaceLanguage } from './types'
@@ -107,3 +114,20 @@ export {
   ensureWorkspaceLanguages,
   toMonacoLanguage,
 } from './languages'
+
+// Task 08 — Command registry + Cmd+K V/B/W
+export type {
+  WorkspaceCommand,
+  CommandContext,
+  WorkspaceShellActions,
+} from './commands'
+export {
+  registerCommand,
+  getCommand,
+  executeCommand,
+  resetCommandRegistryForTests,
+} from './commands'
+export {
+  useKeyboardCommands,
+  type UseKeyboardCommandsOptions,
+} from './commands'
