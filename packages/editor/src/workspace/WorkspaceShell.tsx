@@ -595,10 +595,10 @@ export function WorkspaceShell({
           // Runtime chrome (pattern files) comes from the host's chromeForTab.
           // Preview chrome (viz files) comes from the preview provider's
           // renderEditorChrome — tried as a fallback when no runtime chrome.
-          let chromeSlot = chromeForTab?.(tab) ?? undefined
+          let chromeSlot: React.ReactNode = chromeForTab?.(tab) ?? undefined
           if (!chromeSlot && previewProviderFor) {
             const previewTab = { ...tab, kind: 'preview' as const, sourceRef: { kind: 'default' as const } }
-            const provider = previewProviderFor(previewTab)
+            const provider = previewProviderFor(previewTab as any)
             if (provider?.renderEditorChrome) {
               const file = getFile(tab.fileId)
               if (file) {
