@@ -128,9 +128,12 @@ export function EditorView({
         ) {
           // PK3: cleanup old zones BEFORE adding new ones.
           viewZoneHandleRef.current?.cleanup()
+          // addInlineViewZones expects the nested EngineComponents shape
+          // (queryable.trackSchedulers, audio.trackAnalysers, etc.).
+          // The bus payload carries the full components via engineComponents.
           viewZoneHandleRef.current = addInlineViewZones(
             editorRef.current,
-            payload,
+            payload.engineComponents ?? payload as any,
             DEFAULT_VIZ_DESCRIPTORS,
           )
           viewZoneHandleRef.current?.resume()

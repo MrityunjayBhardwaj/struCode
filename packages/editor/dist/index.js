@@ -6582,7 +6582,7 @@ function EditorView({
           viewZoneHandleRef.current?.cleanup();
           viewZoneHandleRef.current = addInlineViewZones(
             editorRef.current,
-            payload,
+            payload.engineComponents ?? payload,
             DEFAULT_VIZ_DESCRIPTORS
           );
           viewZoneHandleRef.current?.resume();
@@ -7861,7 +7861,12 @@ var LiveCodingRuntime = class {
       analyser: audio?.analyser,
       scheduler: scheduler ?? void 0,
       inlineViz,
-      audio
+      audio,
+      // Pass through the full engine components in their original nested
+      // shape. addInlineViewZones reads queryable.trackSchedulers,
+      // audio.trackAnalysers, inlineViz.trackStreams — the flat fields
+      // above don't carry per-track data.
+      engineComponents: this.engine.components
     };
     workspaceAudioBus.publish(this.fileId, payload);
     try {

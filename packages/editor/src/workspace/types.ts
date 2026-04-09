@@ -29,6 +29,7 @@
 import type { ReactNode } from 'react'
 import type {
   AudioComponent,
+  EngineComponents,
   InlineVizComponent,
   LiveCodingEngine,
   QueryableComponent,
@@ -132,6 +133,15 @@ export interface AudioPayload {
   readonly scheduler?: QueryableComponent['scheduler']
   readonly inlineViz?: InlineVizComponent
   readonly audio?: AudioComponent
+  /**
+   * Full engine components in their original nested shape. Needed by
+   * `addInlineViewZones` which reads `queryable.trackSchedulers`,
+   * `audio.trackAnalysers`, `inlineViz.trackStreams`, etc. The flat
+   * fields above are convenience accessors for simple consumers
+   * (PreviewView source selector, popout bridge). Inline zones and
+   * viz renderers must read from this field to get per-track data.
+   */
+  readonly engineComponents?: Partial<EngineComponents>
 }
 
 /**

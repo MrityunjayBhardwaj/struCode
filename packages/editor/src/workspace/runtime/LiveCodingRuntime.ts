@@ -280,6 +280,11 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       scheduler: scheduler ?? undefined,
       inlineViz,
       audio,
+      // Pass through the full engine components in their original nested
+      // shape. addInlineViewZones reads queryable.trackSchedulers,
+      // audio.trackAnalysers, inlineViz.trackStreams — the flat fields
+      // above don't carry per-track data.
+      engineComponents: this.engine.components,
     }
 
     // Step 7 — publish to the bus BEFORE play. Subscribers fire SYNC.
