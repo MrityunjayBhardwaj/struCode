@@ -85,6 +85,8 @@ export function EditorView({
   chromeSlot,
   onMount,
   error,
+  onPlay,
+  onStop,
 }: EditorViewProps): React.ReactElement {
   const { file, setContent } = useWorkspaceFile(fileId)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -168,14 +170,42 @@ export function EditorView({
     }
   }, [error])
 
+  // Stable refs for play/stop so Monaco actions always call the latest callback
+  // without re-registering on every render.
+  const onPlayRef = useRef(onPlay)
+  onPlayRef.current = onPlay
+  const onStopRef = useRef(onStop)
+  onStopRef.current = onStop
+
   // Monaco mount handler. Registers workspace languages the first time
   // any EditorView mounts inside a given Monaco instance, then captures
-  // refs for bus wiring and forwards to the caller's mount callback.
+  // refs for bus wiring, registers keyboard shortcuts, and forwards to
+  // the caller's mount callback.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleMonacoMount = (editor: any, monaco: any): void => {
     editorRef.current = editor
     monacoRef.current = monaco
     ensureWorkspaceLanguages(monaco)
+
+    // Register Ctrl+Enter (play) and Ctrl+. (stop) — mirrors the legacy
+    // LiveCodingEditor.tsx:266-281 keybindings. Uses refs so the actions
+    // always call the latest callback without needing to re-register.
+    // Guard: `monaco.KeyMod` may be undefined in test mocks.
+    if (monaco.KeyMod && monaco.KeyCode && editor.addAction) {
+      editor.addAction({
+        id: 'stave.play',
+        label: 'Play / Stop',
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+        run: () => onPlayRef.current?.(),
+      })
+      editor.addAction({
+        id: 'stave.stop',
+        label: 'Stop',
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Period],
+        run: () => onStopRef.current?.(),
+      })
+    }
+
     onMount?.(editor, monaco)
   }
 

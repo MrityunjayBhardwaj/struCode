@@ -230,6 +230,16 @@ export function LiveCodingEditor({
     [isPlaying, error, bpm, bpmProp, handlePlay, handleStop, toolbarExtra],
   )
 
+  // -- Editor extras (play/stop keybindings + error squiggles) --
+  const editorExtrasForTab = useCallback(
+    () => ({
+      onPlay: handlePlay,
+      onStop: handleStop,
+      error,
+    }),
+    [handlePlay, handleStop, error],
+  )
+
   // -- Shell tabs --
   const initialTabs: WorkspaceTab[] = [
     { kind: 'editor', id: 'editor-main', fileId: fileIdRef.current },
@@ -243,6 +253,7 @@ export function LiveCodingEditor({
       theme={theme}
       height={height}
       chromeForTab={chromeForTab}
+      editorExtrasForTab={editorExtrasForTab}
     />
   )
 }

@@ -191,6 +191,7 @@ export function WorkspaceShell({
   onTabClose,
   previewProviderFor,
   chromeForTab,
+  editorExtrasForTab,
 }: WorkspaceShellProps): React.ReactElement {
   const shellRootRef = useRef<HTMLDivElement>(null)
 
@@ -588,12 +589,16 @@ export function WorkspaceShell({
       switch (tab.kind) {
         case 'editor': {
           const chromeSlot = chromeForTab?.(tab) ?? undefined
+          const extras = editorExtrasForTab?.(tab as WorkspaceTab & { kind: 'editor' })
           return (
             <EditorView
               key={tab.id}
               fileId={tab.fileId}
               chromeSlot={chromeSlot}
               theme={theme}
+              onPlay={extras?.onPlay}
+              onStop={extras?.onStop}
+              error={extras?.error}
             />
           )
         }

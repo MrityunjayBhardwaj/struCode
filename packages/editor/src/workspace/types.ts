@@ -311,6 +311,20 @@ export interface EditorViewProps {
    * not by direct engine subscription inside EditorView.
    */
   readonly error?: Error | null
+
+  /**
+   * Called when the user presses Ctrl+Enter (Cmd+Enter on Mac) inside the
+   * Monaco editor. The parent (compat shim or shell integration) wires this
+   * to `runtime.play()`. If omitted, the keybinding is not registered.
+   */
+  readonly onPlay?: () => void
+
+  /**
+   * Called when the user presses Ctrl+. (Cmd+. on Mac) inside the Monaco
+   * editor. The parent wires this to `runtime.stop()`. If omitted, the
+   * keybinding is not registered.
+   */
+  readonly onStop?: () => void
 }
 
 /**
@@ -748,4 +762,17 @@ export interface WorkspaceShellProps {
    * `undefined` by default — viz / markdown editors have no chrome.
    */
   readonly chromeForTab?: ChromeForTab
+
+  /**
+   * Callback for resolving per-tab editor extras (play/stop keybindings,
+   * error prop). The compat shim (LiveCodingEditor) returns
+   * `{ onPlay, onStop, error }` for pattern-file tabs; the shell passes
+   * them through to `EditorView`. Returns `undefined` for tabs that don't
+   * need extras (viz, markdown).
+   */
+  readonly editorExtrasForTab?: (tab: WorkspaceTab & { kind: 'editor' }) => {
+    onPlay?: () => void
+    onStop?: () => void
+    error?: Error | null
+  } | undefined
 }
