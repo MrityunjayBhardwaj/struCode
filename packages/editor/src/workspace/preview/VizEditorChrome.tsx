@@ -2,13 +2,19 @@
  * VizEditorChrome — shared action bar for viz file editor tabs.
  *
  * Rendered into EditorView's chromeSlot for .hydra / .p5 files. Shows:
- * - Play/Stop toggle — primary action (opens/closes the preview canvas)
+ * - "Open Preview" button — primary action, idempotent (open if missing,
+ *   no-op if a preview already exists for this file anywhere in the shell)
  * - File type badge
  * - Source dropdown — pin the preview to a specific audio publisher
  *   (pattern tab, sample sound, or follow-most-recent)
  * - Background toggle (discoverable Cmd+K B) — secondary action
  * - Hot-reload live indicator (static badge)
  * - Save button (Ctrl+S / Cmd+S)
+ *
+ * Viz tabs intentionally do NOT have a Stop button. A viz file is a
+ * persistent editing surface, not a transport; the preview is closed
+ * by the tab's ✕ button when the user is done with it. Pattern tabs
+ * keep their own Play/Stop (real audio transport) via StrudelChrome.
  */
 
 import React, { useCallback, useEffect, useState } from 'react'
@@ -86,10 +92,8 @@ export function VizEditorChrome({
   onOpenPreview,
   onToggleBackground,
   onSave,
-  previewOpen,
 }: PreviewEditorChromeContext): React.ReactElement {
   const ext = file.language === 'p5js' ? 'p5' : file.language
-  const isOpen = previewOpen === true
 
   // The user's selected audio source for this viz tab. Defaults to
   // `'default'` (follow most recent publisher on the bus) so users who
@@ -112,23 +116,17 @@ export function VizEditorChrome({
     return unsub
   }, [])
 
-  // Active (preview open) styling mirrors the pattern chrome's
-  // "playing" state — transparent background with accent outline + text.
-  // The two chromes (pattern vs viz) use the same visual language: filled
-  // accent = "click to start", outlined = "click to stop."
-  const stopBtnStyle: React.CSSProperties = {
-    ...primaryBtnStyle,
-    background: 'rgba(139,92,246,0.15)',
-    color: 'var(--accent)',
-    outline: '1px solid var(--accent)',
-  }
-
-  // Handle Play click — toggles the preview, passing the current source
-  // selection so the new tab pins to the user's choice. Starts the
-  // sample sound lazily if the user picked it and it isn't running yet;
-  // the browser's autoplay policy requires this to happen inside the
-  // click handler (user gesture), so we can't do it on selection change.
-  const handlePlayClick = useCallback(() => {
+  // Handle "Open Preview" click. The shell's handler is idempotent —
+  // if a preview tab for this file already exists anywhere in the shell,
+  // this call is a no-op (matching the "viz file = persistent editing
+  // surface, not a transport" model). Otherwise it opens a fresh preview
+  // tab pinned to the current source selection.
+  //
+  // Starts the sample sound lazily if the user picked it and it isn't
+  // running yet; the browser's autoplay policy requires this to happen
+  // inside the click handler (user gesture), so we can't do it on
+  // selection change.
+  const handleOpenPreviewClick = useCallback(() => {
     if (
       selectedSource.kind === 'file' &&
       selectedSource.fileId === SAMPLE_SOUND_SOURCE_ID &&
@@ -182,26 +180,20 @@ export function VizEditorChrome({
       }}
     >
       {/*
-       * Play ↔ Stop toggle. Both states invoke `onOpenPreview(selected)`.
-       * The shell's fallback chrome wires this as a toggle — opens a
-       * preview tab pinned to the selected source if none exists, closes
-       * it otherwise. The shell computes `previewOpen` by scanning every
-       * group for a preview tab matching this file id, so drag-dropping
-       * the preview or opening it in a popout keeps the chrome in sync
-       * without any explicit state threading.
+       * Open Preview — primary action. Idempotent: the shell's handler
+       * returns early if a preview tab for this file already exists
+       * anywhere in the shell, so clicking again is harmless. The
+       * preview tab is closed by its own ✕ button, not by a chrome
+       * Stop action, because a viz file is a persistent editing
+       * surface rather than a transport.
        */}
       <button
-        data-testid="viz-chrome-play"
-        data-preview-open={isOpen ? 'true' : 'false'}
-        onClick={handlePlayClick}
-        title={
-          isOpen
-            ? 'Stop — close preview (Cmd+K V)'
-            : 'Play — open preview to side (Cmd+K V)'
-        }
-        style={isOpen ? stopBtnStyle : primaryBtnStyle}
+        data-testid="viz-chrome-open-preview"
+        onClick={handleOpenPreviewClick}
+        title="Open preview to side (Cmd+K V)"
+        style={primaryBtnStyle}
       >
-        {isOpen ? '\u25A0 Stop' : '\u25B6 Play'}
+        {'\u25B6'} Preview
       </button>
 
       {/* File type badge */}

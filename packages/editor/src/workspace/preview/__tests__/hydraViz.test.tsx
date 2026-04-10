@@ -33,7 +33,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
-import { render, cleanup } from '@testing-library/react'
+import { render, cleanup, fireEvent } from '@testing-library/react'
 import type { PreviewContext } from '../../PreviewProvider'
 import type {
   AudioPayload,
@@ -260,34 +260,30 @@ describe('HYDRA_VIZ render path', () => {
     expect(lastCall[0].audio?.analyser).toBe(fakeAnalyser)
   })
 
-  it('chrome renders ▶ Play when previewOpen is false/omitted', () => {
-    const file = makeFile('f-play', 's.osc().out()')
+  it('chrome renders an idempotent "Preview" button — no Stop state', () => {
+    // Viz tabs are persistent editing surfaces, not transports. The
+    // chrome's primary button only opens the preview — it never
+    // closes one. Closing is driven by the preview tab's own ✕. The
+    // shell handler makes the open idempotent (no-op if a preview
+    // tab for the file already exists), so the chrome doesn't need
+    // to track preview state and there is no Stop variant to test.
+    const onOpenPreview = vi.fn()
+    const file = makeFile('f-preview', 's.osc().out()')
     const chrome = HYDRA_VIZ.renderEditorChrome!({
       file,
-      onOpenPreview: vi.fn(),
+      onOpenPreview,
       onToggleBackground: vi.fn(),
       onSave: vi.fn(),
-      previewOpen: false,
     })
     const { getByTestId } = render(chrome as React.ReactElement)
-    const btn = getByTestId('viz-chrome-play')
-    expect(btn.getAttribute('data-preview-open')).toBe('false')
-    expect(btn.textContent).toContain('Play')
-  })
-
-  it('chrome renders ■ Stop when previewOpen is true', () => {
-    const file = makeFile('f-stop', 's.osc().out()')
-    const chrome = HYDRA_VIZ.renderEditorChrome!({
-      file,
-      onOpenPreview: vi.fn(),
-      onToggleBackground: vi.fn(),
-      onSave: vi.fn(),
-      previewOpen: true,
-    })
-    const { getByTestId } = render(chrome as React.ReactElement)
-    const btn = getByTestId('viz-chrome-play')
-    expect(btn.getAttribute('data-preview-open')).toBe('true')
-    expect(btn.textContent).toContain('Stop')
+    const btn = getByTestId('viz-chrome-open-preview')
+    expect(btn.textContent).toContain('Preview')
+    // Clicking calls onOpenPreview with the current source selection
+    // (default: { kind: 'default' }). The shell handler is what
+    // decides whether to actually open a tab — the chrome is dumb.
+    fireEvent.click(btn)
+    expect(onOpenPreview).toHaveBeenCalledTimes(1)
+    expect(onOpenPreview.mock.calls[0][0]).toEqual({ kind: 'default' })
   })
 
   it('renders an error panel when compilePreset throws (invalid code)', () => {

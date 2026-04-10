@@ -1077,23 +1077,22 @@ export function WorkspaceShell({
             if (provider?.renderEditorChrome) {
               const file = getFile(tab.fileId)
               if (file) {
-                // Does a preview tab already exist for this file? Drives
-                // the Play → Stop toggle on the chrome's primary button.
-                const existingPreview = findTabByFileId(tab.fileId, 'preview')
                 chromeSlot = provider.renderEditorChrome({
                   file,
-                  previewOpen: existingPreview !== null,
                   onOpenPreview: (selectedSourceRef) => {
-                    // Toggle: close if open, open if closed. Re-read the
-                    // latest state via shellActionsRef so a stale closure
-                    // (after a user dragged the preview tab elsewhere)
-                    // still resolves correctly.
+                    // Idempotent open: if a preview tab for this file
+                    // already exists anywhere in the shell, return
+                    // early. Viz tabs are editing surfaces, not
+                    // transports — the preview is closed by its own
+                    // ✕ button, not by a chrome action. Re-read via
+                    // shellActionsRef so a stale closure (after a
+                    // user dragged the preview tab elsewhere) still
+                    // resolves correctly.
                     const current = shellActionsRef.current.findTabByFileId(
                       tab.fileId,
                       'preview',
                     )
                     if (current) {
-                      shellActionsRef.current.closeTab(current.tabId)
                       return
                     }
 

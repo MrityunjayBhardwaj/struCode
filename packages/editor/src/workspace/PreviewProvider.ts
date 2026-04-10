@@ -189,13 +189,12 @@ export interface PreviewEditorChromeContext {
   /** The workspace file this editor tab is bound to. */
   readonly file: WorkspaceFile
   /**
-   * Toggle the preview for this file in a sibling split group.
+   * Open the preview for this file in a sibling split group.
    *
-   * If no preview tab currently exists for this file, opens a new one
-   * in a split-right group (Cmd+K V behavior). If one already exists,
-   * closes it instead — so a "▶ Play" → "■ Stop" toggle on the chrome
-   * button has coherent semantics for viz files whose "play" means
-   * "show me the rendered canvas."
+   * Idempotent: if a preview tab for this file already exists anywhere
+   * in the shell, the shell's handler returns early without opening a
+   * second one. The chrome can call this safely on every click without
+   * having to track preview state itself.
    *
    * The optional `sourceRef` argument pins the new preview tab to a
    * specific audio source when opening. The chrome's source dropdown
@@ -205,19 +204,11 @@ export interface PreviewEditorChromeContext {
    * avoiding the default-tracking fallback that would otherwise race
    * the user's pattern-start clicks.
    *
-   * The chrome reads `previewOpen` below to render the correct label
-   * and icon; it calls this single callback for both open and close.
+   * Viz tabs intentionally do NOT have a Stop action — a viz file is
+   * a persistent editing surface, not a transport. The preview is
+   * closed by its own tab ✕ button when the user is done.
    */
   readonly onOpenPreview: (sourceRef?: import('./types').AudioSourceRef) => void
-  /**
-   * Whether a preview tab for this file currently exists in any group.
-   * The chrome uses this to render the primary button as `▶ Play` (no
-   * preview open) or `■ Stop` (preview open). Maintained by the shell
-   * — embedders of `PreviewView` directly (outside the shell) can
-   * leave this as `undefined`, in which case the chrome defaults to
-   * `▶ Play`.
-   */
-  readonly previewOpen?: boolean
   /** Toggle the background decoration (viz behind the editor). */
   readonly onToggleBackground: () => void
   /** Save the file back to its persistent store (VizPresetStore). */

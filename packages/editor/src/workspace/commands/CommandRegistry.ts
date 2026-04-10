@@ -42,18 +42,19 @@ export interface WorkspaceShellActions {
   /** Toggle the background decoration tab id on a group. */
   updateGroupBackground(groupId: string, backgroundTabId: string | null): void
   /**
-   * Close a specific tab by id. Used by the chrome's Play-toggle path — a
-   * second click on "▶ Play" becomes "■ Stop" which calls this to close
-   * the preview tab for the current file. If the closed tab was the last
-   * in its group, the group is preserved empty (shell policy); the caller
-   * is responsible for closing empty groups if that's the desired UX.
+   * Close a specific tab by id. Imperative counterpart to the tab's
+   * ✕ button; commands can use this to close the preview for the
+   * current file, close a backgrounded tab, etc. If the closed tab
+   * was the last in its group, the group is preserved empty (shell
+   * policy); the caller is responsible for closing empty groups if
+   * that's the desired UX.
    */
   closeTab(tabId: string): void
   /**
    * Scan every group for the first tab with the given fileId AND kind.
-   * Returns the group id + tab id if found. Used by the chrome to check
-   * whether a preview tab already exists for the editor tab's file —
-   * drives the Play/Stop toggle state.
+   * Returns the group id + tab id if found. Used by the chrome's
+   * idempotent "Open Preview" handler to check whether a preview tab
+   * for the current file already exists before opening a new one.
    */
   findTabByFileId(
     fileId: string,
