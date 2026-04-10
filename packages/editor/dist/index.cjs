@@ -6844,6 +6844,11 @@ function payloadKey(ref, payload) {
   }
   return "none";
 }
+function sourceRefKey(ref) {
+  if (ref.kind === "file") return `ref:file:${ref.fileId}`;
+  if (ref.kind === "none") return "ref:none";
+  return "ref:default";
+}
 function PreviewView({
   fileId,
   provider,
@@ -6939,7 +6944,7 @@ function PreviewView({
       hidden: effectivelyHidden
     });
   }, [file, provider, audioPayload, effectivelyHidden, reloadTick]);
-  const providerKey = `${payloadKey(sourceRef, audioPayload)}:${reloadTick}`;
+  const providerKey = `${sourceRefKey(sourceRef)}:${payloadKey(sourceRef, audioPayload)}:${reloadTick}`;
   return /* @__PURE__ */ jsxRuntime.jsxs(
     "div",
     {
@@ -7858,17 +7863,14 @@ function WorkspaceShell({
             if (provider?.renderEditorChrome) {
               const file = getFile(tab.fileId);
               if (file) {
-                const existingPreview = findTabByFileId(tab.fileId, "preview");
                 chromeSlot = provider.renderEditorChrome({
                   file,
-                  previewOpen: existingPreview !== null,
                   onOpenPreview: (selectedSourceRef) => {
                     const current = shellActionsRef.current.findTabByFileId(
                       tab.fileId,
                       "preview"
                     );
                     if (current) {
-                      shellActionsRef.current.closeTab(current.tabId);
                       return;
                     }
                     const sourceRef = selectedSourceRef ?? { kind: "default" };
@@ -16876,6 +16878,94 @@ function VizEditor({
   );
 }
 
+// src/visualizers/p5Compiler.ts
+function isFullLifecycleSketch(code) {
+  return /\bfunction\s+draw\s*\(/.test(code);
+}
+function compileP5Code(code) {
+  return (hapStreamRef, analyserRef, schedulerRef) => {
+    const body2 = isFullLifecycleSketch(code) ? buildFullLifecycleBody(code) : buildLegacyBody(code);
+    return (p) => {
+      const stave = {
+        get scheduler() {
+          return schedulerRef.current;
+        },
+        get analyser() {
+          return analyserRef.current;
+        },
+        get hapStream() {
+          return hapStreamRef.current;
+        }
+      };
+      let lifecycle;
+      try {
+        const compile = new Function("p", "stave", body2);
+        lifecycle = compile(p, stave);
+      } catch (err2) {
+        installErrorSketch(p, err2.message ?? String(err2));
+        return;
+      }
+      installLifecycle(p, lifecycle);
+    };
+  };
+}
+function buildFullLifecycleBody(userCode) {
+  return `
+with (p) {
+  ${userCode}
+  return {
+    setup: typeof setup === 'function' ? setup : undefined,
+    draw: typeof draw === 'function' ? draw : undefined,
+    preload: typeof preload === 'function' ? preload : undefined,
+  }
+}
+  `;
+}
+function buildLegacyBody(userCode) {
+  return `
+with (p) {
+  return {
+    setup: function () {
+      createCanvas(p.windowWidth, p.windowHeight)
+      colorMode(RGB)
+    },
+    draw: function () {
+      const scheduler = stave.scheduler
+      const analyser = stave.analyser
+      const hapStream = stave.hapStream
+      ${userCode}
+    },
+    preload: undefined,
+  }
+}
+  `;
+}
+function installLifecycle(p, lifecycle) {
+  const pi = p;
+  if (lifecycle.preload) pi.preload = lifecycle.preload;
+  pi.setup = lifecycle.setup ?? function() {
+    pi.createCanvas(pi.windowWidth, pi.windowHeight);
+  };
+  if (lifecycle.draw) pi.draw = lifecycle.draw;
+}
+function installErrorSketch(p, message) {
+  const pi = p;
+  pi.setup = function() {
+    pi.createCanvas(pi.windowWidth || 400, 160);
+  };
+  pi.draw = function() {
+    pi.background(20, 20, 24);
+    pi.noStroke();
+    pi.fill(255, 120, 120);
+    pi.textFont("monospace");
+    pi.textSize(12);
+    pi.text("p5 viz compile error:", 12, 24);
+    pi.fill(230);
+    pi.textSize(11);
+    pi.text(message, 12, 48, pi.width - 24, pi.height - 60);
+  };
+}
+
 // src/visualizers/vizCompiler.ts
 function compilePreset(preset) {
   const { id, name: name2, renderer, code, requires } = preset;
@@ -16905,37 +16995,53 @@ function compileHydraCode(code) {
     fn(s);
   };
 }
-function compileP5Code(code) {
-  return (hapStreamRef, analyserRef, schedulerRef) => {
-    return (p) => {
-      p.setup = () => {
-        p.createCanvas(p.windowWidth, p.windowHeight);
-        p.colorMode(p.RGB);
-      };
-      p.draw = () => {
-        const hapStream = hapStreamRef.current;
-        const analyser = analyserRef.current;
-        const scheduler = schedulerRef.current;
-        const { width, height } = p;
-        const fn = new Function(
-          "p",
-          "hapStream",
-          "analyser",
-          "scheduler",
-          "width",
-          "height",
-          // Expose common p5 methods as bare names
-          `with(p) { ${code} }`
-        );
-        fn(p, hapStream, analyser, scheduler, width, height);
-      };
-    };
-  };
-}
 
 // src/workspace/sampleSound.ts
 var SAMPLE_SOUND_SOURCE_ID = "__sample__";
 var SAMPLE_SOUND_LABEL = "Sample sound (test audio)";
+var SAMPLE_PATTERN_CYCLE_SECONDS = 2;
+var SAMPLE_PATTERN_NOTE_DURATION = 0.5;
+var SAMPLE_PATTERN_NOTES = [57, 60, 64, 67];
+var SampleSoundScheduler = class {
+  constructor(ctx) {
+    this.ctx = ctx;
+  }
+  now() {
+    return this.ctx.currentTime;
+  }
+  query(begin, end) {
+    if (end <= begin) return [];
+    const events = [];
+    const firstCycle = Math.floor(begin / SAMPLE_PATTERN_CYCLE_SECONDS);
+    const lastCycle = Math.floor(end / SAMPLE_PATTERN_CYCLE_SECONDS);
+    for (let cycle = firstCycle; cycle <= lastCycle; cycle++) {
+      const cycleStart = cycle * SAMPLE_PATTERN_CYCLE_SECONDS;
+      for (let i2 = 0; i2 < SAMPLE_PATTERN_NOTES.length; i2++) {
+        const noteBegin = cycleStart + i2 * SAMPLE_PATTERN_NOTE_DURATION;
+        const noteEnd = noteBegin + SAMPLE_PATTERN_NOTE_DURATION;
+        if (noteEnd <= begin || noteBegin >= end) continue;
+        const midi = SAMPLE_PATTERN_NOTES[i2];
+        events.push({
+          begin: noteBegin,
+          end: noteEnd,
+          endClipped: noteEnd,
+          note: midi,
+          // freq = 440 * 2^((midi - 69) / 12). Precompute because
+          // the renderer may prefer freq over note (e.g., pitch-axis
+          // visualizations).
+          freq: 440 * Math.pow(2, (midi - 69) / 12),
+          s: SAMPLE_SOUND_SOURCE_ID,
+          type: "synth",
+          gain: 1,
+          velocity: 1,
+          color: null,
+          trackId: SAMPLE_SOUND_SOURCE_ID
+        });
+      }
+    }
+    return events;
+  }
+};
 var state = null;
 function startSampleSound() {
   if (state) return;
@@ -16960,9 +17066,13 @@ function startSampleSound() {
   osc.connect(analyser);
   osc.start();
   lfo.start();
-  state = { ctx, osc, lfo, lfoGain, outGain, analyser };
+  const scheduler = new SampleSoundScheduler(ctx);
+  const hapStream = new HapStream();
+  state = { ctx, osc, lfo, lfoGain, outGain, analyser, scheduler, hapStream };
   const payload = {
     analyser,
+    scheduler,
+    hapStream,
     audio: {
       analyser,
       audioCtx: ctx
@@ -16985,6 +17095,7 @@ function stopSampleSound() {
     state.analyser.disconnect();
   } catch {
   }
+  state.hapStream.dispose();
   workspaceAudioBus.unpublish(SAMPLE_SOUND_SOURCE_ID);
   try {
     void state.ctx.close();
@@ -17274,11 +17385,9 @@ function VizEditorChrome({
   file,
   onOpenPreview,
   onToggleBackground,
-  onSave,
-  previewOpen
+  onSave
 }) {
   const ext = file.language === "p5js" ? "p5" : file.language;
-  const isOpen = previewOpen === true;
   const [selectedSource, setSelectedSource] = React.useState({
     kind: "default"
   });
@@ -17289,13 +17398,7 @@ function VizEditorChrome({
     });
     return unsub;
   }, []);
-  const stopBtnStyle = {
-    ...primaryBtnStyle,
-    background: "rgba(139,92,246,0.15)",
-    color: "var(--accent)",
-    outline: "1px solid var(--accent)"
-  };
-  const handlePlayClick = React.useCallback(() => {
+  const handleOpenPreviewClick = React.useCallback(() => {
     if (selectedSource.kind === "file" && selectedSource.fileId === SAMPLE_SOUND_SOURCE_ID && !isSampleSoundPlaying()) {
       startSampleSound();
     }
@@ -17327,15 +17430,17 @@ function VizEditorChrome({
         flexShrink: 0
       },
       children: [
-        /* @__PURE__ */ jsxRuntime.jsx(
+        /* @__PURE__ */ jsxRuntime.jsxs(
           "button",
           {
-            "data-testid": "viz-chrome-play",
-            "data-preview-open": isOpen ? "true" : "false",
-            onClick: handlePlayClick,
-            title: isOpen ? "Stop \u2014 close preview (Cmd+K V)" : "Play \u2014 open preview to side (Cmd+K V)",
-            style: isOpen ? stopBtnStyle : primaryBtnStyle,
-            children: isOpen ? "\u25A0 Stop" : "\u25B6 Play"
+            "data-testid": "viz-chrome-open-preview",
+            onClick: handleOpenPreviewClick,
+            title: "Open preview to side (Cmd+K V)",
+            style: primaryBtnStyle,
+            children: [
+              "\u25B6",
+              " Preview"
+            ]
           }
         ),
         /* @__PURE__ */ jsxRuntime.jsx(

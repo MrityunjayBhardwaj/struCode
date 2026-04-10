@@ -1210,11 +1210,17 @@ declare function VizEditor({ components: _components, hapStream: _hapStream, ana
 /**
  * Compiles user-authored viz code into a VizDescriptor.
  *
- * Hydra code: evaluated in a function scope with the hydra synth object
- *   as the implicit `s` parameter. Uses `new Function()`.
+ * Hydra code: evaluated in a function scope with the hydra synth
+ *   object as the implicit `s` parameter. Uses `new Function()`.
  *
- * p5 code: evaluated as a p5 sketch body with hapStream, analyser, scheduler
- *   available as closed-over variables.
+ * p5 code: evaluated as a full p5 sketch script. Users write real
+ *   `function preload/setup/draw` declarations and access injected
+ *   Stave-specific inputs via a single `stave` namespace global:
+ *     - `stave.scheduler`  — PatternScheduler | null
+ *     - `stave.analyser`   — AnalyserNode | null
+ *     - `stave.hapStream`  — HapStream | null
+ *   Legacy draw-body snippets (no `function draw` declaration) are
+ *   auto-wrapped for backwards compatibility.
  */
 declare function compilePreset(preset: VizPreset): VizDescriptor;
 
@@ -1383,13 +1389,12 @@ interface PreviewEditorChromeContext {
     /** The workspace file this editor tab is bound to. */
     readonly file: WorkspaceFile;
     /**
-     * Toggle the preview for this file in a sibling split group.
+     * Open the preview for this file in a sibling split group.
      *
-     * If no preview tab currently exists for this file, opens a new one
-     * in a split-right group (Cmd+K V behavior). If one already exists,
-     * closes it instead — so a "▶ Play" → "■ Stop" toggle on the chrome
-     * button has coherent semantics for viz files whose "play" means
-     * "show me the rendered canvas."
+     * Idempotent: if a preview tab for this file already exists anywhere
+     * in the shell, the shell's handler returns early without opening a
+     * second one. The chrome can call this safely on every click without
+     * having to track preview state itself.
      *
      * The optional `sourceRef` argument pins the new preview tab to a
      * specific audio source when opening. The chrome's source dropdown
@@ -1399,19 +1404,11 @@ interface PreviewEditorChromeContext {
      * avoiding the default-tracking fallback that would otherwise race
      * the user's pattern-start clicks.
      *
-     * The chrome reads `previewOpen` below to render the correct label
-     * and icon; it calls this single callback for both open and close.
+     * Viz tabs intentionally do NOT have a Stop action — a viz file is
+     * a persistent editing surface, not a transport. The preview is
+     * closed by its own tab ✕ button when the user is done.
      */
     readonly onOpenPreview: (sourceRef?: AudioSourceRef) => void;
-    /**
-     * Whether a preview tab for this file currently exists in any group.
-     * The chrome uses this to render the primary button as `▶ Play` (no
-     * preview open) or `■ Stop` (preview open). Maintained by the shell
-     * — embedders of `PreviewView` directly (outside the shell) can
-     * leave this as `undefined`, in which case the chrome defaults to
-     * `▶ Play`.
-     */
-    readonly previewOpen?: boolean;
     /** Toggle the background decoration (viz behind the editor). */
     readonly onToggleBackground: () => void;
     /** Save the file back to its persistent store (VizPresetStore). */
@@ -2556,27 +2553,44 @@ declare function subscribe(id: string, cb: Subscriber): () => void;
  * sampleSound — test audio source for viz development.
  *
  * A self-contained sawtooth oscillator with an LFO-modulated pitch that
- * feeds an `AnalyserNode`, whose payload is published to the
- * `workspaceAudioBus` under the fixed source id `__sample__`. Lets the
- * user pick "Sample sound" in a viz tab's source dropdown and see their
- * shader or sketch react to a predictable waveform without needing to
- * play a real pattern first.
+ * feeds an `AnalyserNode`, plus a virtual `PatternScheduler` that
+ * returns a repeating 4-note arpeggio synced to the LFO period. The
+ * payload is published to the `workspaceAudioBus` under the fixed
+ * source id `__sample__` so the user can pick "Sample sound" in a viz
+ * tab's source dropdown and see both FFT-reactive shaders AND
+ * scheduler-driven sketches (like the default pianoroll) react to a
+ * predictable source without needing to play a real pattern first.
  *
  * @remarks
  * ## Design
  *
  * The sample sound is a **singleton** — one shared `AudioContext`,
- * `OscillatorNode`, `LFO`, `GainNode`, and `AnalyserNode`. Multiple viz
- * previews pinning to `__sample__` all see the same FFT data, which is
- * what you want for "test the viz with a known-stable audio source."
+ * oscillator graph, `AnalyserNode`, and virtual `PatternScheduler`.
+ * Multiple viz previews pinning to `__sample__` all see the same FFT
+ * data AND the same scheduler, which is what you want for "test the
+ * viz with a known-stable audio source."
  *
  * ## Why an LFO-modulated sawtooth, specifically
  *
- * A pure sine at one frequency produces a single FFT spike that doesn't
- * move — the viz looks dead. A sawtooth produces a rich harmonic series
- * (multiple bins lit up), and modulating its frequency with a slow LFO
- * makes those bins shift over time. The result is a visibly animated
- * FFT without needing a complex score.
+ * A pure sine at one frequency produces a single FFT spike that
+ * doesn't move — the viz looks dead. A sawtooth produces a rich
+ * harmonic series (multiple bins lit up), and modulating its frequency
+ * with a slow LFO makes those bins shift over time. The result is a
+ * visibly animated FFT without needing a complex score.
+ *
+ * ## Why a 4-note arpeggio for the virtual scheduler
+ *
+ * The pianoroll default (PIANOROLL_P5_CODE) polls
+ * `stave.scheduler.query()` every frame and draws rectangles for the
+ * returned events. Without a scheduler payload, the pianoroll shows
+ * only the analyser spectrum — no notes. A minimal virtual pattern
+ * lets users see their sketch respond to "pattern-like" data while
+ * testing.
+ *
+ * The pattern is a 4-note A-minor arpeggio (A3, C4, E4, G4) with
+ * each note holding for 0.5 seconds, cycling every 2 seconds — the
+ * same period as the LFO sweep, so the visible note changes
+ * roughly coincide with the audible pitch drift.
  *
  * ## Audibility
  *
@@ -2588,9 +2602,10 @@ declare function subscribe(id: string, cb: Subscriber): () => void;
  *
  * ## Lifecycle (user-driven)
  *
- *   - `start()` — lazy-initializes the AudioContext on first call. No-op
- *     if already playing. Must be called from a user gesture (click
- *     handler) per browser autoplay policy.
+ *   - `start()` — lazy-initializes the AudioContext, oscillator graph,
+ *     analyser, and scheduler on first call. No-op if already playing.
+ *     Must be called from a user gesture (click handler) per browser
+ *     autoplay policy.
  *   - `stop()` — disconnects nodes, unpublishes from the bus, closes
  *     the context. Called when the user selects a different source.
  *   - `isPlaying()` — query for UI state.
@@ -2601,19 +2616,22 @@ declare function subscribe(id: string, cb: Subscriber): () => void;
  *   - `analyser` — live FFT data from the oscillator
  *   - `audio: { analyser, audioCtx }` — nested component shape for
  *     consumers that read from `payload.audio`
- *   - No `hapStream`, no `scheduler`, no `inlineViz` — the sample sound
- *     is not a pattern runtime. Viz providers that require streaming
- *     or queryable will fall back to demo mode when pinned here.
+ *   - `scheduler` — virtual `PatternScheduler` returning the arpeggio
+ *   - `hapStream` — a fresh empty `HapStream`. The sample sound does
+ *     NOT emit hap events in the current revision — event-driven
+ *     sketches that subscribe via `hapStream.on()` see nothing. The
+ *     field is populated for payload-shape completeness only.
  *
  * ## Identity guard interaction (D-01)
  *
  * The bus's identity guard (`payloadsEquivalent` in `WorkspaceAudioBus`)
  * treats same-ref publishes as no-ops. We publish ONCE on `start()`
  * with a stable payload — the live FFT data updates happen inside the
- * analyser node, not via re-publishing. Consumers read `analyser`
- * directly per-frame, so the bus doesn't need to know about the
- * changing FFT bins.
+ * analyser node, not via re-publishing. The scheduler's `now()` reads
+ * `ctx.currentTime` per call, so consumers get fresh time every frame
+ * without needing a re-publish either.
  */
+
 /** Fixed source id the sample sound publishes under on the workspace bus. */
 declare const SAMPLE_SOUND_SOURCE_ID = "__sample__";
 /** Human-readable label for the audio source dropdown. */
