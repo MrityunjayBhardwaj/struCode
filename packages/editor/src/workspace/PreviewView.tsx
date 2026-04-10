@@ -142,6 +142,29 @@ function payloadKey(
   return 'none'
 }
 
+/**
+ * Stable string derived from the `AudioSourceRef` ALONE, independent of
+ * whether a payload has arrived yet. Used as part of the React key on
+ * the provider mount so that an explicit source swap (e.g., the user
+ * picks a different pattern from the chrome dropdown) always forces a
+ * fresh mount, even if the new source isn't publishing yet.
+ *
+ * Without this, the key was computed only from `payloadKey(ref, payload)`
+ * which can return the same `'none'` string for two DIFFERENT sources
+ * that both happen to have null payloads — e.g., swapping from an idle
+ * `{ kind: 'file', fileId: 'A' }` to an idle `{ kind: 'file', fileId: 'B' }`
+ * wouldn't remount. Task 2 of the editor-fixes branch needs source
+ * swaps to always re-run a sketch's `setup()` so that injected globals
+ * like `stave.analyser` / `stave.scheduler` (coming in Task 3) stay
+ * consistent with the source bound at mount time — no stale caches,
+ * no mutable-bag footguns.
+ */
+function sourceRefKey(ref: AudioSourceRef): string {
+  if (ref.kind === 'file') return `ref:file:${ref.fileId}`
+  if (ref.kind === 'none') return 'ref:none'
+  return 'ref:default'
+}
+
 export function PreviewView({
   fileId,
   provider,
@@ -306,7 +329,20 @@ export function PreviewView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, provider, audioPayload, effectivelyHidden, reloadTick])
 
-  const providerKey = `${payloadKey(sourceRef, audioPayload)}:${reloadTick}`
+  // React key on the provider mount. Composes three independent
+  // remount triggers:
+  //   1. `sourceRefKey(sourceRef)` — explicit source swap from the
+  //      chrome dropdown. Fires immediately, even before the new
+  //      source's payload arrives. Needed so `setup()` re-runs with
+  //      the fresh injected globals (Task 2 → Task 3).
+  //   2. `payloadKey(sourceRef, audioPayload)` — publisher identity
+  //      change within a single `default` tracker (a new pattern
+  //      starts publishing and becomes the most-recent). CONTEXT D-01.
+  //   3. `reloadTick` — hot-reload debounce resolved, the provider's
+  //      render should re-run with the new file content.
+  // Any single change to any component forces a full unmount +
+  // remount of the provider subtree below the keyed div.
+  const providerKey = `${sourceRefKey(sourceRef)}:${payloadKey(sourceRef, audioPayload)}:${reloadTick}`
 
   return (
     <div

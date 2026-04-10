@@ -185,6 +185,65 @@ describe('PreviewView', () => {
     expect(mountCount.current).toBeGreaterThan(mountsBeforeB)
   })
 
+  it('re-mounts the provider output when sourceRef is explicitly swapped (Task 2)', () => {
+    // Task 2 invariant: changing sourceRef at the prop level must
+    // always force a fresh mount, even if both old and new sources
+    // have the same payload state (null / idle / not yet publishing).
+    // This is the infrastructure that makes the Task 3 `stave.*`
+    // injection contract safe — setup() re-runs for every source,
+    // so cached references like `const a = stave.analyser` never go
+    // stale. Without this test, the indirect payloadKey path could
+    // collapse two distinct idle sources into the same key string
+    // and silently skip a remount.
+    createWorkspaceFile('v', 'v.hydra', '// v', 'hydra')
+    const { provider, mountCount } = makeRecordingProvider()
+    const { getByTestId, rerender } = render(
+      <PreviewView
+        fileId="v"
+        provider={provider}
+        sourceRef={{ kind: 'file', fileId: 'pattern-A' }}
+        onSourceRefChange={() => {}}
+      />,
+    )
+
+    const initialKey = getByTestId('preview-provider-mount-v').getAttribute(
+      'data-provider-key',
+    )
+    const initialMounts = mountCount.current
+
+    // Swap to a different file-pinned source. Neither source is
+    // publishing on the bus, so payloadKey would return 'none' for
+    // both — only the new sourceRefKey component distinguishes them.
+    rerender(
+      <PreviewView
+        fileId="v"
+        provider={provider}
+        sourceRef={{ kind: 'file', fileId: 'pattern-B' }}
+        onSourceRefChange={() => {}}
+      />,
+    )
+
+    const afterSwapKey = getByTestId('preview-provider-mount-v').getAttribute(
+      'data-provider-key',
+    )
+    expect(afterSwapKey).not.toBe(initialKey)
+    expect(mountCount.current).toBeGreaterThan(initialMounts)
+
+    // Swap once more — to `none`. Mount count should increment again
+    // because the key still changes even though both pattern-B and
+    // none resolve the same payloadKey ('none').
+    const mountsBeforeNone = mountCount.current
+    rerender(
+      <PreviewView
+        fileId="v"
+        provider={provider}
+        sourceRef={{ kind: 'none' }}
+        onSourceRefChange={() => {}}
+      />,
+    )
+    expect(mountCount.current).toBeGreaterThan(mountsBeforeNone)
+  })
+
   it("collapses rapid typing into one reload with reload: 'debounced'", () => {
     vi.useFakeTimers()
     createWorkspaceFile('v', 'v.hydra', 'v0', 'hydra')
