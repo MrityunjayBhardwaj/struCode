@@ -33,6 +33,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import MonacoEditorRaw from '@monaco-editor/react'
 import { applyTheme } from '../theme/tokens'
+import { defineStrudelMonacoTheme } from '../theme/monacoTheme'
 import { useWorkspaceFile } from './useWorkspaceFile'
 import { ensureWorkspaceLanguages, toMonacoLanguage } from './languages'
 import { workspaceAudioBus } from './WorkspaceAudioBus'
@@ -44,6 +45,17 @@ import type { EditorViewProps } from './types'
 import type { AudioPayload } from './types'
 import type { InlineZoneHandle } from '../visualizers/viewZones'
 import type { HapStream } from '../engine/HapStream'
+
+/**
+ * Resolve the EditorView `theme` prop to the matching Monaco theme name.
+ * A custom `StrudelTheme` object falls back to `stave-dark` — custom light
+ * palettes should pass `'light'` explicitly to opt into the vs-base light
+ * theme. Keeping this mapping in one place means `handleMonacoMount` and
+ * the theme-change effect can't disagree.
+ */
+function monacoThemeNameFor(theme: EditorViewProps['theme']): string {
+  return theme === 'light' ? 'stave-light' : 'stave-dark'
+}
 
 // `@monaco-editor/react`'s default export is typed loosely; we cast once
 // and reuse. Mirrors the approach taken in the legacy `EditorGroup.tsx:5`.
@@ -103,11 +115,32 @@ export function EditorView({
   // HapStream from the bus payload — drives useHighlighting.
   const [hapStream, setHapStream] = useState<HapStream | null>(null)
 
-  // Theme application — PV6 / PK6. Effect, not render. Runs on mount
-  // (after the ref is attached) and on every theme prop change.
+  // Theme application — PV6 / PK6. Two layers that must stay in sync:
+  //
+  //   1. CSS vars on the container (chrome bars, backgrounds, borders).
+  //      Applied via `applyTheme(containerRef, theme)`.
+  //   2. Monaco's own theme (editor gutter, syntax highlighting, caret).
+  //      Applied via `monaco.editor.setTheme('stave-dark' | 'stave-light')`.
+  //
+  // Missing #2 is why the editor surface renders white on a dark shell —
+  // @monaco-editor/react defaults to the built-in `vs` theme when no
+  // `theme` prop is passed to <MonacoEditor>. We don't pass it as a prop
+  // because the mount handler registers the custom `stave-dark` /
+  // `stave-light` theme and setTheme-switches between them, which
+  // includes the custom syntax rules for Strudel + Sonic Pi tokens.
   useEffect(() => {
     if (!containerRef.current) return
     applyTheme(containerRef.current, theme)
+  }, [theme])
+
+  useEffect(() => {
+    // Monaco may not be ready on the first render — the effect runs
+    // after every theme change AND after mount (when monacoRef is set
+    // inside handleMonacoMount). The guard keeps it a no-op until both
+    // are available.
+    const monaco = monacoRef.current
+    if (!monaco?.editor?.setTheme) return
+    monaco.editor.setTheme(monacoThemeNameFor(theme))
   }, [theme])
 
   // ----------------------------------------------------------------
@@ -189,6 +222,16 @@ export function EditorView({
     editorRef.current = editor
     monacoRef.current = monaco
     ensureWorkspaceLanguages(monaco)
+
+    // Register the Stave Monaco theme (syntax rules + editor colors)
+    // and activate the correct variant. Must happen BEFORE any model
+    // renders so the first paint uses the right colors — `setTheme` is
+    // applied globally to Monaco so any future editors pick it up too.
+    // The theme-change effect above handles subsequent prop flips.
+    if (monaco.editor?.defineTheme && monaco.editor?.setTheme) {
+      defineStrudelMonacoTheme(monaco)
+      monaco.editor.setTheme(monacoThemeNameFor(theme))
+    }
 
     // Register Ctrl+Enter (play) and Ctrl+. (stop) — mirrors the legacy
     // LiveCodingEditor.tsx:266-281 keybindings. Uses refs so the actions
