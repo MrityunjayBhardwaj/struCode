@@ -107,6 +107,28 @@ import type {
 } from '../types'
 
 /**
+ * Debounce window for live-mode re-evaluate. Matches the legacy
+ * `LiveCodingEditor.tsx:293-300` timing so the feel is byte-identical to
+ * pre-refactor Strudel live coding. 500ms is short enough to feel
+ * responsive while absorbing multi-keystroke bursts that would otherwise
+ * cause re-play storms on every character.
+ */
+const LIVE_MODE_DEBOUNCE_MS = 500
+
+/**
+ * Subscribe-to-file function shape. Callers supply one if they want the
+ * runtime's live mode (`setAutoRefresh(true)`) to actually do anything —
+ * otherwise live mode is a no-op (useful in tests that don't want to
+ * stand up a full `WorkspaceFile` store).
+ *
+ * The callback fires on EVERY content change for the runtime's file id,
+ * including changes that originate from `play()`'s own `evaluate` call
+ * (which does not write back, so this is fine in practice). The returned
+ * disposer is called by the runtime when it tears down the subscription.
+ */
+export type SubscribeToRuntimeFile = (cb: () => void) => () => void
+
+/**
  * Parse `setcps(numerator/denominator)` (or `setcps(value)`) out of the
  * given source code and convert to BPM. Returns `undefined` if no
  * `setcps` line is present or the expression is unparseable.
@@ -168,6 +190,7 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
   readonly fileId: string
 
   private readonly getFileContent: () => string
+  private readonly subscribeToFile: SubscribeToRuntimeFile | null
   private bufferedSchedulerRef: BufferedScheduler | null = null
   private isInitialized = false
   private isDisposed = false
@@ -177,14 +200,34 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
   private readonly errorListeners = new Set<(err: Error) => void>()
   private readonly playingChangedListeners = new Set<(playing: boolean) => void>()
 
+  // Live mode (autoRefresh) state.
+  //
+  // The subscription is lazily installed the first time `setAutoRefresh(true)`
+  // is called AND the runtime is playing. Every subsequent reconcile
+  // (play/stop/setAutoRefresh/dispose) maintains the invariant
+  //
+  //     (autoRefreshEnabled && isPlayingState && subscribeToFile) <=>
+  //     (autoRefreshUnsub !== null)
+  //
+  // so the subscription lifetime is driven by three independent signals
+  // without leaking between sessions or firing after dispose. The debounce
+  // timeout is tracked separately so setAutoRefresh(false) / stop() can
+  // cancel an in-flight pending re-play.
+  private autoRefreshEnabled = false
+  private autoRefreshUnsub: (() => void) | null = null
+  private autoRefreshTimeout: ReturnType<typeof setTimeout> | null = null
+  private readonly autoRefreshChangedListeners = new Set<(enabled: boolean) => void>()
+
   constructor(
     fileId: string,
     engine: LiveCodingEngine,
     getFileContent: () => string,
+    subscribeToFile: SubscribeToRuntimeFile | null = null,
   ) {
     this.fileId = fileId
     this.engine = engine
     this.getFileContent = getFileContent
+    this.subscribeToFile = subscribeToFile
 
     // Wire the engine's runtime error handler into our own error listeners
     // so audio scheduling errors (sound-not-found etc.) surface through the
@@ -307,6 +350,11 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     this.isPlayingState = true
     this.firePlayingChanged(true)
 
+    // Live mode: the playing-state flip is one of the reconcile triggers.
+    // If setAutoRefresh(true) was called before play(), the subscription
+    // installs now; if not, this is a no-op.
+    this.reconcileAutoRefresh()
+
     return { error: null }
   }
 
@@ -327,6 +375,11 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       workspaceAudioBus.unpublish(this.fileId)
       this.isPlayingState = false
       this.firePlayingChanged(false)
+      // Live mode: tear down the subscription but keep autoRefreshEnabled
+      // as-is so a subsequent play() re-installs it. Matches the legacy
+      // LiveCodingEditor behavior where toggling Stop doesn't flip the
+      // live mode LED.
+      this.reconcileAutoRefresh()
     }
   }
 
@@ -341,6 +394,12 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     } catch {
       // Swallow stop errors during dispose — we're tearing down anyway.
     }
+    // Live mode teardown — stop() already reconciled, but if the subscriber
+    // survives (e.g., autoRefreshEnabled=false but timeout pending), we
+    // clear it unconditionally here. Setting autoRefreshEnabled=false
+    // BEFORE reconcile guarantees the reconcile tears down any leftover.
+    this.autoRefreshEnabled = false
+    this.reconcileAutoRefresh()
     this.bufferedSchedulerRef?.dispose()
     this.bufferedSchedulerRef = null
     try {
@@ -351,6 +410,129 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     this.isDisposed = true
     this.errorListeners.clear()
     this.playingChangedListeners.clear()
+    this.autoRefreshChangedListeners.clear()
+  }
+
+  // -------------------------------------------------------------------------
+  // Live mode (autoRefresh) — setters, getters, listener, reconciliation.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Enable or disable live mode for this runtime.
+   *
+   * When enabled AND the runtime is currently playing AND a
+   * `subscribeToFile` function was provided at construction time, the
+   * runtime installs a subscription on the workspace file that
+   * debounce-triggers `play()` (which re-evaluates the current content)
+   * on every content change.
+   *
+   * When disabled or stopped, the subscription is torn down and any
+   * pending debounce timeout is cleared — so toggling OFF mid-burst is
+   * immediate, not "finish the pending re-play first."
+   *
+   * Idempotent — calling with the already-set value is a no-op and does
+   * not fire the `onAutoRefreshChanged` listeners. Never throws; disposed
+   * runtimes silently ignore the call.
+   */
+  setAutoRefresh(enabled: boolean): void {
+    if (this.isDisposed) return
+    if (this.autoRefreshEnabled === enabled) return
+    this.autoRefreshEnabled = enabled
+    this.reconcileAutoRefresh()
+    this.fireAutoRefreshChanged(enabled)
+  }
+
+  /** Current live-mode state. */
+  isAutoRefreshEnabled(): boolean {
+    return this.autoRefreshEnabled
+  }
+
+  /**
+   * Subscribe to live-mode state changes. Fires after `setAutoRefresh`
+   * mutations, with the new enabled value. Returns an idempotent
+   * unsubscribe. Used by the chrome to re-render the live-mode toggle
+   * without having to poll.
+   */
+  onAutoRefreshChanged(cb: (enabled: boolean) => void): () => void {
+    this.autoRefreshChangedListeners.add(cb)
+    let unsubscribed = false
+    return () => {
+      if (unsubscribed) return
+      unsubscribed = true
+      this.autoRefreshChangedListeners.delete(cb)
+    }
+  }
+
+  /**
+   * Install or tear down the file-content subscription so that its
+   * presence matches `(autoRefreshEnabled && isPlayingState &&
+   * subscribeToFile !== null)`. Called from `setAutoRefresh`, `play`,
+   * `stop`, and `dispose`.
+   *
+   * Installing the subscription is idempotent — calling reconcile while
+   * already subscribed is a no-op. Tearing down is likewise idempotent.
+   */
+  private reconcileAutoRefresh(): void {
+    const shouldBeActive =
+      this.autoRefreshEnabled &&
+      this.isPlayingState &&
+      this.subscribeToFile !== null &&
+      !this.isDisposed
+
+    if (shouldBeActive && !this.autoRefreshUnsub) {
+      this.autoRefreshUnsub = (this.subscribeToFile as SubscribeToRuntimeFile)(
+        () => this.onLiveModeContentChanged(),
+      )
+      return
+    }
+
+    if (!shouldBeActive && this.autoRefreshUnsub) {
+      const unsub = this.autoRefreshUnsub
+      this.autoRefreshUnsub = null
+      try {
+        unsub()
+      } catch {
+        // Best-effort — a broken unsubscribe shouldn't crash stop/dispose.
+      }
+      if (this.autoRefreshTimeout) {
+        clearTimeout(this.autoRefreshTimeout)
+        this.autoRefreshTimeout = null
+      }
+    }
+  }
+
+  /**
+   * Debounced re-evaluate trigger. Called by the file subscription
+   * callback on every content change. Cancels any pending timeout and
+   * schedules a new one; when it fires, checks the invariants once more
+   * (dispose/stop/toggle-off may have happened mid-debounce) and calls
+   * `play()` to re-evaluate and re-schedule.
+   */
+  private onLiveModeContentChanged(): void {
+    if (this.autoRefreshTimeout) clearTimeout(this.autoRefreshTimeout)
+    this.autoRefreshTimeout = setTimeout(() => {
+      this.autoRefreshTimeout = null
+      if (this.isDisposed) return
+      if (!this.autoRefreshEnabled) return
+      if (!this.isPlayingState) return
+      // play() resolves on its own tick — we don't need to await it
+      // because any error will surface via the onError listeners the
+      // chrome/editor already subscribe to. This keeps the timeout
+      // callback synchronous and cheap.
+      void this.play()
+    }, LIVE_MODE_DEBOUNCE_MS)
+  }
+
+  private fireAutoRefreshChanged(enabled: boolean): void {
+    if (this.autoRefreshChangedListeners.size === 0) return
+    const snapshot = Array.from(this.autoRefreshChangedListeners)
+    for (const cb of snapshot) {
+      try {
+        cb(enabled)
+      } catch {
+        // Listener exceptions never break the dispatch loop.
+      }
+    }
   }
 
   onError(cb: (err: Error) => void): () => void {

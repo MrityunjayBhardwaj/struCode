@@ -590,6 +590,29 @@ export interface LiveCodingRuntime {
    * before the first successful `play()`.
    */
   getBpm(): number | undefined
+
+  /**
+   * Enable or disable live mode (auto-refresh). When enabled and the
+   * runtime is playing, every file content change triggers a
+   * debounced re-`play()` (which re-evaluates the current code) so
+   * the audio stays in sync with the source as you type.
+   *
+   * No-op if the runtime was constructed without a `subscribeToFile`
+   * function (the default in tests) — the flag is still set, but no
+   * subscription is installed.
+   */
+  setAutoRefresh(enabled: boolean): void
+
+  /** Current live-mode flag. */
+  isAutoRefreshEnabled(): boolean
+
+  /**
+   * Subscribe to live-mode state changes. Fires after every
+   * `setAutoRefresh` mutation with the new enabled value. Returns an
+   * idempotent unsubscribe. Used by the chrome's live-mode toggle to
+   * re-render without polling.
+   */
+  onAutoRefreshChanged(cb: (enabled: boolean) => void): () => void
 }
 
 /**
@@ -629,6 +652,26 @@ export interface ChromeContext {
    * the built-in transport controls. Per U8.
    */
   readonly chromeExtras?: ReactNode
+
+  /**
+   * Current live-mode (autoRefresh) state for this runtime. When `true`,
+   * the chrome renders the live toggle button in its active style. When
+   * omitted, the chrome renders the toggle in its inactive style.
+   *
+   * Sourced by the embedder — the app layer typically mirrors
+   * `runtime.isAutoRefreshEnabled()` into React state so changes re-render
+   * the chrome. Provider chromes that subscribe to
+   * `runtime.onAutoRefreshChanged` directly may ignore this field.
+   */
+  readonly autoRefresh?: boolean
+
+  /**
+   * Toggle handler for live mode. When supplied, the chrome renders a
+   * live-mode toggle button; when omitted, the button is hidden. This
+   * lets embedders that don't want a live-mode button (tests, kiosk
+   * displays) opt out cleanly.
+   */
+  readonly onToggleAutoRefresh?: () => void
 }
 
 /**

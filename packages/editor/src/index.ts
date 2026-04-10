@@ -83,7 +83,12 @@ export { PreviewView } from './workspace/PreviewView'
 
 // WorkspaceFile store + hook
 export type { WorkspaceFile, WorkspaceLanguage } from './workspace/types'
-export { createWorkspaceFile, getFile, setContent } from './workspace/WorkspaceFile'
+export {
+  createWorkspaceFile,
+  getFile,
+  setContent,
+  subscribe as subscribeToWorkspaceFile,
+} from './workspace/WorkspaceFile'
 export { useWorkspaceFile } from './workspace/useWorkspaceFile'
 export type { UseWorkspaceFileResult } from './workspace/useWorkspaceFile'
 

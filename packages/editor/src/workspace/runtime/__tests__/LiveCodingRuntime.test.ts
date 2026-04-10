@@ -516,4 +516,210 @@ describe('LiveCodingRuntime', () => {
       expect(runtime.getBpm()).toBe(140)
     })
   })
+
+  // -------------------------------------------------------------------------
+  // Live mode (autoRefresh)
+  //
+  // Covers the reconcile-on-lifecycle-event invariant:
+  //
+  //   (autoRefreshEnabled && isPlayingState && subscribeToFile) <=>
+  //   (subscription is installed)
+  //
+  // The subscription is observed via a fake `subscribeToFile` callback
+  // that records how many subscribers are currently installed. Reconciles
+  // happen in setAutoRefresh, play, stop, and dispose — every transition
+  // is exercised here so a regression in ONE of the callers can't silently
+  // leak a listener.
+  // -------------------------------------------------------------------------
+
+  describe('Live mode (autoRefresh)', () => {
+    /**
+     * Create a subscriber harness that mimics WorkspaceFile.subscribe.
+     * Returns both the runtime-facing `subscribeToFile` function and a
+     * `fire()` trigger the test can use to simulate a content change.
+     */
+    function makeSubscribeHarness() {
+      const listeners = new Set<() => void>()
+      const subscribeToFile = (cb: () => void): (() => void) => {
+        listeners.add(cb)
+        return () => {
+          listeners.delete(cb)
+        }
+      }
+      return {
+        subscribeToFile,
+        size: () => listeners.size,
+        fire: () => {
+          for (const cb of Array.from(listeners)) cb()
+        },
+      }
+    }
+
+    function makeRuntimeWithHarness() {
+      const engine = createMockEngine()
+      engine.setComponents({
+        streaming: makeStreamingComponent(),
+        audio: makeAudioComponent(),
+      })
+      const harness = makeSubscribeHarness()
+      const runtime = new LiveCodingRuntime(
+        'file-1',
+        engine,
+        () => '$: note("c3")',
+        harness.subscribeToFile,
+      )
+      return { runtime, engine, harness }
+    }
+
+    it('defaults to disabled and installs no subscription', () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      expect(runtime.isAutoRefreshEnabled()).toBe(false)
+      expect(harness.size()).toBe(0)
+    })
+
+    it('setAutoRefresh(true) without play does NOT install a subscription', () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      runtime.setAutoRefresh(true)
+      expect(runtime.isAutoRefreshEnabled()).toBe(true)
+      // Invariant: subscription is only active when playing.
+      expect(harness.size()).toBe(0)
+    })
+
+    it('play + setAutoRefresh(true) installs exactly one subscription', async () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      await runtime.play()
+      runtime.setAutoRefresh(true)
+      expect(harness.size()).toBe(1)
+    })
+
+    it('setAutoRefresh(true) + play installs the subscription on play', async () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      runtime.setAutoRefresh(true)
+      expect(harness.size()).toBe(0) // not yet
+      await runtime.play()
+      expect(harness.size()).toBe(1)
+    })
+
+    it('stop() tears down the subscription but keeps the enabled flag', async () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      await runtime.play()
+      runtime.setAutoRefresh(true)
+      expect(harness.size()).toBe(1)
+      runtime.stop()
+      expect(harness.size()).toBe(0)
+      // The LED stays on so a subsequent play() re-arms automatically.
+      expect(runtime.isAutoRefreshEnabled()).toBe(true)
+    })
+
+    it('re-play after stop re-installs the subscription', async () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      await runtime.play()
+      runtime.setAutoRefresh(true)
+      runtime.stop()
+      await runtime.play()
+      expect(harness.size()).toBe(1)
+    })
+
+    it('setAutoRefresh(false) mid-play tears down immediately', async () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      await runtime.play()
+      runtime.setAutoRefresh(true)
+      expect(harness.size()).toBe(1)
+      runtime.setAutoRefresh(false)
+      expect(harness.size()).toBe(0)
+    })
+
+    it('setAutoRefresh is idempotent and does not re-subscribe', async () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      await runtime.play()
+      runtime.setAutoRefresh(true)
+      runtime.setAutoRefresh(true)
+      runtime.setAutoRefresh(true)
+      expect(harness.size()).toBe(1)
+    })
+
+    it('dispose() clears the subscription even if autoRefresh was on', async () => {
+      const { runtime, harness } = makeRuntimeWithHarness()
+      await runtime.play()
+      runtime.setAutoRefresh(true)
+      expect(harness.size()).toBe(1)
+      runtime.dispose()
+      expect(harness.size()).toBe(0)
+    })
+
+    it('onAutoRefreshChanged fires on every transition', () => {
+      const { runtime } = makeRuntimeWithHarness()
+      const calls: boolean[] = []
+      runtime.onAutoRefreshChanged((v) => calls.push(v))
+      runtime.setAutoRefresh(true)
+      runtime.setAutoRefresh(true) // idempotent — no fire
+      runtime.setAutoRefresh(false)
+      expect(calls).toEqual([true, false])
+    })
+
+    it('file-content change triggers debounced re-play after 500ms', async () => {
+      vi.useFakeTimers()
+      try {
+        const { runtime, engine, harness } = makeRuntimeWithHarness()
+        await runtime.play()
+        runtime.setAutoRefresh(true)
+        const evalCountBefore = engine.evaluateFn.mock.calls.length
+
+        // Simulate a content change.
+        harness.fire()
+
+        // Before the debounce fires, no re-evaluate yet.
+        expect(engine.evaluateFn.mock.calls.length).toBe(evalCountBefore)
+
+        // Advance past the debounce window.
+        await vi.advanceTimersByTimeAsync(600)
+
+        // One more evaluate call should have landed.
+        expect(engine.evaluateFn.mock.calls.length).toBe(evalCountBefore + 1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('debounce coalesces rapid content changes into a single re-play', async () => {
+      vi.useFakeTimers()
+      try {
+        const { runtime, engine, harness } = makeRuntimeWithHarness()
+        await runtime.play()
+        runtime.setAutoRefresh(true)
+        const evalCountBefore = engine.evaluateFn.mock.calls.length
+
+        // Five fires within 100ms — all should collapse into one re-play.
+        harness.fire()
+        await vi.advanceTimersByTimeAsync(100)
+        harness.fire()
+        await vi.advanceTimersByTimeAsync(100)
+        harness.fire()
+        await vi.advanceTimersByTimeAsync(100)
+        harness.fire()
+        await vi.advanceTimersByTimeAsync(100)
+        harness.fire()
+        await vi.advanceTimersByTimeAsync(600)
+
+        expect(engine.evaluateFn.mock.calls.length).toBe(evalCountBefore + 1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('runtime without subscribeToFile is a no-op for live mode', async () => {
+      const engine = createMockEngine()
+      engine.setComponents({
+        streaming: makeStreamingComponent(),
+        audio: makeAudioComponent(),
+      })
+      // No fourth arg — tests that want auto-refresh dormant.
+      const runtime = new LiveCodingRuntime('file-1', engine, () => 'code')
+      await runtime.play()
+      runtime.setAutoRefresh(true)
+      // Flag set, but no way to observe file changes, so no re-plays ever.
+      expect(runtime.isAutoRefreshEnabled()).toBe(true)
+      runtime.dispose() // must not throw
+    })
+  })
 })

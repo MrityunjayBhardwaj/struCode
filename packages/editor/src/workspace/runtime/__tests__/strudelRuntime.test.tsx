@@ -134,6 +134,53 @@ describe('STRUDEL_RUNTIME renderChrome', () => {
     expect(getByTestId('strudel-chrome-extras')).toBeTruthy()
     expect(getByTestId('extras-export').textContent).toBe('Export')
   })
+
+  // -----------------------------------------------------------------------
+  // Live mode (autoRefresh) toggle
+  // -----------------------------------------------------------------------
+
+  it('hides the live-mode toggle when onToggleAutoRefresh is not supplied', () => {
+    const { queryByTestId } = render(
+      STRUDEL_RUNTIME.renderChrome(makeCtx()) as React.ReactElement,
+    )
+    // Opt-out rendering: no toggle button when the callback is absent.
+    expect(queryByTestId('strudel-chrome-live-toggle')).toBeNull()
+  })
+
+  it('renders the live-mode toggle in inactive state by default', () => {
+    const onToggleAutoRefresh = vi.fn()
+    const { getByTestId } = render(
+      STRUDEL_RUNTIME.renderChrome(
+        makeCtx({ onToggleAutoRefresh }),
+      ) as React.ReactElement,
+    )
+    const btn = getByTestId('strudel-chrome-live-toggle')
+    expect(btn.getAttribute('data-live-mode')).toBe('off')
+  })
+
+  it('renders the live-mode toggle in active state when autoRefresh=true', () => {
+    const onToggleAutoRefresh = vi.fn()
+    const { getByTestId } = render(
+      STRUDEL_RUNTIME.renderChrome(
+        makeCtx({ autoRefresh: true, onToggleAutoRefresh }),
+      ) as React.ReactElement,
+    )
+    const btn = getByTestId('strudel-chrome-live-toggle')
+    expect(btn.getAttribute('data-live-mode')).toBe('on')
+    // The `⟳ live` text only appears in the active state.
+    expect(btn.textContent).toContain('live')
+  })
+
+  it('calls onToggleAutoRefresh exactly once per click', () => {
+    const onToggleAutoRefresh = vi.fn()
+    const { getByTestId } = render(
+      STRUDEL_RUNTIME.renderChrome(
+        makeCtx({ onToggleAutoRefresh }),
+      ) as React.ReactElement,
+    )
+    fireEvent.click(getByTestId('strudel-chrome-live-toggle'))
+    expect(onToggleAutoRefresh).toHaveBeenCalledTimes(1)
+  })
 })
 
 // ---------------------------------------------------------------------------

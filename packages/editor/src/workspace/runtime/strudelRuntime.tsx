@@ -52,12 +52,75 @@ import type {
 } from '../types'
 
 /**
+ * Live-mode toggle — clickable badge that mirrors the viz-chrome "live"
+ * indicator visually but is interactive. Active (purple fill) when
+ * autoRefresh is on; neutral (outline) when off. Hidden entirely when
+ * no `onToggleAutoRefresh` callback is provided — embedders that don't
+ * want the feature opt out by omitting the callback.
+ */
+function LiveModeToggle({
+  autoRefresh,
+  onToggle,
+}: {
+  autoRefresh: boolean
+  onToggle: () => void
+}): React.ReactElement {
+  const baseStyle: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '3px 8px',
+    borderRadius: 3,
+    fontSize: 10,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    userSelect: 'none',
+  }
+  const activeStyle: React.CSSProperties = {
+    ...baseStyle,
+    background: 'rgba(196, 181, 253, 0.15)',
+    color: '#c4b5fd',
+    border: '1px solid rgba(196, 181, 253, 0.3)',
+  }
+  const inactiveStyle: React.CSSProperties = {
+    ...baseStyle,
+    background: 'none',
+    color: 'var(--foreground-muted)',
+    border: '1px solid var(--border)',
+  }
+  return (
+    <button
+      data-testid="strudel-chrome-live-toggle"
+      data-live-mode={autoRefresh ? 'on' : 'off'}
+      onClick={onToggle}
+      title={
+        autoRefresh
+          ? 'Live mode ON — auto re-evaluate on code change while playing'
+          : 'Live mode OFF — click to auto re-evaluate on change'
+      }
+      style={autoRefresh ? activeStyle : inactiveStyle}
+    >
+      {autoRefresh ? '\u27F3 live' : '\u27F3'}
+    </button>
+  )
+}
+
+/**
  * Transport chrome for `.strudel` files. Renders inside
  * `EditorView.chromeSlot` via the embedder. Subscribes to nothing — every
  * piece of state comes through `ctx`.
  */
 function StrudelChrome(ctx: ChromeContext): React.ReactElement {
-  const { isPlaying, error, bpm, onPlay, onStop, chromeExtras } = ctx
+  const {
+    isPlaying,
+    error,
+    bpm,
+    onPlay,
+    onStop,
+    chromeExtras,
+    autoRefresh,
+    onToggleAutoRefresh,
+  } = ctx
   return (
     <div
       data-strudel-runtime-chrome="root"
@@ -126,6 +189,13 @@ function StrudelChrome(ctx: ChromeContext): React.ReactElement {
         >
           {error.message}
         </span>
+      )}
+
+      {onToggleAutoRefresh && (
+        <LiveModeToggle
+          autoRefresh={autoRefresh ?? false}
+          onToggle={onToggleAutoRefresh}
+        />
       )}
 
       {chromeExtras && (
