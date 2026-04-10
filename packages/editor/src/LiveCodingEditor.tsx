@@ -114,6 +114,7 @@ export function LiveCodingEditor({
   const [isPlaying, setIsPlaying] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [bpm, setBpm] = useState<number | undefined>(bpmProp)
+  const [autoRefresh, setAutoRefresh] = useState(false)
 
   // Seed the workspace file once on mount.
   const fileIdRef = useRef(FILE_ID)
@@ -136,6 +137,10 @@ export function LiveCodingEditor({
       fileIdRef.current,
       engine,
       () => getFile(fileIdRef.current)?.content ?? '',
+      // Pass the workspace-file subscriber so the runtime can install
+      // its own content-change subscription for live mode. Lazy — only
+      // fires after setAutoRefresh(true).
+      (cb) => storeSubscribe(fileIdRef.current, cb),
     )
     runtimeRef.current = rt
 
@@ -157,11 +162,13 @@ export function LiveCodingEditor({
         onStop?.()
       }
     })
+    const unsubAutoRefresh = rt.onAutoRefreshChanged(setAutoRefresh)
 
     // Dispose on unmount (U3).
     return () => {
       unsubError()
       unsubPlaying()
+      unsubAutoRefresh()
       rt.dispose()
       runtimeRef.current = null
     }
@@ -208,6 +215,12 @@ export function LiveCodingEditor({
     runtimeRef.current?.stop()
   }, [])
 
+  const handleToggleAutoRefresh = useCallback(() => {
+    const rt = runtimeRef.current
+    if (!rt) return
+    rt.setAutoRefresh(!rt.isAutoRefreshEnabled())
+  }, [])
+
   const chromeForTab = useCallback(
     (tab: WorkspaceTab): React.ReactNode | undefined => {
       if (tab.kind !== 'editor') return undefined
@@ -224,10 +237,12 @@ export function LiveCodingEditor({
         onPlay: handlePlay,
         onStop: handleStop,
         chromeExtras: toolbarExtra,
+        autoRefresh,
+        onToggleAutoRefresh: handleToggleAutoRefresh,
       }
       return provider.renderChrome(ctx)
     },
-    [isPlaying, error, bpm, bpmProp, handlePlay, handleStop, toolbarExtra],
+    [isPlaying, error, bpm, bpmProp, handlePlay, handleStop, toolbarExtra, autoRefresh, handleToggleAutoRefresh],
   )
 
   // -- Editor extras (play/stop keybindings + error squiggles) --
