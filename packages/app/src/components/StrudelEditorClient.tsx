@@ -80,49 +80,90 @@ live_loop :melody do
   sleep 0.25
 end`;
 
-const PIANOROLL_P5_CODE = `// p5 Piano Roll — scrolling note visualization
-// hapStream, analyser, scheduler available as globals
+const PIANOROLL_P5_CODE = `// Stave p5 viz — Piano Roll
+//
+// Injected globals (provided by the Stave runtime, available from
+// preload onwards):
+//   stave.scheduler   — PatternScheduler | null. Poll with
+//                       scheduler.query(from, to) → NormalizedHap[].
+//                       Each hap has { begin, end, note, s, gain,
+//                       velocity, duration }.
+//   stave.analyser    — AnalyserNode | null. Web Audio FFT /
+//                       waveform data for any audio source.
+//   stave.hapStream   — HapStream | null. Event-driven feed of
+//                       currently-firing haps.
+//
+// p5 globals (createCanvas, background, width, height, mouseX, HSB,
+// etc.) work exactly like the p5js editor. Read stave.* INSIDE
+// setup/draw, don't cache to module-level let — if the user
+// changes the audio source, setup() runs again with fresh values.
 
-background(9, 9, 18)
+let playhead
 
-const now = scheduler?.now() ?? 0
-const events = scheduler?.query(now - 3, now + 1) ?? []
-
-// Playhead
-stroke(255, 255, 255, 80)
-strokeWeight(1)
-const px = width * 0.75
-line(px, 0, px, height)
-
-if (events.length > 0) {
-  // Real notes from the pattern
+function setup() {
+  createCanvas(windowWidth, windowHeight)
+  colorMode(HSB, 360, 100, 100, 1)
   noStroke()
-  for (const e of events) {
-    const x = ((e.begin - now + 3) / 4) * width
-    const w = Math.max(4, (e.duration ?? 0.25) / 4 * width)
-    const y = (1 - (e.note ?? 60) / 127) * height
-    const playing = e.begin <= now && (e.begin + (e.duration ?? 0.25)) > now
-    fill(playing ? 255 : 117, playing ? 202 : 186, playing ? 40 : 255)
-    rect(x, y - 3, w, 6, 2)
-  }
-} else {
-  // Demo mode — animated sine wave so the canvas isn't empty
-  const t = millis() / 1000
+  playhead = 0.75 // x position of the "now" line, as fraction of width
+}
+
+function draw() {
+  background(230, 30, 8, 0.25)
+
+  // Playhead — vertical line at the "now" position.
+  stroke(0, 0, 100, 0.4)
+  strokeWeight(1)
+  const px = width * playhead
+  line(px, 0, px, height)
   noStroke()
-  for (let i = 0; i < 32; i++) {
-    const x = (i / 32) * width
-    const phase = t * 2 + i * 0.4
-    const y = height / 2 + Math.sin(phase) * height * 0.3
-    const hue = Math.sin(phase * 0.5) * 0.5 + 0.5
-    fill(117 + hue * 100, 186, 255 - hue * 50, 200)
-    ellipse(x + 8, y, 8 + Math.sin(phase * 3) * 4, 8)
+
+  // --- Pattern events (works when a pattern is playing) ---
+  if (stave.scheduler) {
+    const now = stave.scheduler.now()
+    const haps = stave.scheduler.query(now - 3, now + 1)
+
+    for (const h of haps) {
+      // Position on screen: begin=now maps to the playhead, begin
+      // earlier goes right (already played), later goes left.
+      const x = ((h.begin - now + 3) / 4) * width
+      const w = max(4, ((h.duration ?? h.end - h.begin) / 4) * width)
+      const y = (1 - (h.note ?? 60) / 127) * height
+      const isPlaying = h.begin <= now && (h.begin + (h.duration ?? 0.25)) > now
+
+      // Color by pitch class, brightened when currently playing.
+      const hue = (((h.note ?? 60) * 7) % 12) * 30
+      const sat = isPlaying ? 80 : 55
+      const brightness = isPlaying ? 100 : 70
+      fill(hue, sat, brightness, isPlaying ? 1 : 0.85)
+      rect(x, y - 3, w, 6, 2)
+    }
   }
 
-  // "no audio" hint
-  fill(255, 255, 255, 60)
-  textSize(11)
-  textAlign(CENTER)
-  text('preview mode — play a pattern to see live notes', width / 2, height - 14)
+  // --- Audio spectrum (works with any audio source, including the
+  // sample sound when no pattern is playing) ---
+  if (stave.analyser) {
+    const bins = new Uint8Array(stave.analyser.frequencyBinCount)
+    stave.analyser.getByteFrequencyData(bins)
+    fill(260, 50, 100, 0.25)
+    const bw = width / bins.length
+    for (let i = 0; i < bins.length; i++) {
+      const h = (bins[i] / 255) * (height * 0.25)
+      rect(i * bw, height - h, bw, h)
+    }
+  }
+
+  // --- Empty-state hint when neither scheduler nor analyser yielded
+  // anything to draw ---
+  if (!stave.scheduler && !stave.analyser) {
+    fill(0, 0, 60, 0.7)
+    textSize(11)
+    textAlign(CENTER)
+    text(
+      'no audio source — pick one from the chrome source dropdown, or play a pattern',
+      width / 2,
+      height - 14,
+    )
+  }
 }`;
 
 const PIANOROLL_HYDRA_CODE = `// Hydra Piano Roll — shader-based frequency bands
