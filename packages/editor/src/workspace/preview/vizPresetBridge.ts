@@ -67,6 +67,20 @@ import { VizPresetStore } from '../../visualizers/vizPreset'
 import type { VizPreset } from '../../visualizers/vizPreset'
 import type { WorkspaceFile, WorkspaceLanguage } from '../types'
 
+/*
+ * Auto-registration of presets into `namedVizRegistry` is owned by the
+ * consumer (app layer or compat shim), NOT the bridge. Importing
+ * `compilePreset` here pulls the full renderer stack (p5 / hydra-synth)
+ * into the bridge's module graph, which breaks any test that mocks or
+ * stubs the renderer layer — the module transitively fails to load
+ * before the mock takes effect. Keeping the bridge pure data lets
+ * unit tests of `flushToPreset` / `seedFromPreset` run without the
+ * renderer pack.
+ *
+ * See `workspace/preview/namedVizBridge.ts` for the consumer-facing
+ * helper that combines compilation + registration for convenience.
+ */
+
 /**
  * Workspace file id derivation from a preset id. Namespaced with `viz:`
  * so that file ids are self-describing in debug output.

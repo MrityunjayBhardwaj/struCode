@@ -20,6 +20,7 @@ import {
   seedFromPreset,
   flushToPreset,
   getPresetIdForFile,
+  registerPresetAsNamedViz,
   type WorkspaceTab,
   type ChromeContext,
   type VizPreset,
@@ -205,6 +206,13 @@ function seedWorkspaceFiles(p5PresetId: string, hydraPresetId: string) {
   const p5FileId = seedFromPreset(p5Preset);
   const hydraFileId = seedFromPreset(hydraPreset);
 
+  // Register the presets under their user-chosen names so a pattern
+  // file can write `.viz("Piano Roll")` or `.viz("Piano Roll (Hydra)")`
+  // and have `resolveDescriptor` find the user's viz code instead of a
+  // built-in. These names shadow any built-in with the same string.
+  registerPresetAsNamedViz(p5Preset);
+  registerPresetAsNamedViz(hydraPreset);
+
   return { p5FileId, hydraFileId };
 }
 
@@ -320,7 +328,8 @@ export default function StrudelEditorClient() {
     if (!rt) return;
     setRuntimeStates(prev => {
       const next = new Map(prev);
-      next.set(fileId, { ...prev.get(fileId) ?? { isPlaying: false, error: null }, error: null });
+      const cur = prev.get(fileId) ?? { isPlaying: false, error: null, autoRefresh: false };
+      next.set(fileId, { ...cur, error: null });
       return next;
     });
     rt.play();
@@ -378,7 +387,10 @@ export default function StrudelEditorClient() {
   }, [getOrCreateRuntime, runtimeStates, handlePlay, handleStop, handleToggleAutoRefresh]);
 
   // onSaveFile: Cmd+S / Save button handler. For viz files, flush the
-  // current in-memory content back to VizPresetStore via the bridge.
+  // current in-memory content back to VizPresetStore via the bridge,
+  // then re-register the named viz so pattern files referencing it by
+  // name pick up the new code on their next evaluate.
+  //
   // For pattern files, no-op for now (pattern files aren't persisted
   // to IndexedDB in 10.2 — that's Phase 10.3's VirtualFileSystem job).
   const handleSaveFile = useCallback(
@@ -387,9 +399,16 @@ export default function StrudelEditorClient() {
       if (!file) return;
       const presetId = getPresetIdForFile(file);
       if (!presetId) return; // Not a viz file backed by a preset — nothing to save.
-      flushToPreset(file.id, presetId).catch((err) => {
-        console.warn("[stave] flushToPreset failed:", err);
-      });
+      flushToPreset(file.id, presetId)
+        .then(() => VizPresetStore.get(presetId))
+        .then((preset) => {
+          // Re-register under the (possibly unchanged) name so inline
+          // `.viz("<name>")` resolves to the fresh compiled code.
+          if (preset) registerPresetAsNamedViz(preset);
+        })
+        .catch((err) => {
+          console.warn("[stave] flushToPreset failed:", err);
+        });
     },
     [],
   );

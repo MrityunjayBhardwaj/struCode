@@ -28,3 +28,5 @@ export {
   languageForPresetRenderer,
   getPresetIdForFile,
 } from './vizPresetBridge'
+
+export { registerPresetAsNamedViz } from './namedVizBridge'
