@@ -4135,6 +4135,32 @@ function normalizeStrudelHap(hap) {
 }
 
 // src/engine/StrudelEngine.ts
+function extractVizName(rawArg) {
+  if (typeof rawArg === "string") return rawArg || void 0;
+  const pat = rawArg;
+  if (!pat || !pat._Pattern || typeof pat.queryArc !== "function") {
+    return void 0;
+  }
+  const renderHapValue = (v) => {
+    if (typeof v === "string") return v;
+    if (Array.isArray(v)) return v.join(":");
+    if (v == null) return "";
+    return String(v);
+  };
+  let haps;
+  try {
+    haps = pat.queryArc(0, 1);
+  } catch {
+    return void 0;
+  }
+  if (haps.length === 0) return void 0;
+  if (haps.length === 1) {
+    const out3 = renderHapValue(haps[0].value);
+    return out3 === "" ? void 0 : out3;
+  }
+  const out2 = haps.map((h) => renderHapValue(h.value)).join(" ");
+  return out2 === "" ? void 0 : out2;
+}
 var StrudelEngine = class {
   constructor() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -4233,27 +4259,7 @@ var StrudelEngine = class {
           configurable: true,
           writable: true,
           value: function(vizName) {
-            const renderHapValue = (v) => {
-              if (typeof v === "string") return v;
-              if (Array.isArray(v)) return v.join(":");
-              if (v == null) return "";
-              return String(v);
-            };
-            let resolvedName;
-            if (typeof vizName === "string") {
-              resolvedName = vizName;
-            } else if (vizName && vizName._Pattern) {
-              try {
-                const haps = vizName.queryArc(0, 1);
-                if (haps.length === 1) {
-                  resolvedName = renderHapValue(haps[0].value);
-                } else if (haps.length > 1) {
-                  resolvedName = haps.map((h) => renderHapValue(h.value)).join(" ");
-                }
-              } catch {
-              }
-            }
-            if (resolvedName === "") resolvedName = void 0;
+            const resolvedName = extractVizName(vizName);
             const result = strudelViz ? strudelViz.call(this, vizName) : this;
             if (resolvedName) {
               result._pendingViz = resolvedName;
@@ -4649,13 +4655,18 @@ var HydraVizRenderer = class {
     this.freqData = null;
     this.rafId = null;
     this.paused = false;
+    this.destroyed = false;
     this.hapStream = null;
     this.envelope = null;
     this.hapHandler = null;
     this.useEnvelope = false;
-    this.pumpAudio = () => {
+    this.pumpAudio = (now) => {
+      if (this.paused || this.destroyed) {
+        this.rafId = null;
+        return;
+      }
       const a = this.hydra?.synth?.a;
-      if (!this.paused && a?.fft) {
+      if (a?.fft) {
         if (this.useEnvelope && this.envelope) {
           this.envelope.tick();
           const numBins = getVizConfig().hydraAudioBins;
@@ -4673,6 +4684,12 @@ var HydraVizRenderer = class {
             }
             a.fft[i2] = sum / (binSize * 255);
           }
+        }
+      }
+      if (this.hydra && typeof this.hydra.tick === "function") {
+        try {
+          this.hydra.tick(now ?? performance.now());
+        } catch {
         }
       }
       this.rafId = requestAnimationFrame(this.pumpAudio);
@@ -4706,14 +4723,17 @@ var HydraVizRenderer = class {
   async initHydra(size) {
     const { default: Hydra } = await import('hydra-synth');
     const config = getVizConfig();
-    if (!this.canvas) return;
+    if (!this.canvas || this.destroyed) return;
     this.hydra = new Hydra({
       canvas: this.canvas,
       width: size.w,
       height: size.h,
       detectAudio: false,
       makeGlobal: false,
-      autoLoop: config.hydraAutoLoop
+      // We OWN the animation loop (see class jsdoc) — hydra must
+      // not run its own rAF, or pause() can't actually halt the
+      // shader render. `pumpAudio` calls `hydra.tick(time)` itself.
+      autoLoop: false
     });
     const synth = this.hydra.synth;
     const audio = this.hydra.a;
@@ -4732,7 +4752,9 @@ var HydraVizRenderer = class {
     } else {
       this.defaultPattern(synth);
     }
-    this.pumpAudio();
+    if (!this.paused && !this.destroyed && this.rafId == null) {
+      this.rafId = requestAnimationFrame(this.pumpAudio);
+    }
   }
   defaultPattern(s) {
     s.osc(10, 0.1, () => s.a.fft[0] * 4).color(1, 0.5, () => s.a.fft[1] * 2).rotate(() => s.a.fft[2] * 6.28).modulate(s.noise(3, () => s.a.fft[3] * 0.5), 0.02).out();
@@ -4755,11 +4777,19 @@ var HydraVizRenderer = class {
   }
   pause() {
     this.paused = true;
+    if (this.rafId != null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
   }
   resume() {
     this.paused = false;
+    if (this.rafId == null && !this.destroyed) {
+      this.rafId = requestAnimationFrame(this.pumpAudio);
+    }
   }
   destroy() {
+    this.destroyed = true;
     if (this.rafId != null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -6522,7 +6552,6 @@ function notifyListeners() {
 // src/visualizers/resolveDescriptor.ts
 function resolveDescriptor(vizId, descriptors) {
   const named = getNamedViz(vizId);
-  console.log("[viz-dbg-resolve] vizId=" + JSON.stringify(vizId) + " namedHit=" + !!named);
   if (named) return named;
   const exact = descriptors.find((d) => d.id === vizId);
   if (exact) return exact;

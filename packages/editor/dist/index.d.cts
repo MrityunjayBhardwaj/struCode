@@ -876,7 +876,27 @@ type HydraPatternFn = (synth: any) => void;
  *   2. HapStream energy envelope (synthetic FFT from note events — per-track)
  *   3. Global AnalyserNode (real FFT, but reacts to ALL tracks — fallback)
  *
- * Reads `hydraAudioBins` and `hydraAutoLoop` from the active VizConfig.
+ * Reads `hydraAudioBins` from the active VizConfig.
+ *
+ * ## Pause / loop ownership
+ *
+ * Hydra is constructed with `autoLoop: false` so the renderer (not
+ * hydra) owns the animation loop. Our `pumpAudio` rAF callback both
+ * polls the FFT data into `s.a.fft[]` AND calls `hydra.tick(time)` to
+ * advance the shader by exactly one frame. This single-loop ownership
+ * is what makes `pause()` actually pause:
+ *   - With `autoLoop: true` (the old behavior), hydra's internal rAF
+ *     keeps running independently. Setting our `paused` flag would
+ *     stop FFT polling but hydra would keep rendering its last shader
+ *     state, so the canvas never visibly froze. The user-visible
+ *     symptom: the Stop button did nothing on hydra previews.
+ *   - With `autoLoop: false`, cancelling our rAF in `pause()` halts
+ *     the only path that ticks hydra. Resume re-arms the rAF and
+ *     hydra picks up where it left off.
+ *
+ * The `hydraAutoLoop` config flag is no longer read — pause requires
+ * us to own the loop. The flag is left in `vizConfig.ts` for now and
+ * will be removed in a follow-up cleanup.
  */
 declare class HydraVizRenderer implements VizRenderer {
     private pattern?;
@@ -886,6 +906,7 @@ declare class HydraVizRenderer implements VizRenderer {
     private freqData;
     private rafId;
     private paused;
+    private destroyed;
     private hapStream;
     private envelope;
     private hapHandler;
