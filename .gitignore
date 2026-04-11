@@ -1,0 +1,119 @@
+# ──────────────────────────────────────────────────────────────
+# Personal + strategy docs (local-only)
+# ──────────────────────────────────────────────────────────────
+artifacts/
+THESIS*.md
+SONIC_PI_WEB*.md
+
+# ──────────────────────────────────────────────────────────────
+# AI tooling + cognitive framework
+# ──────────────────────────────────────────────────────────────
+.anvi/
+.claude/
+.cursor/
+.cursorrules
+.cursorignore
+.aider*
+CLAUDE.md
+AGENTS.md
+AGENT.md
+CURSOR.md
+GEMINI.md
+AIDER.md
+
+# ──────────────────────────────────────────────────────────────
+# Planning / project-management artifacts (local-only)
+# ──────────────────────────────────────────────────────────────
+.planning/
+
+# ──────────────────────────────────────────────────────────────
+# Dependencies
+# ──────────────────────────────────────────────────────────────
+node_modules/
+packages/**/node_modules/
+.pnpm-store/
+
+# ──────────────────────────────────────────────────────────────
+# Build caches + transient outputs
+# (NOTE: packages/editor/dist/ is intentionally tracked for npm publish)
+# ──────────────────────────────────────────────────────────────
+.turbo/
+packages/**/.turbo/
+.next/
+packages/app/.next/
+*.tsbuildinfo
+packages/**/tsconfig.tsbuildinfo
+.cache/
+.parcel-cache/
+
+# ──────────────────────────────────────────────────────────────
+# Test + coverage output
+# ──────────────────────────────────────────────────────────────
+test-results/
+packages/**/test-results/
+playwright-report/
+coverage/
+.nyc_output/
+
+# ──────────────────────────────────────────────────────────────
+# Logs
+# ──────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+lerna-debug.log*
+
+# ──────────────────────────────────────────────────────────────
+# Environment + secrets
+# ──────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+.env.*
+!.env.example
+.npmrc
+.yarnrc
+.netrc
+secrets.*
+credentials.*
+
+# ──────────────────────────────────────────────────────────────
+# Editor + IDE
+# ──────────────────────────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+.zed/
+.fleet/
+*.swp
+*.swo
+*~
+*.bak
+*.old
+*.orig
+
+# ──────────────────────────────────────────────────────────────
+# Operating system
+# ──────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# ──────────────────────────────────────────────────────────────
+# Scratch + local-only docs
+# ──────────────────────────────────────────────────────────────
+DEBUG*.md
+SCRATCH.md
+TODO_LOCAL.md
+NOTES.local.md
+*.draft.md
