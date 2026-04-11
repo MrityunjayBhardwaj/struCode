@@ -7335,6 +7335,583 @@ function removeGroup(layout, groupId) {
   }
   return layout.map((col, i2) => i2 === c ? nextColumn : col);
 }
+
+// src/workspace/playbackCoordinator.ts
+var registry2 = /* @__PURE__ */ new Map();
+var changeListeners = /* @__PURE__ */ new Set();
+var currentlyPlaying = null;
+function registerPlaybackSource(sourceId, stop2, label) {
+  registry2.set(sourceId, { stop: stop2, label });
+  return () => {
+    const entry = registry2.get(sourceId);
+    if (entry?.stop === stop2) {
+      registry2.delete(sourceId);
+      if (currentlyPlaying === sourceId) {
+        currentlyPlaying = null;
+        fireChange();
+      }
+    }
+  };
+}
+function notifyPlaybackStarted(sourceId) {
+  if (currentlyPlaying === sourceId) return;
+  for (const [id, src] of registry2) {
+    if (id === sourceId) continue;
+    try {
+      src.stop();
+    } catch (err2) {
+      console.warn(
+        `[playbackCoordinator] stop() threw for source "${id}" (${src.label ?? "unlabeled"}):`,
+        err2
+      );
+    }
+  }
+  currentlyPlaying = sourceId;
+  fireChange();
+}
+function notifyPlaybackStopped(sourceId) {
+  if (currentlyPlaying !== sourceId) return;
+  currentlyPlaying = null;
+  fireChange();
+}
+function fireChange() {
+  if (changeListeners.size === 0) return;
+  const snapshot = Array.from(changeListeners);
+  for (const cb of snapshot) {
+    try {
+      cb(currentlyPlaying);
+    } catch {
+    }
+  }
+}
+
+// src/workspace/sampleSound.ts
+var SAMPLE_SOUND_SOURCE_ID = "__sample__";
+var SAMPLE_SOUND_LABEL = "Sample sound (test audio)";
+var SAMPLE_PATTERN_CYCLE_SECONDS = 2;
+var SAMPLE_PATTERN_NOTE_DURATION = 0.5;
+var SAMPLE_PATTERN_NOTES = [57, 60, 64, 67];
+var SampleSoundScheduler = class {
+  constructor(ctx) {
+    this.ctx = ctx;
+  }
+  now() {
+    return this.ctx.currentTime;
+  }
+  query(begin, end) {
+    if (end <= begin) return [];
+    const events = [];
+    const firstCycle = Math.floor(begin / SAMPLE_PATTERN_CYCLE_SECONDS);
+    const lastCycle = Math.floor(end / SAMPLE_PATTERN_CYCLE_SECONDS);
+    for (let cycle = firstCycle; cycle <= lastCycle; cycle++) {
+      const cycleStart = cycle * SAMPLE_PATTERN_CYCLE_SECONDS;
+      for (let i2 = 0; i2 < SAMPLE_PATTERN_NOTES.length; i2++) {
+        const noteBegin = cycleStart + i2 * SAMPLE_PATTERN_NOTE_DURATION;
+        const noteEnd = noteBegin + SAMPLE_PATTERN_NOTE_DURATION;
+        if (noteEnd <= begin || noteBegin >= end) continue;
+        const midi = SAMPLE_PATTERN_NOTES[i2];
+        events.push({
+          begin: noteBegin,
+          end: noteEnd,
+          endClipped: noteEnd,
+          note: midi,
+          // freq = 440 * 2^((midi - 69) / 12). Precompute because
+          // the renderer may prefer freq over note (e.g., pitch-axis
+          // visualizations).
+          freq: 440 * Math.pow(2, (midi - 69) / 12),
+          s: SAMPLE_SOUND_SOURCE_ID,
+          type: "synth",
+          gain: 1,
+          velocity: 1,
+          color: null,
+          trackId: SAMPLE_SOUND_SOURCE_ID
+        });
+      }
+    }
+    return events;
+  }
+};
+var state = null;
+function startSampleSound() {
+  if (state) return;
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.value = 110;
+  const lfo = ctx.createOscillator();
+  lfo.type = "sine";
+  lfo.frequency.value = 0.5;
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = 80;
+  lfo.connect(lfoGain);
+  lfoGain.connect(osc.frequency);
+  const outGain = ctx.createGain();
+  outGain.gain.value = 0.05;
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.8;
+  osc.connect(outGain);
+  outGain.connect(ctx.destination);
+  osc.connect(analyser);
+  osc.start();
+  lfo.start();
+  const scheduler = new SampleSoundScheduler(ctx);
+  const hapStream = new HapStream();
+  state = { ctx, osc, lfo, lfoGain, outGain, analyser, scheduler, hapStream };
+  const payload = {
+    analyser,
+    scheduler,
+    hapStream,
+    audio: {
+      analyser,
+      audioCtx: ctx
+    }
+  };
+  workspaceAudioBus.publish(SAMPLE_SOUND_SOURCE_ID, payload);
+  notifyPlaybackStarted(SAMPLE_SOUND_SOURCE_ID);
+}
+function stopSampleSound() {
+  if (!state) return;
+  try {
+    state.osc.stop();
+    state.lfo.stop();
+  } catch {
+  }
+  try {
+    state.osc.disconnect();
+    state.lfo.disconnect();
+    state.lfoGain.disconnect();
+    state.outGain.disconnect();
+    state.analyser.disconnect();
+  } catch {
+  }
+  state.hapStream.dispose();
+  workspaceAudioBus.unpublish(SAMPLE_SOUND_SOURCE_ID);
+  try {
+    void state.ctx.close();
+  } catch {
+  }
+  state = null;
+  notifyPlaybackStopped(SAMPLE_SOUND_SOURCE_ID);
+}
+function isSampleSoundPlaying() {
+  return state !== null;
+}
+registerPlaybackSource(
+  SAMPLE_SOUND_SOURCE_ID,
+  stopSampleSound,
+  SAMPLE_SOUND_LABEL
+);
+
+// src/workspace/drumPattern.ts
+var DRUM_PATTERN_SOURCE_ID = "__example_drums__";
+var DRUM_PATTERN_LABEL = "Example: drum pattern";
+var BAR_SECONDS = 2;
+var HIT_DURATION = 0.1;
+var DRUM_PATTERN = [
+  { s: "bd", midi: 36, beatOffsets: [0, 0.5, 1, 1.5] },
+  { s: "sd", midi: 38, beatOffsets: [0.5, 1.5] },
+  {
+    s: "hh",
+    midi: 42,
+    beatOffsets: [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
+  },
+  { s: "oh", midi: 46, beatOffsets: [1.75] }
+];
+var DrumPatternScheduler = class {
+  constructor(ctx) {
+    this.ctx = ctx;
+  }
+  now() {
+    return this.ctx.currentTime;
+  }
+  query(begin, end) {
+    if (end <= begin) return [];
+    const events = [];
+    const firstBar = Math.floor(begin / BAR_SECONDS);
+    const lastBar = Math.floor(end / BAR_SECONDS);
+    for (let bar = firstBar; bar <= lastBar; bar++) {
+      const barStart = bar * BAR_SECONDS;
+      for (const hit of DRUM_PATTERN) {
+        for (const offset of hit.beatOffsets) {
+          const noteBegin = barStart + offset;
+          const noteEnd = noteBegin + HIT_DURATION;
+          if (noteEnd <= begin || noteBegin >= end) continue;
+          events.push({
+            begin: noteBegin,
+            end: noteEnd,
+            endClipped: noteEnd,
+            note: hit.midi,
+            freq: 440 * Math.pow(2, (hit.midi - 69) / 12),
+            s: hit.s,
+            type: "sample",
+            gain: 1,
+            velocity: 1,
+            color: null,
+            trackId: hit.s
+          });
+        }
+      }
+    }
+    return events;
+  }
+};
+var state2 = null;
+var starting = false;
+async function renderDrumLoopBuffer() {
+  const sampleRate = 44100;
+  const durationSeconds = 2;
+  const offline = new OfflineAudioContext(
+    1,
+    sampleRate * durationSeconds,
+    sampleRate
+  );
+  const kickTimes = [0, 0.5, 1, 1.5];
+  for (const t of kickTimes) {
+    const osc = offline.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(100, t);
+    osc.frequency.exponentialRampToValueAtTime(40, t + 0.1);
+    const gain = offline.createGain();
+    gain.gain.setValueAtTime(1e-3, t);
+    gain.gain.linearRampToValueAtTime(0.9, t + 5e-3);
+    gain.gain.exponentialRampToValueAtTime(1e-3, t + 0.15);
+    osc.connect(gain).connect(offline.destination);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  }
+  const snareTimes = [0.5, 1.5];
+  for (const t of snareTimes) {
+    const noiseBuf = offline.createBuffer(
+      1,
+      Math.floor(sampleRate * 0.12),
+      sampleRate
+    );
+    const noiseData = noiseBuf.getChannelData(0);
+    for (let i2 = 0; i2 < noiseData.length; i2++) {
+      noiseData[i2] = Math.random() * 2 - 1;
+    }
+    const noise = offline.createBufferSource();
+    noise.buffer = noiseBuf;
+    const bp = offline.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = 2e3;
+    bp.Q.value = 0.8;
+    const noiseGain = offline.createGain();
+    noiseGain.gain.setValueAtTime(1e-3, t);
+    noiseGain.gain.linearRampToValueAtTime(0.5, t + 2e-3);
+    noiseGain.gain.exponentialRampToValueAtTime(1e-3, t + 0.1);
+    noise.connect(bp).connect(noiseGain).connect(offline.destination);
+    noise.start(t);
+    const tone = offline.createOscillator();
+    tone.type = "triangle";
+    tone.frequency.value = 200;
+    const toneGain = offline.createGain();
+    toneGain.gain.setValueAtTime(1e-3, t);
+    toneGain.gain.linearRampToValueAtTime(0.25, t + 2e-3);
+    toneGain.gain.exponentialRampToValueAtTime(1e-3, t + 0.08);
+    tone.connect(toneGain).connect(offline.destination);
+    tone.start(t);
+    tone.stop(t + 0.1);
+  }
+  const closedHatTimes = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5];
+  for (const t of closedHatTimes) {
+    const noiseBuf = offline.createBuffer(
+      1,
+      Math.floor(sampleRate * 0.05),
+      sampleRate
+    );
+    const noiseData = noiseBuf.getChannelData(0);
+    for (let i2 = 0; i2 < noiseData.length; i2++) {
+      noiseData[i2] = Math.random() * 2 - 1;
+    }
+    const noise = offline.createBufferSource();
+    noise.buffer = noiseBuf;
+    const hp = offline.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 7e3;
+    const g = offline.createGain();
+    g.gain.setValueAtTime(1e-3, t);
+    g.gain.linearRampToValueAtTime(0.15, t + 1e-3);
+    g.gain.exponentialRampToValueAtTime(1e-3, t + 0.03);
+    noise.connect(hp).connect(g).connect(offline.destination);
+    noise.start(t);
+  }
+  const openHatTime = 1.75;
+  {
+    const noiseBuf = offline.createBuffer(
+      1,
+      Math.floor(sampleRate * 0.22),
+      sampleRate
+    );
+    const noiseData = noiseBuf.getChannelData(0);
+    for (let i2 = 0; i2 < noiseData.length; i2++) {
+      noiseData[i2] = Math.random() * 2 - 1;
+    }
+    const noise = offline.createBufferSource();
+    noise.buffer = noiseBuf;
+    const hp = offline.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 7e3;
+    const g = offline.createGain();
+    g.gain.setValueAtTime(1e-3, openHatTime);
+    g.gain.linearRampToValueAtTime(0.18, openHatTime + 2e-3);
+    g.gain.exponentialRampToValueAtTime(1e-3, openHatTime + 0.2);
+    noise.connect(hp).connect(g).connect(offline.destination);
+    noise.start(openHatTime);
+  }
+  return offline.startRendering();
+}
+async function startDrumPattern() {
+  if (state2 || starting) return;
+  starting = true;
+  try {
+    const ctx = new AudioContext();
+    const buffer = await renderDrumLoopBuffer();
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.4;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.7;
+    source.connect(gain);
+    gain.connect(analyser);
+    analyser.connect(ctx.destination);
+    source.start();
+    const scheduler = new DrumPatternScheduler(ctx);
+    const hapStream = new HapStream();
+    state2 = { ctx, source, gain, analyser, scheduler, hapStream };
+    const payload = {
+      analyser,
+      scheduler,
+      hapStream,
+      audio: { analyser, audioCtx: ctx }
+    };
+    workspaceAudioBus.publish(DRUM_PATTERN_SOURCE_ID, payload);
+    notifyPlaybackStarted(DRUM_PATTERN_SOURCE_ID);
+  } finally {
+    starting = false;
+  }
+}
+function stopDrumPattern() {
+  if (!state2) return;
+  try {
+    state2.source.stop();
+  } catch {
+  }
+  try {
+    state2.source.disconnect();
+    state2.gain.disconnect();
+    state2.analyser.disconnect();
+  } catch {
+  }
+  state2.hapStream.dispose();
+  workspaceAudioBus.unpublish(DRUM_PATTERN_SOURCE_ID);
+  try {
+    void state2.ctx.close();
+  } catch {
+  }
+  state2 = null;
+  notifyPlaybackStopped(DRUM_PATTERN_SOURCE_ID);
+}
+function isDrumPatternPlaying() {
+  return state2 !== null || starting;
+}
+registerPlaybackSource(
+  DRUM_PATTERN_SOURCE_ID,
+  stopDrumPattern,
+  DRUM_PATTERN_LABEL
+);
+
+// src/workspace/chordProgression.ts
+var CHORD_PROGRESSION_SOURCE_ID = "__example_chords__";
+var CHORD_PROGRESSION_LABEL = "Example: chord progression (I-vi-IV-V)";
+var CHORD_DURATION = 2;
+var CYCLE_SECONDS = 8;
+var CHORD_PROGRESSION = [
+  { root: "C", notes: [60, 64, 67] },
+  { root: "Am", notes: [57, 60, 64] },
+  { root: "F", notes: [53, 57, 60] },
+  { root: "G", notes: [55, 59, 62] }
+];
+var ChordProgressionScheduler = class {
+  constructor(ctx) {
+    this.ctx = ctx;
+  }
+  now() {
+    return this.ctx.currentTime;
+  }
+  query(begin, end) {
+    if (end <= begin) return [];
+    const events = [];
+    const firstCycle = Math.floor(begin / CYCLE_SECONDS);
+    const lastCycle = Math.floor(end / CYCLE_SECONDS);
+    for (let cycle = firstCycle; cycle <= lastCycle; cycle++) {
+      const cycleStart = cycle * CYCLE_SECONDS;
+      for (let i2 = 0; i2 < CHORD_PROGRESSION.length; i2++) {
+        const chord2 = CHORD_PROGRESSION[i2];
+        const chordBegin = cycleStart + i2 * CHORD_DURATION;
+        const chordEnd = chordBegin + CHORD_DURATION;
+        if (chordEnd <= begin || chordBegin >= end) continue;
+        for (const midi of chord2.notes) {
+          events.push({
+            begin: chordBegin,
+            end: chordEnd,
+            endClipped: chordEnd,
+            note: midi,
+            freq: 440 * Math.pow(2, (midi - 69) / 12),
+            s: `chord-${chord2.root}`,
+            type: "synth",
+            gain: 1,
+            velocity: 1,
+            color: null,
+            trackId: `chord-${chord2.root}`
+          });
+        }
+      }
+    }
+    return events;
+  }
+};
+var state3 = null;
+var starting2 = false;
+async function renderChordLoopBuffer() {
+  const sampleRate = 44100;
+  const durationSeconds = 8;
+  const offline = new OfflineAudioContext(
+    1,
+    sampleRate * durationSeconds,
+    sampleRate
+  );
+  const chordDuration = 2;
+  const attack = 0.02;
+  const release = 0.05;
+  const sustainLevel = 0.06;
+  for (let i2 = 0; i2 < CHORD_PROGRESSION.length; i2++) {
+    const chord2 = CHORD_PROGRESSION[i2];
+    const chordStart = i2 * chordDuration;
+    const chordEnd = chordStart + chordDuration;
+    for (const midi of chord2.notes) {
+      const freq = 440 * Math.pow(2, (midi - 69) / 12);
+      const osc = offline.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.value = freq;
+      const g = offline.createGain();
+      g.gain.setValueAtTime(1e-4, chordStart);
+      g.gain.linearRampToValueAtTime(sustainLevel, chordStart + attack);
+      g.gain.setValueAtTime(sustainLevel, chordEnd - release);
+      g.gain.linearRampToValueAtTime(1e-4, chordEnd);
+      osc.connect(g).connect(offline.destination);
+      osc.start(chordStart);
+      osc.stop(chordEnd + 0.01);
+    }
+  }
+  return offline.startRendering();
+}
+async function startChordProgression() {
+  if (state3 || starting2) return;
+  starting2 = true;
+  try {
+    const ctx = new AudioContext();
+    const buffer = await renderChordLoopBuffer();
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.5;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.8;
+    source.connect(gain);
+    gain.connect(analyser);
+    analyser.connect(ctx.destination);
+    source.start();
+    const scheduler = new ChordProgressionScheduler(ctx);
+    const hapStream = new HapStream();
+    state3 = { ctx, source, gain, analyser, scheduler, hapStream };
+    const payload = {
+      analyser,
+      scheduler,
+      hapStream,
+      audio: { analyser, audioCtx: ctx }
+    };
+    workspaceAudioBus.publish(CHORD_PROGRESSION_SOURCE_ID, payload);
+    notifyPlaybackStarted(CHORD_PROGRESSION_SOURCE_ID);
+  } finally {
+    starting2 = false;
+  }
+}
+function stopChordProgression() {
+  if (!state3) return;
+  try {
+    state3.source.stop();
+  } catch {
+  }
+  try {
+    state3.source.disconnect();
+    state3.gain.disconnect();
+    state3.analyser.disconnect();
+  } catch {
+  }
+  state3.hapStream.dispose();
+  workspaceAudioBus.unpublish(CHORD_PROGRESSION_SOURCE_ID);
+  try {
+    void state3.ctx.close();
+  } catch {
+  }
+  state3 = null;
+  notifyPlaybackStopped(CHORD_PROGRESSION_SOURCE_ID);
+}
+function isChordProgressionPlaying() {
+  return state3 !== null || starting2;
+}
+registerPlaybackSource(
+  CHORD_PROGRESSION_SOURCE_ID,
+  stopChordProgression,
+  CHORD_PROGRESSION_LABEL
+);
+
+// src/workspace/builtinExampleSources.ts
+var BUILTIN_EXAMPLE_SOURCES = [
+  {
+    sourceId: SAMPLE_SOUND_SOURCE_ID,
+    label: SAMPLE_SOUND_LABEL,
+    startIfIdle: () => {
+      if (!isSampleSoundPlaying()) startSampleSound();
+    },
+    stopIfRunning: () => {
+      if (isSampleSoundPlaying()) stopSampleSound();
+    }
+  },
+  {
+    sourceId: DRUM_PATTERN_SOURCE_ID,
+    label: DRUM_PATTERN_LABEL,
+    startIfIdle: () => {
+      if (!isDrumPatternPlaying()) startDrumPattern();
+    },
+    stopIfRunning: () => {
+      if (isDrumPatternPlaying()) stopDrumPattern();
+    }
+  },
+  {
+    sourceId: CHORD_PROGRESSION_SOURCE_ID,
+    label: CHORD_PROGRESSION_LABEL,
+    startIfIdle: () => {
+      if (!isChordProgressionPlaying()) startChordProgression();
+    },
+    stopIfRunning: () => {
+      if (isChordProgressionPlaying()) stopChordProgression();
+    }
+  }
+];
+var BUILTIN_SOURCE_IDS = new Set(
+  BUILTIN_EXAMPLE_SOURCES.map((s) => s.sourceId)
+);
+function findBuiltinExampleSource(sourceId) {
+  return BUILTIN_EXAMPLE_SOURCES.find((s) => s.sourceId === sourceId);
+}
 function assertNever(value) {
   throw new Error(
     `WorkspaceShell: unhandled tab kind in dispatch: ${JSON.stringify(value)}`
@@ -7475,6 +8052,12 @@ function WorkspaceShell({
             next.delete(fileId);
             return next;
           });
+          if (maybePreview.sourceRef.kind === "file") {
+            const builtin = findBuiltinExampleSource(
+              maybePreview.sourceRef.fileId
+            );
+            if (builtin) builtin.stopIfRunning();
+          }
         }
         onTabClose?.(closedTab);
       }
@@ -7904,12 +8487,32 @@ function WorkspaceShell({
                   previewOpen: existingPreview !== null,
                   previewPaused: pausedPreviews.has(tab.fileId),
                   onTogglePausePreview: () => {
+                    const wasPaused = pausedPreviews.has(tab.fileId);
                     setPausedPreviews((prev) => {
                       const next = new Set(prev);
                       if (next.has(tab.fileId)) next.delete(tab.fileId);
                       else next.add(tab.fileId);
                       return next;
                     });
+                    const previewTabLoc = shellActionsRef.current.findTabByFileId(
+                      tab.fileId,
+                      "preview"
+                    );
+                    if (previewTabLoc) {
+                      const previewTabObj = groups.get(previewTabLoc.groupId)?.tabs.find((t) => t.id === previewTabLoc.tabId);
+                      if (previewTabObj && previewTabObj.kind === "preview" && previewTabObj.sourceRef.kind === "file") {
+                        const builtin = findBuiltinExampleSource(
+                          previewTabObj.sourceRef.fileId
+                        );
+                        if (builtin) {
+                          if (wasPaused) {
+                            builtin.startIfIdle();
+                          } else {
+                            builtin.stopIfRunning();
+                          }
+                        }
+                      }
+                    }
                   },
                   onChangePreviewSource: (nextRef) => {
                     const current = shellActionsRef.current.findTabByFileId(
@@ -8466,55 +9069,6 @@ var actionBtnStyle = {
   lineHeight: 1,
   borderRadius: 2
 };
-
-// src/workspace/playbackCoordinator.ts
-var registry2 = /* @__PURE__ */ new Map();
-var changeListeners = /* @__PURE__ */ new Set();
-var currentlyPlaying = null;
-function registerPlaybackSource(sourceId, stop2, label) {
-  registry2.set(sourceId, { stop: stop2, label });
-  return () => {
-    const entry = registry2.get(sourceId);
-    if (entry?.stop === stop2) {
-      registry2.delete(sourceId);
-      if (currentlyPlaying === sourceId) {
-        currentlyPlaying = null;
-        fireChange();
-      }
-    }
-  };
-}
-function notifyPlaybackStarted(sourceId) {
-  if (currentlyPlaying === sourceId) return;
-  for (const [id, src] of registry2) {
-    if (id === sourceId) continue;
-    try {
-      src.stop();
-    } catch (err2) {
-      console.warn(
-        `[playbackCoordinator] stop() threw for source "${id}" (${src.label ?? "unlabeled"}):`,
-        err2
-      );
-    }
-  }
-  currentlyPlaying = sourceId;
-  fireChange();
-}
-function notifyPlaybackStopped(sourceId) {
-  if (currentlyPlaying !== sourceId) return;
-  currentlyPlaying = null;
-  fireChange();
-}
-function fireChange() {
-  if (changeListeners.size === 0) return;
-  const snapshot = Array.from(changeListeners);
-  for (const cb of snapshot) {
-    try {
-      cb(currentlyPlaying);
-    } catch {
-    }
-  }
-}
 
 // src/workspace/runtime/LiveCodingRuntime.ts
 var LIVE_MODE_DEBOUNCE_MS = 500;
@@ -17143,124 +17697,6 @@ function compileHydraCode(code) {
     fn(s);
   };
 }
-
-// src/workspace/sampleSound.ts
-var SAMPLE_SOUND_SOURCE_ID = "__sample__";
-var SAMPLE_SOUND_LABEL = "Sample sound (test audio)";
-var SAMPLE_PATTERN_CYCLE_SECONDS = 2;
-var SAMPLE_PATTERN_NOTE_DURATION = 0.5;
-var SAMPLE_PATTERN_NOTES = [57, 60, 64, 67];
-var SampleSoundScheduler = class {
-  constructor(ctx) {
-    this.ctx = ctx;
-  }
-  now() {
-    return this.ctx.currentTime;
-  }
-  query(begin, end) {
-    if (end <= begin) return [];
-    const events = [];
-    const firstCycle = Math.floor(begin / SAMPLE_PATTERN_CYCLE_SECONDS);
-    const lastCycle = Math.floor(end / SAMPLE_PATTERN_CYCLE_SECONDS);
-    for (let cycle = firstCycle; cycle <= lastCycle; cycle++) {
-      const cycleStart = cycle * SAMPLE_PATTERN_CYCLE_SECONDS;
-      for (let i2 = 0; i2 < SAMPLE_PATTERN_NOTES.length; i2++) {
-        const noteBegin = cycleStart + i2 * SAMPLE_PATTERN_NOTE_DURATION;
-        const noteEnd = noteBegin + SAMPLE_PATTERN_NOTE_DURATION;
-        if (noteEnd <= begin || noteBegin >= end) continue;
-        const midi = SAMPLE_PATTERN_NOTES[i2];
-        events.push({
-          begin: noteBegin,
-          end: noteEnd,
-          endClipped: noteEnd,
-          note: midi,
-          // freq = 440 * 2^((midi - 69) / 12). Precompute because
-          // the renderer may prefer freq over note (e.g., pitch-axis
-          // visualizations).
-          freq: 440 * Math.pow(2, (midi - 69) / 12),
-          s: SAMPLE_SOUND_SOURCE_ID,
-          type: "synth",
-          gain: 1,
-          velocity: 1,
-          color: null,
-          trackId: SAMPLE_SOUND_SOURCE_ID
-        });
-      }
-    }
-    return events;
-  }
-};
-var state = null;
-function startSampleSound() {
-  if (state) return;
-  const ctx = new AudioContext();
-  const osc = ctx.createOscillator();
-  osc.type = "sawtooth";
-  osc.frequency.value = 110;
-  const lfo = ctx.createOscillator();
-  lfo.type = "sine";
-  lfo.frequency.value = 0.5;
-  const lfoGain = ctx.createGain();
-  lfoGain.gain.value = 80;
-  lfo.connect(lfoGain);
-  lfoGain.connect(osc.frequency);
-  const outGain = ctx.createGain();
-  outGain.gain.value = 0.05;
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 2048;
-  analyser.smoothingTimeConstant = 0.8;
-  osc.connect(outGain);
-  outGain.connect(ctx.destination);
-  osc.connect(analyser);
-  osc.start();
-  lfo.start();
-  const scheduler = new SampleSoundScheduler(ctx);
-  const hapStream = new HapStream();
-  state = { ctx, osc, lfo, lfoGain, outGain, analyser, scheduler, hapStream };
-  const payload = {
-    analyser,
-    scheduler,
-    hapStream,
-    audio: {
-      analyser,
-      audioCtx: ctx
-    }
-  };
-  workspaceAudioBus.publish(SAMPLE_SOUND_SOURCE_ID, payload);
-  notifyPlaybackStarted(SAMPLE_SOUND_SOURCE_ID);
-}
-function stopSampleSound() {
-  if (!state) return;
-  try {
-    state.osc.stop();
-    state.lfo.stop();
-  } catch {
-  }
-  try {
-    state.osc.disconnect();
-    state.lfo.disconnect();
-    state.lfoGain.disconnect();
-    state.outGain.disconnect();
-    state.analyser.disconnect();
-  } catch {
-  }
-  state.hapStream.dispose();
-  workspaceAudioBus.unpublish(SAMPLE_SOUND_SOURCE_ID);
-  try {
-    void state.ctx.close();
-  } catch {
-  }
-  state = null;
-  notifyPlaybackStopped(SAMPLE_SOUND_SOURCE_ID);
-}
-function isSampleSoundPlaying() {
-  return state !== null;
-}
-registerPlaybackSource(
-  SAMPLE_SOUND_SOURCE_ID,
-  stopSampleSound,
-  SAMPLE_SOUND_LABEL
-);
 function LiveModeToggle({
   autoRefresh,
   onToggle
@@ -17500,402 +17936,6 @@ var SONICPI_RUNTIME = {
   createEngine: () => new SonicPiEngine2(),
   renderChrome: (ctx) => /* @__PURE__ */ jsxRuntime.jsx(SonicPiChrome, { ...ctx })
 };
-
-// src/workspace/drumPattern.ts
-var DRUM_PATTERN_SOURCE_ID = "__example_drums__";
-var DRUM_PATTERN_LABEL = "Example: drum pattern";
-var BAR_SECONDS = 2;
-var HIT_DURATION = 0.1;
-var DRUM_PATTERN = [
-  { s: "bd", midi: 36, beatOffsets: [0, 0.5, 1, 1.5] },
-  { s: "sd", midi: 38, beatOffsets: [0.5, 1.5] },
-  {
-    s: "hh",
-    midi: 42,
-    beatOffsets: [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
-  },
-  { s: "oh", midi: 46, beatOffsets: [1.75] }
-];
-var DrumPatternScheduler = class {
-  constructor(ctx) {
-    this.ctx = ctx;
-  }
-  now() {
-    return this.ctx.currentTime;
-  }
-  query(begin, end) {
-    if (end <= begin) return [];
-    const events = [];
-    const firstBar = Math.floor(begin / BAR_SECONDS);
-    const lastBar = Math.floor(end / BAR_SECONDS);
-    for (let bar = firstBar; bar <= lastBar; bar++) {
-      const barStart = bar * BAR_SECONDS;
-      for (const hit of DRUM_PATTERN) {
-        for (const offset of hit.beatOffsets) {
-          const noteBegin = barStart + offset;
-          const noteEnd = noteBegin + HIT_DURATION;
-          if (noteEnd <= begin || noteBegin >= end) continue;
-          events.push({
-            begin: noteBegin,
-            end: noteEnd,
-            endClipped: noteEnd,
-            note: hit.midi,
-            freq: 440 * Math.pow(2, (hit.midi - 69) / 12),
-            s: hit.s,
-            type: "sample",
-            gain: 1,
-            velocity: 1,
-            color: null,
-            trackId: hit.s
-          });
-        }
-      }
-    }
-    return events;
-  }
-};
-var state2 = null;
-var starting = false;
-async function renderDrumLoopBuffer() {
-  const sampleRate = 44100;
-  const durationSeconds = 2;
-  const offline = new OfflineAudioContext(
-    1,
-    sampleRate * durationSeconds,
-    sampleRate
-  );
-  const kickTimes = [0, 0.5, 1, 1.5];
-  for (const t of kickTimes) {
-    const osc = offline.createOscillator();
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(100, t);
-    osc.frequency.exponentialRampToValueAtTime(40, t + 0.1);
-    const gain = offline.createGain();
-    gain.gain.setValueAtTime(1e-3, t);
-    gain.gain.linearRampToValueAtTime(0.9, t + 5e-3);
-    gain.gain.exponentialRampToValueAtTime(1e-3, t + 0.15);
-    osc.connect(gain).connect(offline.destination);
-    osc.start(t);
-    osc.stop(t + 0.2);
-  }
-  const snareTimes = [0.5, 1.5];
-  for (const t of snareTimes) {
-    const noiseBuf = offline.createBuffer(
-      1,
-      Math.floor(sampleRate * 0.12),
-      sampleRate
-    );
-    const noiseData = noiseBuf.getChannelData(0);
-    for (let i2 = 0; i2 < noiseData.length; i2++) {
-      noiseData[i2] = Math.random() * 2 - 1;
-    }
-    const noise = offline.createBufferSource();
-    noise.buffer = noiseBuf;
-    const bp = offline.createBiquadFilter();
-    bp.type = "bandpass";
-    bp.frequency.value = 2e3;
-    bp.Q.value = 0.8;
-    const noiseGain = offline.createGain();
-    noiseGain.gain.setValueAtTime(1e-3, t);
-    noiseGain.gain.linearRampToValueAtTime(0.5, t + 2e-3);
-    noiseGain.gain.exponentialRampToValueAtTime(1e-3, t + 0.1);
-    noise.connect(bp).connect(noiseGain).connect(offline.destination);
-    noise.start(t);
-    const tone = offline.createOscillator();
-    tone.type = "triangle";
-    tone.frequency.value = 200;
-    const toneGain = offline.createGain();
-    toneGain.gain.setValueAtTime(1e-3, t);
-    toneGain.gain.linearRampToValueAtTime(0.25, t + 2e-3);
-    toneGain.gain.exponentialRampToValueAtTime(1e-3, t + 0.08);
-    tone.connect(toneGain).connect(offline.destination);
-    tone.start(t);
-    tone.stop(t + 0.1);
-  }
-  const closedHatTimes = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5];
-  for (const t of closedHatTimes) {
-    const noiseBuf = offline.createBuffer(
-      1,
-      Math.floor(sampleRate * 0.05),
-      sampleRate
-    );
-    const noiseData = noiseBuf.getChannelData(0);
-    for (let i2 = 0; i2 < noiseData.length; i2++) {
-      noiseData[i2] = Math.random() * 2 - 1;
-    }
-    const noise = offline.createBufferSource();
-    noise.buffer = noiseBuf;
-    const hp = offline.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 7e3;
-    const g = offline.createGain();
-    g.gain.setValueAtTime(1e-3, t);
-    g.gain.linearRampToValueAtTime(0.15, t + 1e-3);
-    g.gain.exponentialRampToValueAtTime(1e-3, t + 0.03);
-    noise.connect(hp).connect(g).connect(offline.destination);
-    noise.start(t);
-  }
-  const openHatTime = 1.75;
-  {
-    const noiseBuf = offline.createBuffer(
-      1,
-      Math.floor(sampleRate * 0.22),
-      sampleRate
-    );
-    const noiseData = noiseBuf.getChannelData(0);
-    for (let i2 = 0; i2 < noiseData.length; i2++) {
-      noiseData[i2] = Math.random() * 2 - 1;
-    }
-    const noise = offline.createBufferSource();
-    noise.buffer = noiseBuf;
-    const hp = offline.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 7e3;
-    const g = offline.createGain();
-    g.gain.setValueAtTime(1e-3, openHatTime);
-    g.gain.linearRampToValueAtTime(0.18, openHatTime + 2e-3);
-    g.gain.exponentialRampToValueAtTime(1e-3, openHatTime + 0.2);
-    noise.connect(hp).connect(g).connect(offline.destination);
-    noise.start(openHatTime);
-  }
-  return offline.startRendering();
-}
-async function startDrumPattern() {
-  if (state2 || starting) return;
-  starting = true;
-  try {
-    const ctx = new AudioContext();
-    const buffer = await renderDrumLoopBuffer();
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.loop = true;
-    const gain = ctx.createGain();
-    gain.gain.value = 0.4;
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.7;
-    source.connect(gain);
-    gain.connect(analyser);
-    analyser.connect(ctx.destination);
-    source.start();
-    const scheduler = new DrumPatternScheduler(ctx);
-    const hapStream = new HapStream();
-    state2 = { ctx, source, gain, analyser, scheduler, hapStream };
-    const payload = {
-      analyser,
-      scheduler,
-      hapStream,
-      audio: { analyser, audioCtx: ctx }
-    };
-    workspaceAudioBus.publish(DRUM_PATTERN_SOURCE_ID, payload);
-    notifyPlaybackStarted(DRUM_PATTERN_SOURCE_ID);
-  } finally {
-    starting = false;
-  }
-}
-function stopDrumPattern() {
-  if (!state2) return;
-  try {
-    state2.source.stop();
-  } catch {
-  }
-  try {
-    state2.source.disconnect();
-    state2.gain.disconnect();
-    state2.analyser.disconnect();
-  } catch {
-  }
-  state2.hapStream.dispose();
-  workspaceAudioBus.unpublish(DRUM_PATTERN_SOURCE_ID);
-  try {
-    void state2.ctx.close();
-  } catch {
-  }
-  state2 = null;
-  notifyPlaybackStopped(DRUM_PATTERN_SOURCE_ID);
-}
-function isDrumPatternPlaying() {
-  return state2 !== null || starting;
-}
-registerPlaybackSource(
-  DRUM_PATTERN_SOURCE_ID,
-  stopDrumPattern,
-  DRUM_PATTERN_LABEL
-);
-
-// src/workspace/chordProgression.ts
-var CHORD_PROGRESSION_SOURCE_ID = "__example_chords__";
-var CHORD_PROGRESSION_LABEL = "Example: chord progression (I-vi-IV-V)";
-var CHORD_DURATION = 2;
-var CYCLE_SECONDS = 8;
-var CHORD_PROGRESSION = [
-  { root: "C", notes: [60, 64, 67] },
-  { root: "Am", notes: [57, 60, 64] },
-  { root: "F", notes: [53, 57, 60] },
-  { root: "G", notes: [55, 59, 62] }
-];
-var ChordProgressionScheduler = class {
-  constructor(ctx) {
-    this.ctx = ctx;
-  }
-  now() {
-    return this.ctx.currentTime;
-  }
-  query(begin, end) {
-    if (end <= begin) return [];
-    const events = [];
-    const firstCycle = Math.floor(begin / CYCLE_SECONDS);
-    const lastCycle = Math.floor(end / CYCLE_SECONDS);
-    for (let cycle = firstCycle; cycle <= lastCycle; cycle++) {
-      const cycleStart = cycle * CYCLE_SECONDS;
-      for (let i2 = 0; i2 < CHORD_PROGRESSION.length; i2++) {
-        const chord2 = CHORD_PROGRESSION[i2];
-        const chordBegin = cycleStart + i2 * CHORD_DURATION;
-        const chordEnd = chordBegin + CHORD_DURATION;
-        if (chordEnd <= begin || chordBegin >= end) continue;
-        for (const midi of chord2.notes) {
-          events.push({
-            begin: chordBegin,
-            end: chordEnd,
-            endClipped: chordEnd,
-            note: midi,
-            freq: 440 * Math.pow(2, (midi - 69) / 12),
-            s: `chord-${chord2.root}`,
-            type: "synth",
-            gain: 1,
-            velocity: 1,
-            color: null,
-            trackId: `chord-${chord2.root}`
-          });
-        }
-      }
-    }
-    return events;
-  }
-};
-var state3 = null;
-var starting2 = false;
-async function renderChordLoopBuffer() {
-  const sampleRate = 44100;
-  const durationSeconds = 8;
-  const offline = new OfflineAudioContext(
-    1,
-    sampleRate * durationSeconds,
-    sampleRate
-  );
-  const chordDuration = 2;
-  const attack = 0.02;
-  const release = 0.05;
-  const sustainLevel = 0.06;
-  for (let i2 = 0; i2 < CHORD_PROGRESSION.length; i2++) {
-    const chord2 = CHORD_PROGRESSION[i2];
-    const chordStart = i2 * chordDuration;
-    const chordEnd = chordStart + chordDuration;
-    for (const midi of chord2.notes) {
-      const freq = 440 * Math.pow(2, (midi - 69) / 12);
-      const osc = offline.createOscillator();
-      osc.type = "triangle";
-      osc.frequency.value = freq;
-      const g = offline.createGain();
-      g.gain.setValueAtTime(1e-4, chordStart);
-      g.gain.linearRampToValueAtTime(sustainLevel, chordStart + attack);
-      g.gain.setValueAtTime(sustainLevel, chordEnd - release);
-      g.gain.linearRampToValueAtTime(1e-4, chordEnd);
-      osc.connect(g).connect(offline.destination);
-      osc.start(chordStart);
-      osc.stop(chordEnd + 0.01);
-    }
-  }
-  return offline.startRendering();
-}
-async function startChordProgression() {
-  if (state3 || starting2) return;
-  starting2 = true;
-  try {
-    const ctx = new AudioContext();
-    const buffer = await renderChordLoopBuffer();
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.loop = true;
-    const gain = ctx.createGain();
-    gain.gain.value = 0.5;
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.8;
-    source.connect(gain);
-    gain.connect(analyser);
-    analyser.connect(ctx.destination);
-    source.start();
-    const scheduler = new ChordProgressionScheduler(ctx);
-    const hapStream = new HapStream();
-    state3 = { ctx, source, gain, analyser, scheduler, hapStream };
-    const payload = {
-      analyser,
-      scheduler,
-      hapStream,
-      audio: { analyser, audioCtx: ctx }
-    };
-    workspaceAudioBus.publish(CHORD_PROGRESSION_SOURCE_ID, payload);
-    notifyPlaybackStarted(CHORD_PROGRESSION_SOURCE_ID);
-  } finally {
-    starting2 = false;
-  }
-}
-function stopChordProgression() {
-  if (!state3) return;
-  try {
-    state3.source.stop();
-  } catch {
-  }
-  try {
-    state3.source.disconnect();
-    state3.gain.disconnect();
-    state3.analyser.disconnect();
-  } catch {
-  }
-  state3.hapStream.dispose();
-  workspaceAudioBus.unpublish(CHORD_PROGRESSION_SOURCE_ID);
-  try {
-    void state3.ctx.close();
-  } catch {
-  }
-  state3 = null;
-  notifyPlaybackStopped(CHORD_PROGRESSION_SOURCE_ID);
-}
-function isChordProgressionPlaying() {
-  return state3 !== null || starting2;
-}
-registerPlaybackSource(
-  CHORD_PROGRESSION_SOURCE_ID,
-  stopChordProgression,
-  CHORD_PROGRESSION_LABEL
-);
-var BUILTIN_EXAMPLE_SOURCES = [
-  {
-    sourceId: SAMPLE_SOUND_SOURCE_ID,
-    label: SAMPLE_SOUND_LABEL,
-    startIfIdle: () => {
-      if (!isSampleSoundPlaying()) startSampleSound();
-    }
-  },
-  {
-    sourceId: DRUM_PATTERN_SOURCE_ID,
-    label: DRUM_PATTERN_LABEL,
-    startIfIdle: () => {
-      if (!isDrumPatternPlaying()) startDrumPattern();
-    }
-  },
-  {
-    sourceId: CHORD_PROGRESSION_SOURCE_ID,
-    label: CHORD_PROGRESSION_LABEL,
-    startIfIdle: () => {
-      if (!isChordProgressionPlaying()) startChordProgression();
-    }
-  }
-];
-var BUILTIN_SOURCE_IDS = new Set(
-  BUILTIN_EXAMPLE_SOURCES.map((s) => s.sourceId)
-);
 var btnStyle = {
   background: "none",
   border: "1px solid var(--border)",
@@ -17959,9 +17999,7 @@ function VizEditorChrome({
       return;
     }
     if (selectedSource.kind === "file") {
-      const builtin = BUILTIN_EXAMPLE_SOURCES.find(
-        (s) => selectedSource.kind === "file" && s.sourceId === selectedSource.fileId
-      );
+      const builtin = findBuiltinExampleSource(selectedSource.fileId);
       if (builtin) builtin.startIfIdle();
     }
     onOpenPreview(selectedSource);
@@ -17976,18 +18014,20 @@ function VizEditorChrome({
   const handleSourceChange = React.useCallback(
     (e) => {
       const ref = stringToRef(e.target.value);
+      const prevBuiltin = selectedSource.kind === "file" ? findBuiltinExampleSource(selectedSource.fileId) : void 0;
+      const nextBuiltin = ref.kind === "file" ? findBuiltinExampleSource(ref.fileId) : void 0;
       setSelectedSource(ref);
       if (previewOpen && onChangePreviewSource) {
-        if (ref.kind === "file") {
-          const builtin = BUILTIN_EXAMPLE_SOURCES.find(
-            (s) => s.sourceId === ref.fileId
-          );
-          if (builtin) builtin.startIfIdle();
+        if (nextBuiltin) {
+          nextBuiltin.startIfIdle();
+        }
+        if (prevBuiltin && prevBuiltin !== nextBuiltin) {
+          prevBuiltin.stopIfRunning();
         }
         onChangePreviewSource(ref);
       }
     },
-    [previewOpen, onChangePreviewSource]
+    [previewOpen, onChangePreviewSource, selectedSource]
   );
   return /* @__PURE__ */ jsxRuntime.jsxs(
     "div",
