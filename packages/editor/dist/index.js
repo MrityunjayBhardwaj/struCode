@@ -18010,7 +18010,7 @@ function VizEditorChrome({
       const nextBuiltin = ref.kind === "file" ? findBuiltinExampleSource(ref.fileId) : void 0;
       setSelectedSource(ref);
       if (previewOpen && onChangePreviewSource) {
-        if (nextBuiltin) {
+        if (nextBuiltin && !previewPaused) {
           nextBuiltin.startIfIdle();
         }
         if (prevBuiltin && prevBuiltin !== nextBuiltin) {
@@ -18019,7 +18019,7 @@ function VizEditorChrome({
         onChangePreviewSource(ref);
       }
     },
-    [previewOpen, onChangePreviewSource, selectedSource]
+    [previewOpen, previewPaused, onChangePreviewSource, selectedSource]
   );
   return /* @__PURE__ */ jsxs(
     "div",
