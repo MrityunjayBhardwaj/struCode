@@ -135,6 +135,7 @@ import {
   insertEdgeGroup as layoutInsertEdgeGroup,
   removeGroup as layoutRemoveGroup,
 } from './groupLayout'
+import { findBuiltinExampleSource } from './builtinExampleSources'
 
 /**
  * Exhaustiveness helper used inside the tab dispatch switch. If TypeScript
@@ -410,6 +411,23 @@ export function WorkspaceShell({
             next.delete(fileId)
             return next
           })
+          // If this preview tab was pinned to a built-in example
+          // audio source, stop it. Without this, closing the
+          // preview tab leaves the drum / chord / sample sound
+          // looping forever in the background — the user expects
+          // "× the tab → silence" and gets only "× the tab → viz
+          // gone, audio still playing."
+          //
+          // Pattern runtime sources are NOT in the built-in
+          // registry, so this never reaches into a Strudel /
+          // SonicPi tab's audio. Pattern tabs own their own audio
+          // and have their own Stop button.
+          if (maybePreview.sourceRef.kind === 'file') {
+            const builtin = findBuiltinExampleSource(
+              maybePreview.sourceRef.fileId,
+            )
+            if (builtin) builtin.stopIfRunning()
+          }
         }
         onTabClose?.(closedTab)
       }
@@ -1117,12 +1135,59 @@ export function WorkspaceShell({
                     // set. The resulting state change propagates
                     // through PreviewView → provider ctx →
                     // CompiledVizMount's pause/resume effect.
+                    //
+                    // ALSO dispatch start/stop on the built-in
+                    // example audio source IF the open preview is
+                    // pinned to one. The shell is the right place
+                    // for this — not the chrome — because the
+                    // chrome's local `selectedSource` state can
+                    // get wiped when the layout shape transitions
+                    // (e.g., splitting from one group to two
+                    // remounts the chrome subtree). The shell-
+                    // owned preview tab's `sourceRef` survives
+                    // those remounts because it lives in the
+                    // groups map, not in component state.
+                    //
+                    // Pattern runtime sources are NOT in the
+                    // built-in registry and stay untouched —
+                    // they're owned by their own pattern tab.
+                    const wasPaused = pausedPreviews.has(tab.fileId)
                     setPausedPreviews((prev) => {
                       const next = new Set(prev)
                       if (next.has(tab.fileId)) next.delete(tab.fileId)
                       else next.add(tab.fileId)
                       return next
                     })
+                    const previewTabLoc =
+                      shellActionsRef.current.findTabByFileId(
+                        tab.fileId,
+                        'preview',
+                      )
+                    if (previewTabLoc) {
+                      const previewTabObj = groups
+                        .get(previewTabLoc.groupId)
+                        ?.tabs.find((t) => t.id === previewTabLoc.tabId)
+                      if (
+                        previewTabObj &&
+                        previewTabObj.kind === 'preview' &&
+                        previewTabObj.sourceRef.kind === 'file'
+                      ) {
+                        const builtin = findBuiltinExampleSource(
+                          previewTabObj.sourceRef.fileId,
+                        )
+                        if (builtin) {
+                          if (wasPaused) {
+                            // Resuming after Stop — re-arm the
+                            // audio loop so the viz has live data.
+                            builtin.startIfIdle()
+                          } else {
+                            // Pausing — silence the built-in audio
+                            // alongside freezing the viz draw loop.
+                            builtin.stopIfRunning()
+                          }
+                        }
+                      }
+                    }
                   },
                   onChangePreviewSource: (nextRef) => {
                     // Find the open preview tab for this file and

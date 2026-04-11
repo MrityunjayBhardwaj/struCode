@@ -129,6 +129,55 @@ vi.mock('../../visualizers/vizCompiler', () => ({
   })),
 }))
 
+// Mock the built-in audio source registry (issue #3) so the shell's
+// onTogglePausePreview / handleTabClose audio dispatch can be observed
+// without touching real Web Audio. The spies are created via vi.hoisted
+// so the vi.mock factory below sees them at module-init time.
+const {
+  builtinSampleStartSpy,
+  builtinSampleStopSpy,
+  builtinDrumStartSpy,
+  builtinDrumStopSpy,
+  builtinChordStartSpy,
+  builtinChordStopSpy,
+} = vi.hoisted(() => ({
+  builtinSampleStartSpy: vi.fn(),
+  builtinSampleStopSpy: vi.fn(),
+  builtinDrumStartSpy: vi.fn(),
+  builtinDrumStopSpy: vi.fn(),
+  builtinChordStartSpy: vi.fn(),
+  builtinChordStopSpy: vi.fn(),
+}))
+
+vi.mock('../builtinExampleSources', () => {
+  const sources = [
+    {
+      sourceId: '__example_sample__',
+      label: 'sample',
+      startIfIdle: builtinSampleStartSpy,
+      stopIfRunning: builtinSampleStopSpy,
+    },
+    {
+      sourceId: '__example_drums__',
+      label: 'drums',
+      startIfIdle: builtinDrumStartSpy,
+      stopIfRunning: builtinDrumStopSpy,
+    },
+    {
+      sourceId: '__example_chord_progression__',
+      label: 'chord',
+      startIfIdle: builtinChordStartSpy,
+      stopIfRunning: builtinChordStopSpy,
+    },
+  ]
+  return {
+    BUILTIN_EXAMPLE_SOURCES: sources,
+    BUILTIN_SOURCE_IDS: new Set(sources.map((s) => s.sourceId)),
+    findBuiltinExampleSource: (id: string) =>
+      sources.find((s) => s.sourceId === id),
+  }
+})
+
 import { WorkspaceShell } from '../WorkspaceShell'
 import {
   createWorkspaceFile,
@@ -498,6 +547,150 @@ describe('WorkspaceShell', () => {
       expect(
         getByTestId('chrome-stub').getAttribute('data-button-state'),
       ).toBe('running')
+    })
+
+    it('Stop click dispatches stopIfRunning on the open preview tab\'s built-in source (issue #3)', async () => {
+      // The chrome's local `selectedSource` state can be wiped by
+      // layout-shape-driven remounts (one group → two groups when
+      // Preview opens, the IIFE-vs-SplitPane render path swap).
+      // Therefore the audio start/stop dispatch on Stop click MUST
+      // come from the shell side, reading the OPEN PREVIEW TAB's
+      // sourceRef as the source of truth — not the chrome's local
+      // selectedSource.
+      //
+      // This test simulates that exact path: open a preview tab pinned
+      // to the drum source via `onOpenPreview(sourceRef)`, then click
+      // Stop, and assert the shell dispatched `stopIfRunning` on the
+      // mocked drum source.
+      builtinDrumStopSpy.mockClear()
+      builtinDrumStartSpy.mockClear()
+      const provider: PreviewProvider = {
+        extensions: ['hydra'],
+        label: 'Audio Dispatch Test',
+        keepRunningWhenHidden: false,
+        reload: 'instant',
+        render: () => <div data-testid="stub-preview-output" />,
+        renderEditorChrome: (ctx: PreviewEditorChromeContext) => (
+          <div
+            data-testid="chrome-stub"
+            data-button-state={
+              !ctx.previewOpen
+                ? 'closed'
+                : ctx.previewPaused
+                  ? 'paused'
+                  : 'running'
+            }
+            onClick={() => {
+              if (ctx.previewOpen && ctx.onTogglePausePreview) {
+                ctx.onTogglePausePreview()
+              } else {
+                ctx.onOpenPreview({
+                  kind: 'file',
+                  fileId: '__example_drums__',
+                })
+              }
+            }}
+          />
+        ),
+      }
+      const tabs = [editorTab('t-hydra', 'f-hydra')]
+      const { getByTestId } = render(
+        <WorkspaceShell
+          initialTabs={tabs}
+          previewProviderFor={() => provider}
+        />,
+      )
+
+      // Click Preview → opens a preview tab pinned to drums.
+      // No audio dispatch yet (Preview click goes through the chrome's
+      // existing startIfIdle path, which our stub doesn't exercise — we
+      // only care about Stop click for this test).
+      await act(async () => {
+        fireEvent.click(getByTestId('chrome-stub'))
+      })
+      expect(getByTestId('chrome-stub').getAttribute('data-button-state')).toBe(
+        'running',
+      )
+      // Reset spies — we only want to assert on the Stop click.
+      builtinDrumStopSpy.mockClear()
+      builtinDrumStartSpy.mockClear()
+
+      // Click Stop → shell flips pausedPreviews AND dispatches
+      // builtin.stopIfRunning() because the preview tab's sourceRef
+      // is the drum example.
+      await act(async () => {
+        fireEvent.click(getByTestId('chrome-stub'))
+      })
+      expect(getByTestId('chrome-stub').getAttribute('data-button-state')).toBe(
+        'paused',
+      )
+      expect(builtinDrumStopSpy).toHaveBeenCalledTimes(1)
+      expect(builtinDrumStartSpy).not.toHaveBeenCalled()
+
+      // Click Play → resumes the audio loop.
+      builtinDrumStopSpy.mockClear()
+      builtinDrumStartSpy.mockClear()
+      await act(async () => {
+        fireEvent.click(getByTestId('chrome-stub'))
+      })
+      expect(getByTestId('chrome-stub').getAttribute('data-button-state')).toBe(
+        'running',
+      )
+      expect(builtinDrumStartSpy).toHaveBeenCalledTimes(1)
+      expect(builtinDrumStopSpy).not.toHaveBeenCalled()
+    })
+
+    it('Closing a preview tab pinned to a built-in source stops the audio (issue #3)', async () => {
+      // Tab × close path. The shell's handleTabClose is responsible for
+      // dispatching stopIfRunning when the closed preview tab was pinned
+      // to a built-in example. Without it, "× the tab → silence" doesn't
+      // work and the drum loop keeps playing in the background.
+      builtinChordStopSpy.mockClear()
+      const provider: PreviewProvider = {
+        extensions: ['hydra'],
+        label: 'Tab Close Test',
+        keepRunningWhenHidden: false,
+        reload: 'instant',
+        render: () => <div data-testid="stub-preview-output" />,
+      }
+      const tabs = [
+        editorTab('t-hydra', 'f-hydra'),
+        previewTab('t-preview', 'f-hydra'),
+      ]
+      // Override the preview tab's sourceRef to a built-in chord.
+      const tabsWithSource = tabs.map((t) =>
+        t.id === 't-preview' && t.kind === 'preview'
+          ? {
+              ...t,
+              sourceRef: {
+                kind: 'file' as const,
+                fileId: '__example_chord_progression__',
+              },
+            }
+          : t,
+      )
+      const { container } = render(
+        <WorkspaceShell
+          initialTabs={tabsWithSource}
+          previewProviderFor={() => provider}
+        />,
+      )
+
+      // Close the preview tab via its × button. The selector is the
+      // tab close button — find by data-workspace-tab + a child close
+      // control. Looking at the shell render: tabs are
+      // `[data-workspace-tab="${tab.id}"]` with a button inside.
+      const previewTabEl = container.querySelector(
+        '[data-workspace-tab="t-preview"]',
+      ) as HTMLElement
+      expect(previewTabEl).not.toBeNull()
+      const closeBtn = previewTabEl.querySelector('button')
+      expect(closeBtn).not.toBeNull()
+      await act(async () => {
+        fireEvent.click(closeBtn!)
+      })
+
+      expect(builtinChordStopSpy).toHaveBeenCalledTimes(1)
     })
 
     it('preview-kind with no provider renders the no-provider message', () => {

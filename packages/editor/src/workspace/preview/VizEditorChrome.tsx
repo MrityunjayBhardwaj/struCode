@@ -22,70 +22,10 @@ import type { PreviewEditorChromeContext } from '../PreviewProvider'
 import type { AudioSourceRef } from '../types'
 import { workspaceAudioBus } from '../WorkspaceAudioBus'
 import {
-  startSampleSound,
-  isSampleSoundPlaying,
-  SAMPLE_SOUND_SOURCE_ID,
-  SAMPLE_SOUND_LABEL,
-} from '../sampleSound'
-import {
-  startDrumPattern,
-  isDrumPatternPlaying,
-  DRUM_PATTERN_SOURCE_ID,
-  DRUM_PATTERN_LABEL,
-} from '../drumPattern'
-import {
-  startChordProgression,
-  isChordProgressionPlaying,
-  CHORD_PROGRESSION_SOURCE_ID,
-  CHORD_PROGRESSION_LABEL,
-} from '../chordProgression'
-
-/**
- * Registry of built-in example audio sources. Each entry describes
- * a source that's always available in the chrome's source dropdown
- * alongside user-published patterns. Keeping this as a data-driven
- * list (rather than three hardcoded `<option>` branches in JSX)
- * makes it trivial to add more examples later — just append an
- * entry and the dropdown picks it up automatically.
- *
- * `startIfIdle` is the click-handler side effect: lazy-start the
- * source if it isn't running yet. Called from inside the Play click
- * handler so the browser's autoplay policy accepts the
- * AudioContext creation (which needs a user gesture).
- */
-interface BuiltinExampleSource {
-  readonly sourceId: string
-  readonly label: string
-  readonly startIfIdle: () => void
-}
-
-const BUILTIN_EXAMPLE_SOURCES: readonly BuiltinExampleSource[] = [
-  {
-    sourceId: SAMPLE_SOUND_SOURCE_ID,
-    label: SAMPLE_SOUND_LABEL,
-    startIfIdle: () => {
-      if (!isSampleSoundPlaying()) startSampleSound()
-    },
-  },
-  {
-    sourceId: DRUM_PATTERN_SOURCE_ID,
-    label: DRUM_PATTERN_LABEL,
-    startIfIdle: () => {
-      if (!isDrumPatternPlaying()) startDrumPattern()
-    },
-  },
-  {
-    sourceId: CHORD_PROGRESSION_SOURCE_ID,
-    label: CHORD_PROGRESSION_LABEL,
-    startIfIdle: () => {
-      if (!isChordProgressionPlaying()) startChordProgression()
-    },
-  },
-]
-
-const BUILTIN_SOURCE_IDS = new Set(
-  BUILTIN_EXAMPLE_SOURCES.map((s) => s.sourceId),
-)
+  BUILTIN_EXAMPLE_SOURCES,
+  BUILTIN_SOURCE_IDS,
+  findBuiltinExampleSource,
+} from '../builtinExampleSources'
 
 const btnStyle: React.CSSProperties = {
   background: 'none',
@@ -182,25 +122,45 @@ export function VizEditorChrome({
   //
   //   (1) Preview closed         → open it (idempotent).
   //   (2) Preview open & playing → pause renderer (Stop click).
+  //                                ALSO stop the audio source if
+  //                                it's a built-in example. Pattern
+  //                                runtimes keep playing — they're
+  //                                owned by their own pattern tab.
   //   (3) Preview open & paused  → resume renderer (Play click).
+  //                                ALSO restart the audio source if
+  //                                it's a built-in example that we
+  //                                stopped on the previous Stop click,
+  //                                so Play actually returns the user
+  //                                to "what they had before Stop."
   //
   // In state (1) we also lazy-start whichever built-in example
   // source the dropdown selection points to (sample sound, drum
   // pattern, chord progression), inside this click handler so the
   // browser's autoplay policy accepts the AudioContext creation.
   // In states (2)/(3) we delegate to `onTogglePausePreview` which
-  // the shell wires to its `pausedPreviews` state.
+  // the shell wires to its `pausedPreviews` state, then handle the
+  // built-in audio start/stop side effect locally — the chrome is
+  // the only place that knows the dropdown selection, so it has
+  // to own the audio side effect.
   const handlePrimaryButtonClick = useCallback(() => {
     if (previewOpen && onTogglePausePreview) {
+      // Stop / Play click — flip the renderer pause state. The
+      // shell-side `onTogglePausePreview` handler ALSO dispatches
+      // built-in audio start/stop using the OPEN PREVIEW TAB's
+      // sourceRef as the source of truth — NOT this chrome's
+      // local `selectedSource` state. The chrome can be unmounted
+      // and remounted whenever the layout shape changes (e.g.,
+      // splitting from one group to two), which wipes
+      // `selectedSource` back to default. The shell's preview-
+      // tab sourceRef survives such remounts because it's stored
+      // in the shell's `groups` map, not in component state. See
+      // `WorkspaceShell.handleTogglePausePreview` for the audio
+      // dispatch.
       onTogglePausePreview()
       return
     }
     if (selectedSource.kind === 'file') {
-      const builtin = BUILTIN_EXAMPLE_SOURCES.find(
-        (s) =>
-          selectedSource.kind === 'file' &&
-          s.sourceId === selectedSource.fileId,
-      )
+      const builtin = findBuiltinExampleSource(selectedSource.fileId)
       if (builtin) builtin.startIfIdle()
     }
     onOpenPreview(selectedSource)
@@ -250,21 +210,45 @@ export function VizEditorChrome({
   // pattern, chord progression) we lazy-start it here — the
   // `<select>` change event IS a user gesture as far as browser
   // autoplay policy is concerned, so this is safe.
+  //
+  // Symmetric stop side effect: if the PREVIOUS selection was a
+  // built-in example and the user is moving away from it (to a
+  // pattern, to "default", to "none", or to a different built-in),
+  // stop the previous one. The playback coordinator handles the
+  // built-in→built-in case via `notifyPlaybackStarted`, but
+  // built-in→none and built-in→default need this explicit
+  // dispatch — without it, picking "none" leaves the previous
+  // built-in looping forever in the background.
   const handleSourceChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       const ref = stringToRef(e.target.value)
+      const prevBuiltin =
+        selectedSource.kind === 'file'
+          ? findBuiltinExampleSource(selectedSource.fileId)
+          : undefined
+      const nextBuiltin =
+        ref.kind === 'file'
+          ? findBuiltinExampleSource(ref.fileId)
+          : undefined
       setSelectedSource(ref)
       if (previewOpen && onChangePreviewSource) {
-        if (ref.kind === 'file') {
-          const builtin = BUILTIN_EXAMPLE_SOURCES.find(
-            (s) => s.sourceId === ref.fileId,
-          )
-          if (builtin) builtin.startIfIdle()
+        if (nextBuiltin) {
+          nextBuiltin.startIfIdle()
+        }
+        // Stop the previous built-in if we're moving AWAY from it
+        // (covers built-in→none, built-in→default, and
+        // built-in→different-built-in: in the last case the new
+        // source's `notifyPlaybackStarted` would also fire the
+        // coordinator path, but calling stopIfRunning explicitly
+        // is idempotent and avoids relying on cross-module event
+        // ordering).
+        if (prevBuiltin && prevBuiltin !== nextBuiltin) {
+          prevBuiltin.stopIfRunning()
         }
         onChangePreviewSource(ref)
       }
     },
-    [previewOpen, onChangePreviewSource],
+    [previewOpen, onChangePreviewSource, selectedSource],
   )
 
   return (
