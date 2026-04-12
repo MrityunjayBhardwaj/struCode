@@ -7,6 +7,9 @@ import {
   deleteWorkspaceFile,
   renameWorkspaceFile,
   createWorkspaceFile,
+  getFolderOrder,
+  setFolderOrder,
+  subscribeToFolderOrder,
   type WorkspaceFile,
 } from "@stave/editor";
 
@@ -70,6 +73,49 @@ function buildTree(files: WorkspaceFile[]): TreeNode[] {
   return root;
 }
 
+/**
+ * Apply fileOrder to a freshly-built alphabetical tree. For each folder
+ * (including root, keyed as ""), we read the explicit file-id order and
+ * sort the folder's FILE children by it — unknown ids go to the end in
+ * their current alphabetical positions. Folders are never reordered;
+ * they stay alphabetical (PM-3 scope is file-level reorder only).
+ */
+function applyFolderOrder(
+  nodes: TreeNode[],
+  folderPath: string,
+  getOrder: (path: string) => string[],
+): void {
+  const order = getOrder(folderPath);
+  if (order.length > 0) {
+    const orderIndex = new Map<string, number>();
+    order.forEach((id, i) => orderIndex.set(id, i));
+    // Stable partition: ordered files first (by order index), then
+    // unordered files (alphabetical, i.e. current order), then folders
+    // interleaved alphabetically by mixing into the sorted tail.
+    const ordered: TreeNode[] = [];
+    const unordered: TreeNode[] = [];
+    const folders: TreeNode[] = [];
+    for (const n of nodes) {
+      if (n.kind === "folder") folders.push(n);
+      else if (n.file && orderIndex.has(n.file.id)) ordered.push(n);
+      else unordered.push(n);
+    }
+    ordered.sort(
+      (a, b) => orderIndex.get(a.file!.id)! - orderIndex.get(b.file!.id)!,
+    );
+    // Rebuild: folders first (alphabetical), then ordered files, then
+    // unordered files. Folders first keeps the familiar VS Code look.
+    nodes.length = 0;
+    nodes.push(...folders, ...ordered, ...unordered);
+  }
+  // Recurse
+  for (const n of nodes) {
+    if (n.kind === "folder" && n.children) {
+      applyFolderOrder(n.children, n.path, getOrder);
+    }
+  }
+}
+
 // ── Main component ──────────────────────────────────────────────────
 
 export function FileTree({
@@ -82,9 +128,20 @@ export function FileTree({
   useEffect(() => {
     return subscribeToFileList(() => setFileListRev((n) => n + 1));
   }, []);
+  const [folderOrderRev, setFolderOrderRev] = useState(0);
+  useEffect(() => {
+    return subscribeToFolderOrder(() => setFolderOrderRev((n) => n + 1));
+  }, []);
 
   const files = useMemo(() => listWorkspaceFiles(), [fileListRev]);
-  const tree = useMemo(() => buildTree(files), [files]);
+  const tree = useMemo(() => {
+    const t = buildTree(files);
+    applyFolderOrder(t, "", (path) => getFolderOrder(path));
+    return t;
+    // folderOrderRev is a trigger-only dep — the lookup closes over the
+    // store's live state and re-reads on every tree rebuild.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files, folderOrderRev]);
 
   // ── Resizable width ─────────────────────────────────────────────────
   // The sidebar width is draggable via a thin handle on the right edge.
@@ -275,6 +332,15 @@ export function FileTree({
   // over with a dragged item. Drives the visual highlight. `null` = none.
   const [dropTarget, setDropTarget] = useState<string | "__root__" | null>(null);
 
+  // Between-file drop target for within-folder reorder (PM-3). When the
+  // user hovers over a file row with a file drag, we show a 2px insertion
+  // indicator above or below depending on cursor Y. `fileId` is the anchor
+  // the insertion is relative to; `position` = "above" | "below".
+  const [betweenTarget, setBetweenTarget] = useState<{
+    fileId: string;
+    position: "above" | "below";
+  } | null>(null);
+
   // Move a file into a folder (or root if targetFolderPath is ""). No-op
   // if the file is already directly in that folder.
   const moveFileToFolder = useCallback(
@@ -351,7 +417,111 @@ export function FileTree({
 
   const handleDragLeaveTree = useCallback(() => {
     setDropTarget(null);
+    setBetweenTarget(null);
   }, []);
+
+  // Dragover on a FILE row — decide whether this is a reorder (within
+  // same folder) vs a folder-drop. We always call preventDefault so the
+  // drop event can fire. Above midpoint → insert above; below → below.
+  const handleDragOverFile = useCallback(
+    (e: React.DragEvent, targetFileId: string) => {
+      if (!e.dataTransfer.types.includes("application/stave-tree-item")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      setBetweenTarget({
+        fileId: targetFileId,
+        position: e.clientY < midY ? "above" : "below",
+      });
+      setDropTarget(null);
+    },
+    [],
+  );
+
+  // Compute the parent folder path of a file (everything except the last
+  // segment). Root returns "".
+  const folderPathOf = useCallback((filePath: string) => {
+    const i = filePath.lastIndexOf("/");
+    return i < 0 ? "" : filePath.slice(0, i);
+  }, []);
+
+  // Reorder `fileId` within its parent folder relative to `anchorId`.
+  // Cross-folder drops are NOT handled here — those still go through
+  // handleDrop's moveFileToFolder path.
+  const reorderFileWithin = useCallback(
+    (fileId: string, anchorId: string, position: "above" | "below") => {
+      if (fileId === anchorId) return;
+      const source = files.find((f) => f.id === fileId);
+      const anchor = files.find((f) => f.id === anchorId);
+      if (!source || !anchor) return;
+      const folder = folderPathOf(source.path);
+      if (folder !== folderPathOf(anchor.path)) return; // MVP: same folder only
+      // Seed an order from the current tree view: alphabetical filtered
+      // to this folder. Include the current explicit order as a base if
+      // present so we don't lose user-set positions for siblings.
+      const siblings = files
+        .filter(
+          (f) =>
+            folderPathOf(f.path) === folder && !f.path.endsWith("/.keep"),
+        )
+        .map((f) => f.id);
+      const existing = getFolderOrder(folder).filter((id) =>
+        siblings.includes(id),
+      );
+      const base =
+        existing.length > 0
+          ? [
+              ...existing,
+              ...siblings.filter((id) => !existing.includes(id)).sort((a, b) => {
+                const fa = files.find((x) => x.id === a)!.path;
+                const fb = files.find((x) => x.id === b)!.path;
+                return fa.localeCompare(fb);
+              }),
+            ]
+          : [...siblings].sort((a, b) => {
+              const fa = files.find((x) => x.id === a)!.path;
+              const fb = files.find((x) => x.id === b)!.path;
+              return fa.localeCompare(fb);
+            });
+      // Remove the source from its current position.
+      const without = base.filter((id) => id !== fileId);
+      const anchorIdx = without.indexOf(anchorId);
+      if (anchorIdx < 0) return;
+      const insertAt = position === "above" ? anchorIdx : anchorIdx + 1;
+      const next = [
+        ...without.slice(0, insertAt),
+        fileId,
+        ...without.slice(insertAt),
+      ];
+      setFolderOrder(folder, next);
+    },
+    [files, folderPathOf],
+  );
+
+  const handleDropOnFile = useCallback(
+    (e: React.DragEvent, targetFileId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const raw = e.dataTransfer.getData("application/stave-tree-item");
+      setBetweenTarget(null);
+      if (!raw) return;
+      try {
+        const payload = JSON.parse(raw) as
+          | { kind: "file"; fileId: string }
+          | { kind: "folder"; folderPath: string };
+        if (payload.kind !== "file") return; // folder-on-file is undefined
+        // Resolve position from the last known betweenTarget (it mirrors
+        // the dragover state at drop time). Fall back to "below".
+        const position = betweenTarget?.position ?? "below";
+        reorderFileWithin(payload.fileId, targetFileId, position);
+      } catch {
+        /* ignore */
+      }
+    },
+    [betweenTarget, reorderFileWithin],
+  );
 
   const handleDrop = useCallback(
     (e: React.DragEvent, targetFolderPath: string) => {
@@ -451,9 +621,12 @@ export function FileTree({
             onNewFile={handleNewFile}
             onNewFolder={handleNewFolder}
             dropTarget={dropTarget}
+            betweenTarget={betweenTarget}
             onDragStart={handleDragStart}
             onDragOverFolder={handleDragOverFolder}
             onDropOnFolder={handleDrop}
+            onDragOverFile={handleDragOverFile}
+            onDropOnFile={handleDropOnFile}
           />
         ))}
       </div>
@@ -520,6 +693,7 @@ interface TreeItemProps {
   onNewFolder: (parentPath?: string) => void;
   // Drag-drop
   dropTarget: string | "__root__" | null;
+  betweenTarget: { fileId: string; position: "above" | "below" } | null;
   onDragStart: (
     e: React.DragEvent,
     payload:
@@ -528,6 +702,8 @@ interface TreeItemProps {
   ) => void;
   onDragOverFolder: (e: React.DragEvent, folderPath: string) => void;
   onDropOnFolder: (e: React.DragEvent, targetFolderPath: string) => void;
+  onDragOverFile: (e: React.DragEvent, targetFileId: string) => void;
+  onDropOnFile: (e: React.DragEvent, targetFileId: string) => void;
 }
 
 function TreeItem(props: TreeItemProps) {
@@ -580,6 +756,10 @@ function TreeItem(props: TreeItemProps) {
   // Hide .keep placeholder files
   if (node.name === ".keep") return null;
 
+  const between = props.betweenTarget;
+  const showAbove = between?.fileId === file.id && between.position === "above";
+  const showBelow = between?.fileId === file.id && between.position === "below";
+
   return (
     <div
       data-file-tree-item={file.id}
@@ -589,10 +769,18 @@ function TreeItem(props: TreeItemProps) {
         e.stopPropagation();
         props.onDragStart(e, { kind: "file", fileId: file.id });
       }}
+      onDragOver={(e) => props.onDragOverFile(e, file.id)}
+      onDrop={(e) => props.onDropOnFile(e, file.id)}
       style={{
         ...styles.item,
         ...(isActive ? styles.itemActive : {}),
         paddingLeft: 8 + depth * 12,
+        position: "relative",
+        boxShadow: showAbove
+          ? "inset 0 2px 0 0 #7c7cff"
+          : showBelow
+          ? "inset 0 -2px 0 0 #7c7cff"
+          : undefined,
       }}
       onClick={() => {
         if (!isEditing) props.onOpenFile(file.id);
