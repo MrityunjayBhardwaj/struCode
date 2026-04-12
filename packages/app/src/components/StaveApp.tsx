@@ -15,6 +15,11 @@ import {
   restoreSnapshot,
   subscribeToDocUpdate,
   AUTO_SNAPSHOT_PREFIX,
+  undo,
+  redo,
+  canUndo,
+  canRedo,
+  subscribeToUndoState,
   type ProjectMeta,
   type SnapshotMeta,
   type WorkspaceShellHandle,
@@ -58,6 +63,15 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [switcherModalOpen, setSwitcherModalOpen] = useState(false);
   const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
+  const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
+
+  // Subscribe to the structural undo manager so Edit menu items can
+  // enable/disable reactively.
+  useEffect(() => {
+    const update = () => setUndoState({ canUndo: canUndo(), canRedo: canRedo() });
+    update();
+    return subscribeToUndoState(update);
+  }, [activeProject.id]);
 
   const refreshSnapshots = useCallback(async (projectId: string) => {
     setSnapshots(await listSnapshots(projectId));
@@ -81,6 +95,41 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const handleRestoreSnapshot = useCallback(async (id: string) => {
     await restoreSnapshot(id);
     resetFileStore();
+  }, []);
+
+  // Global keyboard shortcuts — Cmd/Ctrl+N for new project, Cmd/Ctrl+O
+  // for open project. Registered at window level but deferred to the
+  // editor if focus is inside a contenteditable / input so the user's
+  // typing isn't hijacked.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) {
+          // Monaco + our rename input both own these keys.
+          return;
+        }
+      }
+      const k = e.key.toLowerCase();
+      if (k === "n" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setTemplateModalOpen(true);
+      } else if (k === "o" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setSwitcherModalOpen(true);
+      } else if (k === "z" && !e.altKey) {
+        // Cmd+Z = undo, Cmd+Shift+Z = redo. Monaco/inputs are exempted
+        // above, so this only fires for structural ops.
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // Auto-snapshot: debounce doc updates; after IDLE_MS of inactivity,
@@ -234,6 +283,10 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         onVersionHistory={openSnapshotModal}
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
         sidebarCollapsed={sidebarCollapsed}
+        onUndo={() => { undo(); }}
+        onRedo={() => { redo(); }}
+        canUndo={undoState.canUndo}
+        canRedo={undoState.canRedo}
       />
 
       <div style={styles.main}>

@@ -29,6 +29,7 @@
 
 import * as Y from 'yjs'
 import { ensureDoc, getFilesMap, destroyProjectDoc } from './projectDoc'
+import { STRUCT_ORIGIN, resetUndoManager } from './undoManager'
 import type { WorkspaceFile, WorkspaceLanguage } from './types'
 
 type Subscriber = () => void
@@ -177,7 +178,7 @@ export function createWorkspaceFile(
     // Setting on filesMap triggers the Y.Map observer which wires
     // the Y.Text observer, rebuilds the snapshot, and notifies.
     filesMap.set(id, fileMap)
-  })
+  }, STRUCT_ORIGIN)
 
   return cachedSnapshots.get(id) ?? { id, path, content, language, meta }
 }
@@ -324,7 +325,7 @@ export function deleteWorkspaceFile(id: string): void {
   const doc = ensureDoc()
   doc.transact(() => {
     filesMap.delete(id)
-  })
+  }, STRUCT_ORIGIN)
   // Y.Map observer fires → 'delete' action → clears cache + notifies subscribers
   notifyFileList()
 }
@@ -343,7 +344,7 @@ export function renameWorkspaceFile(id: string, newPath: string): void {
   const doc = ensureDoc()
   doc.transact(() => {
     fileMap.set('path', newPath)
-  })
+  }, STRUCT_ORIGIN)
   // The inner Y.Map change doesn't auto-trigger the outer observer.
   // Manually rebuild the snapshot and notify.
   rebuildSnapshot(id)
@@ -382,7 +383,7 @@ export function setFolderOrder(folderPath: string, orderedIds: string[]): void {
     const next = new Y.Array<string>()
     next.push(orderedIds)
     map.set(folderPath, next)
-  })
+  }, STRUCT_ORIGIN)
   // observeDeep fires → notifyFolderOrder
 }
 
@@ -425,7 +426,7 @@ export function setSubfolderOrder(parentPath: string, orderedNames: string[]): v
     const next = new Y.Array<string>()
     next.push(orderedNames)
     map.set(parentPath, next)
-  })
+  }, STRUCT_ORIGIN)
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────
@@ -452,6 +453,9 @@ export function resetFileStore(): void {
   subscribersByFile.clear()
   filesMapObserverWired = false
   folderOrderObserverWired = false
+  // Undo manager was bound to the previous Y.Doc — drop it so the next
+  // access rebuilds against the new doc.
+  resetUndoManager()
   // Notify file-list subscribers so the tree re-renders with the new
   // project's files (they stay subscribed across project switches).
   notifyFileList()

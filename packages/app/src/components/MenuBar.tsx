@@ -11,6 +11,10 @@ interface MenuBarProps {
   onVersionHistory: () => void;
   onToggleSidebar: () => void;
   sidebarCollapsed: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 type MenuId = "file" | "edit" | "view" | "help" | null;
@@ -24,6 +28,10 @@ export function MenuBar({
   onVersionHistory,
   onToggleSidebar,
   sidebarCollapsed,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
 }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<MenuId>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -65,8 +73,8 @@ export function MenuBar({
       </MenuButton>
 
       <MenuButton label="Edit" open={openMenu === "edit"} onClick={() => setOpenMenu(openMenu === "edit" ? null : "edit")}>
-        <MenuItem label="Undo" shortcut="⌘Z" onClick={() => setOpenMenu(null)} disabled />
-        <MenuItem label="Redo" shortcut="⌘⇧Z" onClick={() => setOpenMenu(null)} disabled />
+        <MenuItem label="Undo" shortcut="⌘Z" onClick={() => clickItem(onUndo)} disabled={!canUndo} />
+        <MenuItem label="Redo" shortcut="⌘⇧Z" onClick={() => clickItem(onRedo)} disabled={!canRedo} />
         <MenuDivider />
         <MenuItem label="Find..." shortcut="⌘F" onClick={() => setOpenMenu(null)} disabled />
       </MenuButton>

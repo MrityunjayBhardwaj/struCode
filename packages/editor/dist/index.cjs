@@ -4,7 +4,7 @@ var React = require('react');
 var p5 = require('p5');
 var jsxRuntime = require('react/jsx-runtime');
 var MonacoEditorRaw = require('@monaco-editor/react');
-var Y3 = require('yjs');
+var Y4 = require('yjs');
 
 function _interopDefault (e) { return e && e.__esModule ? e : { default: e }; }
 
@@ -29,7 +29,7 @@ function _interopNamespace(e) {
 var React__default = /*#__PURE__*/_interopDefault(React);
 var p5__default = /*#__PURE__*/_interopDefault(p5);
 var MonacoEditorRaw__default = /*#__PURE__*/_interopDefault(MonacoEditorRaw);
-var Y3__namespace = /*#__PURE__*/_interopNamespace(Y3);
+var Y4__namespace = /*#__PURE__*/_interopNamespace(Y4);
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -3065,8 +3065,8 @@ function walk(ir, ctx) {
       if (slots.length === 0) return [];
       const slotIndex = Math.floor(ctx.time % 1 * slots.length);
       const slot = slots[Math.min(slotIndex, slots.length - 1)];
-      const active = slot !== "0" && slot !== "" && slot !== "~";
-      if (active) return walk(ir.body, ctx);
+      const active2 = slot !== "0" && slot !== "" && slot !== "~";
+      if (active2) return walk(ir.body, ctx);
       return [];
     }
     case "FX": {
@@ -5742,7 +5742,7 @@ async function initProjectDoc(projectId) {
   if (activeDoc) {
     activeDoc.destroy();
   }
-  activeDoc = new Y3__namespace.Doc();
+  activeDoc = new Y4__namespace.Doc();
   docReady = false;
   const { IndexeddbPersistence } = await import('y-indexeddb');
   activeProvider = new IndexeddbPersistence(`stave-${projectId}`, activeDoc);
@@ -5758,7 +5758,7 @@ function initProjectDocSync() {
   if (activeDoc) {
     activeDoc.destroy();
   }
-  activeDoc = new Y3__namespace.Doc();
+  activeDoc = new Y4__namespace.Doc();
   docReady = true;
 }
 function ensureDoc() {
@@ -5792,6 +5792,72 @@ function subscribeToDocUpdate(cb, options) {
   doc.on("update", handler);
   return () => {
     doc.off("update", handler);
+  };
+}
+var STRUCT_ORIGIN = /* @__PURE__ */ Symbol.for("stave:struct");
+var active = null;
+function ensureUndoManager() {
+  if (active) return active.um;
+  const doc = getActiveDoc();
+  const files = doc.getMap("files");
+  const fileOrder = doc.getMap("fileOrder");
+  const subfolderOrder = doc.getMap("subfolderOrder");
+  const um = new Y4__namespace.UndoManager([files, fileOrder, subfolderOrder], {
+    trackedOrigins: /* @__PURE__ */ new Set([STRUCT_ORIGIN]),
+    captureTimeout: 300
+  });
+  const listeners2 = /* @__PURE__ */ new Set();
+  const notify2 = () => {
+    for (const l of listeners2) l();
+  };
+  const onStackItemAdded = () => notify2();
+  const onStackItemPopped = () => notify2();
+  const onStackCleared = () => notify2();
+  um.on("stack-item-added", onStackItemAdded);
+  um.on("stack-item-popped", onStackItemPopped);
+  um.on("stack-cleared", onStackCleared);
+  active = {
+    um,
+    listeners: listeners2,
+    cleanup: () => {
+      um.off("stack-item-added", onStackItemAdded);
+      um.off("stack-item-popped", onStackItemPopped);
+      um.off("stack-cleared", onStackCleared);
+      um.destroy();
+    }
+  };
+  return um;
+}
+function resetUndoManager() {
+  if (active) {
+    active.cleanup();
+    active = null;
+  }
+}
+function undo() {
+  const um = ensureUndoManager();
+  const result = um.undo();
+  return result !== null;
+}
+function redo() {
+  const um = ensureUndoManager();
+  const result = um.redo();
+  return result !== null;
+}
+function canUndo() {
+  const um = ensureUndoManager();
+  return um.undoStack.length > 0;
+}
+function canRedo() {
+  const um = ensureUndoManager();
+  return um.redoStack.length > 0;
+}
+function subscribeToUndoState(cb) {
+  ensureUndoManager();
+  const listeners2 = active.listeners;
+  listeners2.add(cb);
+  return () => {
+    listeners2.delete(cb);
   };
 }
 
@@ -5882,16 +5948,16 @@ function createWorkspaceFile(id, path, content, language, meta) {
   const filesMap = getFilesMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const fileMap = new Y3__namespace.Map();
+    const fileMap = new Y4__namespace.Map();
     fileMap.set("id", id);
     fileMap.set("path", path);
     fileMap.set("language", language);
     if (meta !== void 0) fileMap.set("meta", meta);
-    const ytext = new Y3__namespace.Text();
+    const ytext = new Y4__namespace.Text();
     ytext.insert(0, content);
     fileMap.set("content", ytext);
     filesMap.set(id, fileMap);
-  });
+  }, STRUCT_ORIGIN);
   return cachedSnapshots.get(id) ?? { id, path, content, language, meta };
 }
 function seedWorkspaceFile(id, path, content, language, meta) {
@@ -5976,7 +6042,7 @@ function deleteWorkspaceFile(id) {
   const doc = ensureDoc();
   doc.transact(() => {
     filesMap.delete(id);
-  });
+  }, STRUCT_ORIGIN);
   notifyFileList();
 }
 function renameWorkspaceFile(id, newPath) {
@@ -5988,7 +6054,7 @@ function renameWorkspaceFile(id, newPath) {
   const doc = ensureDoc();
   doc.transact(() => {
     fileMap.set("path", newPath);
-  });
+  }, STRUCT_ORIGIN);
   rebuildSnapshot(id);
   notify(id);
   notifyFileList();
@@ -6006,10 +6072,10 @@ function setFolderOrder(folderPath, orderedIds) {
   const map = getFolderOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y3__namespace.Array();
+    const next = new Y4__namespace.Array();
     next.push(orderedIds);
     map.set(folderPath, next);
-  });
+  }, STRUCT_ORIGIN);
 }
 function subscribeToFolderOrder(cb) {
   ensureFolderOrderObserver();
@@ -6031,10 +6097,10 @@ function setSubfolderOrder(parentPath, orderedNames) {
   const map = getSubfolderOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y3__namespace.Array();
+    const next = new Y4__namespace.Array();
     next.push(orderedNames);
     map.set(parentPath, next);
-  });
+  }, STRUCT_ORIGIN);
 }
 function notify(id) {
   const set = subscribersByFile.get(id);
@@ -6051,6 +6117,7 @@ function resetFileStore() {
   subscribersByFile.clear();
   filesMapObserverWired = false;
   folderOrderObserverWired = false;
+  resetUndoManager();
   notifyFileList();
   notifyFolderOrder();
 }
@@ -18137,7 +18204,7 @@ function wrap2(req) {
 var MAX_AUTO_SNAPSHOTS = 10;
 async function saveSnapshot(projectId, label, kind = "manual") {
   const doc = getActiveDoc();
-  const bytes = Y3__namespace.encodeStateAsUpdate(doc);
+  const bytes = Y4__namespace.encodeStateAsUpdate(doc);
   const meta = {
     id: crypto.randomUUID(),
     projectId,
@@ -18186,8 +18253,8 @@ async function restoreSnapshot(id) {
   );
   db.close();
   if (!stored) throw new Error(`snapshot ${id} not found`);
-  const snapDoc = new Y3__namespace.Doc();
-  Y3__namespace.applyUpdate(snapDoc, stored.bytes);
+  const snapDoc = new Y4__namespace.Doc();
+  Y4__namespace.applyUpdate(snapDoc, stored.bytes);
   const snapFiles = snapDoc.getMap("files");
   const snapOrder = snapDoc.getMap("fileOrder");
   const snapSubOrder = snapDoc.getMap("subfolderOrder");
@@ -18200,25 +18267,25 @@ async function restoreSnapshot(id) {
     for (const key of Array.from(activeOrder.keys())) activeOrder.delete(key);
     for (const key of Array.from(activeSubOrder.keys())) activeSubOrder.delete(key);
     for (const [fid, snapFile] of snapFiles.entries()) {
-      const clone = new Y3__namespace.Map();
+      const clone = new Y4__namespace.Map();
       clone.set("id", snapFile.get("id"));
       clone.set("path", snapFile.get("path"));
       clone.set("language", snapFile.get("language"));
       const meta = snapFile.get("meta");
       if (meta !== void 0) clone.set("meta", meta);
-      const content = new Y3__namespace.Text();
+      const content = new Y4__namespace.Text();
       const srcText = snapFile.get("content");
       content.insert(0, srcText.toString());
       clone.set("content", content);
       activeFiles.set(fid, clone);
     }
     for (const [folder, arr] of snapOrder.entries()) {
-      const next = new Y3__namespace.Array();
+      const next = new Y4__namespace.Array();
       next.push(arr.toArray());
       activeOrder.set(folder, next);
     }
     for (const [folder, arr] of snapSubOrder.entries()) {
-      const next = new Y3__namespace.Array();
+      const next = new Y4__namespace.Array();
       next.push(arr.toArray());
       activeSubOrder.set(folder, next);
     }
@@ -19053,6 +19120,8 @@ exports.WavEncoder = WavEncoder;
 exports.WorkspaceShell = WorkspaceShell;
 exports.applyTheme = applyTheme;
 exports.bundledPresetId = bundledPresetId;
+exports.canRedo = canRedo;
+exports.canUndo = canUndo;
 exports.collect = collect;
 exports.compilePreset = compilePreset;
 exports.createProject = createProject;
@@ -19102,6 +19171,7 @@ exports.patternFromJSON = patternFromJSON;
 exports.patternToJSON = patternToJSON;
 exports.previewProviderRegistry = previewProviderRegistry;
 exports.propagate = propagate;
+exports.redo = redo;
 exports.registerNamedViz = registerNamedViz;
 exports.registerPresetAsNamedViz = registerPresetAsNamedViz;
 exports.registerPreviewProvider = registerPreviewProvider;
@@ -19109,6 +19179,7 @@ exports.registerRuntimeProvider = registerRuntimeProvider;
 exports.renameProject = renameProject;
 exports.renameWorkspaceFile = renameWorkspaceFile;
 exports.resetFileStore = resetFileStore;
+exports.resetUndoManager = resetUndoManager;
 exports.resolveDescriptor = resolveDescriptor;
 exports.restoreSnapshot = restoreSnapshot;
 exports.sanitizePresetName = sanitizePresetName;
@@ -19126,12 +19197,14 @@ exports.stopSampleSound = stopSampleSound;
 exports.subscribeToDocUpdate = subscribeToDocUpdate;
 exports.subscribeToFileList = subscribeToFileList;
 exports.subscribeToFolderOrder = subscribeToFolderOrder;
+exports.subscribeToUndoState = subscribeToUndoState;
 exports.subscribeToWorkspaceFile = subscribe;
 exports.switchProject = switchProject;
 exports.timestretch = timestretch;
 exports.toStrudel = toStrudel;
 exports.touchProject = touchProject;
 exports.transpose = transpose;
+exports.undo = undo;
 exports.unregisterNamedViz = unregisterNamedViz;
 exports.useWorkspaceFile = useWorkspaceFile;
 exports.workspaceAudioBus = workspaceAudioBus;

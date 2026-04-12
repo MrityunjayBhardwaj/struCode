@@ -489,6 +489,15 @@ export function FileTree({
         "application/stave-tree-item",
         JSON.stringify(payload),
       );
+      // Also set a kind-specific MIME marker so dragover handlers can
+      // branch on kind WITHOUT reading the payload body (dataTransfer.getData
+      // isn't accessible during dragover in most browsers).
+      e.dataTransfer.setData(
+        payload.kind === "file"
+          ? "application/stave-file-drag"
+          : "application/stave-folder-drag",
+        "1",
+      );
       e.dataTransfer.effectAllowed = "move";
     },
     [],
@@ -501,11 +510,18 @@ export function FileTree({
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = "move";
-      // Zone detection: top 25% = insert above, bottom 25% = insert below,
-      // middle 50% = drop INTO the folder. Only activate between-zones for
-      // folder-folder drags; we can't read payload here (dragover), so
-      // we speculatively set betweenFolderTarget + dropTarget and let the
-      // drop handler pick the right action from payload kind.
+      const isFolderDrag = e.dataTransfer.types.includes(
+        "application/stave-folder-drag",
+      );
+      // For FILE drags, only the "drop INTO folder" affordance is valid
+      // (there's nowhere to reorder to — files always render below folders).
+      if (!isFolderDrag) {
+        setBetweenFolderTarget(null);
+        setDropTarget(folderPath);
+        return;
+      }
+      // Folder drag: zone detection — top 25% = insert above,
+      // bottom 25% = insert below, middle 50% = nest into the folder.
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const y = e.clientY - rect.top;
       const third = rect.height / 4;
@@ -542,6 +558,9 @@ export function FileTree({
   const handleDragOverFile = useCallback(
     (e: React.DragEvent, targetFileId: string) => {
       if (!e.dataTransfer.types.includes("application/stave-tree-item")) return;
+      // Only file-on-file drags get the between-indicator. Folder-on-file
+      // is a no-op — bail early so no misleading marker shows.
+      if (!e.dataTransfer.types.includes("application/stave-file-drag")) return;
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = "move";

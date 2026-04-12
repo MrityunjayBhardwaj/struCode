@@ -111,6 +111,14 @@ export {
 } from './workspace/WorkspaceFile'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady, subscribeToDocUpdate } from './workspace/projectDoc'
 export {
+  undo,
+  redo,
+  canUndo,
+  canRedo,
+  subscribeToUndoState,
+  resetUndoManager,
+} from './workspace/undoManager'
+export {
   saveSnapshot,
   listSnapshots,
   deleteSnapshot,

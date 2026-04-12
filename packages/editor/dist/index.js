@@ -2,7 +2,7 @@ import React, { forwardRef, useRef, useState, useEffect, useMemo, useCallback, u
 import p5 from 'p5';
 import { jsx, jsxs, Fragment } from 'react/jsx-runtime';
 import MonacoEditorRaw from '@monaco-editor/react';
-import * as Y3 from 'yjs';
+import * as Y4 from 'yjs';
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -3038,8 +3038,8 @@ function walk(ir, ctx) {
       if (slots.length === 0) return [];
       const slotIndex = Math.floor(ctx.time % 1 * slots.length);
       const slot = slots[Math.min(slotIndex, slots.length - 1)];
-      const active = slot !== "0" && slot !== "" && slot !== "~";
-      if (active) return walk(ir.body, ctx);
+      const active2 = slot !== "0" && slot !== "" && slot !== "~";
+      if (active2) return walk(ir.body, ctx);
       return [];
     }
     case "FX": {
@@ -5715,7 +5715,7 @@ async function initProjectDoc(projectId) {
   if (activeDoc) {
     activeDoc.destroy();
   }
-  activeDoc = new Y3.Doc();
+  activeDoc = new Y4.Doc();
   docReady = false;
   const { IndexeddbPersistence } = await import('y-indexeddb');
   activeProvider = new IndexeddbPersistence(`stave-${projectId}`, activeDoc);
@@ -5731,7 +5731,7 @@ function initProjectDocSync() {
   if (activeDoc) {
     activeDoc.destroy();
   }
-  activeDoc = new Y3.Doc();
+  activeDoc = new Y4.Doc();
   docReady = true;
 }
 function ensureDoc() {
@@ -5765,6 +5765,72 @@ function subscribeToDocUpdate(cb, options) {
   doc.on("update", handler);
   return () => {
     doc.off("update", handler);
+  };
+}
+var STRUCT_ORIGIN = /* @__PURE__ */ Symbol.for("stave:struct");
+var active = null;
+function ensureUndoManager() {
+  if (active) return active.um;
+  const doc = getActiveDoc();
+  const files = doc.getMap("files");
+  const fileOrder = doc.getMap("fileOrder");
+  const subfolderOrder = doc.getMap("subfolderOrder");
+  const um = new Y4.UndoManager([files, fileOrder, subfolderOrder], {
+    trackedOrigins: /* @__PURE__ */ new Set([STRUCT_ORIGIN]),
+    captureTimeout: 300
+  });
+  const listeners2 = /* @__PURE__ */ new Set();
+  const notify2 = () => {
+    for (const l of listeners2) l();
+  };
+  const onStackItemAdded = () => notify2();
+  const onStackItemPopped = () => notify2();
+  const onStackCleared = () => notify2();
+  um.on("stack-item-added", onStackItemAdded);
+  um.on("stack-item-popped", onStackItemPopped);
+  um.on("stack-cleared", onStackCleared);
+  active = {
+    um,
+    listeners: listeners2,
+    cleanup: () => {
+      um.off("stack-item-added", onStackItemAdded);
+      um.off("stack-item-popped", onStackItemPopped);
+      um.off("stack-cleared", onStackCleared);
+      um.destroy();
+    }
+  };
+  return um;
+}
+function resetUndoManager() {
+  if (active) {
+    active.cleanup();
+    active = null;
+  }
+}
+function undo() {
+  const um = ensureUndoManager();
+  const result = um.undo();
+  return result !== null;
+}
+function redo() {
+  const um = ensureUndoManager();
+  const result = um.redo();
+  return result !== null;
+}
+function canUndo() {
+  const um = ensureUndoManager();
+  return um.undoStack.length > 0;
+}
+function canRedo() {
+  const um = ensureUndoManager();
+  return um.redoStack.length > 0;
+}
+function subscribeToUndoState(cb) {
+  ensureUndoManager();
+  const listeners2 = active.listeners;
+  listeners2.add(cb);
+  return () => {
+    listeners2.delete(cb);
   };
 }
 
@@ -5855,16 +5921,16 @@ function createWorkspaceFile(id, path, content, language, meta) {
   const filesMap = getFilesMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const fileMap = new Y3.Map();
+    const fileMap = new Y4.Map();
     fileMap.set("id", id);
     fileMap.set("path", path);
     fileMap.set("language", language);
     if (meta !== void 0) fileMap.set("meta", meta);
-    const ytext = new Y3.Text();
+    const ytext = new Y4.Text();
     ytext.insert(0, content);
     fileMap.set("content", ytext);
     filesMap.set(id, fileMap);
-  });
+  }, STRUCT_ORIGIN);
   return cachedSnapshots.get(id) ?? { id, path, content, language, meta };
 }
 function seedWorkspaceFile(id, path, content, language, meta) {
@@ -5949,7 +6015,7 @@ function deleteWorkspaceFile(id) {
   const doc = ensureDoc();
   doc.transact(() => {
     filesMap.delete(id);
-  });
+  }, STRUCT_ORIGIN);
   notifyFileList();
 }
 function renameWorkspaceFile(id, newPath) {
@@ -5961,7 +6027,7 @@ function renameWorkspaceFile(id, newPath) {
   const doc = ensureDoc();
   doc.transact(() => {
     fileMap.set("path", newPath);
-  });
+  }, STRUCT_ORIGIN);
   rebuildSnapshot(id);
   notify(id);
   notifyFileList();
@@ -5979,10 +6045,10 @@ function setFolderOrder(folderPath, orderedIds) {
   const map = getFolderOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y3.Array();
+    const next = new Y4.Array();
     next.push(orderedIds);
     map.set(folderPath, next);
-  });
+  }, STRUCT_ORIGIN);
 }
 function subscribeToFolderOrder(cb) {
   ensureFolderOrderObserver();
@@ -6004,10 +6070,10 @@ function setSubfolderOrder(parentPath, orderedNames) {
   const map = getSubfolderOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y3.Array();
+    const next = new Y4.Array();
     next.push(orderedNames);
     map.set(parentPath, next);
-  });
+  }, STRUCT_ORIGIN);
 }
 function notify(id) {
   const set = subscribersByFile.get(id);
@@ -6024,6 +6090,7 @@ function resetFileStore() {
   subscribersByFile.clear();
   filesMapObserverWired = false;
   folderOrderObserverWired = false;
+  resetUndoManager();
   notifyFileList();
   notifyFolderOrder();
 }
@@ -18110,7 +18177,7 @@ function wrap2(req) {
 var MAX_AUTO_SNAPSHOTS = 10;
 async function saveSnapshot(projectId, label, kind = "manual") {
   const doc = getActiveDoc();
-  const bytes = Y3.encodeStateAsUpdate(doc);
+  const bytes = Y4.encodeStateAsUpdate(doc);
   const meta = {
     id: crypto.randomUUID(),
     projectId,
@@ -18159,8 +18226,8 @@ async function restoreSnapshot(id) {
   );
   db.close();
   if (!stored) throw new Error(`snapshot ${id} not found`);
-  const snapDoc = new Y3.Doc();
-  Y3.applyUpdate(snapDoc, stored.bytes);
+  const snapDoc = new Y4.Doc();
+  Y4.applyUpdate(snapDoc, stored.bytes);
   const snapFiles = snapDoc.getMap("files");
   const snapOrder = snapDoc.getMap("fileOrder");
   const snapSubOrder = snapDoc.getMap("subfolderOrder");
@@ -18173,25 +18240,25 @@ async function restoreSnapshot(id) {
     for (const key of Array.from(activeOrder.keys())) activeOrder.delete(key);
     for (const key of Array.from(activeSubOrder.keys())) activeSubOrder.delete(key);
     for (const [fid, snapFile] of snapFiles.entries()) {
-      const clone = new Y3.Map();
+      const clone = new Y4.Map();
       clone.set("id", snapFile.get("id"));
       clone.set("path", snapFile.get("path"));
       clone.set("language", snapFile.get("language"));
       const meta = snapFile.get("meta");
       if (meta !== void 0) clone.set("meta", meta);
-      const content = new Y3.Text();
+      const content = new Y4.Text();
       const srcText = snapFile.get("content");
       content.insert(0, srcText.toString());
       clone.set("content", content);
       activeFiles.set(fid, clone);
     }
     for (const [folder, arr] of snapOrder.entries()) {
-      const next = new Y3.Array();
+      const next = new Y4.Array();
       next.push(arr.toArray());
       activeOrder.set(folder, next);
     }
     for (const [folder, arr] of snapSubOrder.entries()) {
-      const next = new Y3.Array();
+      const next = new Y4.Array();
       next.push(arr.toArray());
       activeSubOrder.set(folder, next);
     }
@@ -18981,6 +19048,6 @@ function registerPresetAsNamedViz(preset) {
   }
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyTheme, bundledPresetId, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resolveDescriptor, restoreSnapshot, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setFolderOrder, setSubfolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, touchProject, transpose, unregisterNamedViz, useWorkspaceFile, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyTheme, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setFolderOrder, setSubfolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map
