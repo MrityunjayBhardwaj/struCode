@@ -310,15 +310,10 @@ export default function StrudelEditorClient({
     }
   }, []);
 
-  // Build tabs from the project's current file list. One editor tab per
-  // file. The shell reads `initialTabs` once on mount — when the file
-  // list changes (add/delete file via sidebar), we remount the shell via
-  // the `key` prop so the new tab set takes effect. This is a coarse but
-  // simple approach for PM Phase 2.5; a finer imperative API for
-  // add/remove tabs is a later enhancement.
-  const [fileListRev, setFileListRev] = useState(0);
-  useEffect(() => subscribeToFileList(() => setFileListRev((r) => r + 1)), []);
-
+  // Seed initial tabs from the current file list — one editor tab per
+  // file. The shell reads `initialTabs` once on mount; after that we
+  // drive add/remove imperatively so create/delete in the sidebar
+  // doesn't blow away the whole tab layout.
   const initialTabs: WorkspaceTab[] = React.useMemo(() => {
     const files = listWorkspaceFiles();
     return files.map((f) => ({
@@ -326,18 +321,33 @@ export default function StrudelEditorClient({
       id: `tab-${f.id}`,
       fileId: f.id,
     }));
-  }, [fileListRev]);
+    // initialTabs is consumed once on mount — intentionally empty deps
+    // so the memo is stable and we don't rebuild tabs for the shell.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Shell remount key — includes file ids so adding/deleting files
-  // triggers a remount with the new tab set.
-  const shellKey = React.useMemo(
-    () => initialTabs.map((t) => t.id).join("|"),
-    [initialTabs],
-  );
+  // Incremental sync: watch the file list and route adds to
+  // openOrFocusFile, deletes to closeTabsForFile. The shell mounts once
+  // and mutates in place — no flash, no tab-set churn.
+  const prevFileIdsRef = useRef<Set<string>>(new Set(initialTabs.map((t) => t.fileId!)));
+  useEffect(() => {
+    return subscribeToFileList(() => {
+      const current = new Set(listWorkspaceFiles().map((f) => f.id));
+      const prev = prevFileIdsRef.current;
+      const added: string[] = [];
+      const removed: string[] = [];
+      for (const id of current) if (!prev.has(id)) added.push(id);
+      for (const id of prev) if (!current.has(id)) removed.push(id);
+      prevFileIdsRef.current = current;
+      const handle = shellRef?.current;
+      if (!handle) return;
+      for (const id of removed) handle.closeTabsForFile(id);
+      for (const id of added) handle.openOrFocusFile(id);
+    });
+  }, [shellRef]);
 
   return (
     <WorkspaceShell
-      key={shellKey}
       ref={shellRef}
       initialTabs={initialTabs}
       theme="dark"
