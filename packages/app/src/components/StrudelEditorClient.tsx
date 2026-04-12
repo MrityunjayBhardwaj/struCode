@@ -3,10 +3,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   WorkspaceShell,
-  createWorkspaceFile,
-  seedWorkspaceFile,
   getFile,
   subscribeToWorkspaceFile,
+  listWorkspaceFiles,
+  subscribeToFileList,
   registerRuntimeProvider,
   registerPreviewProvider,
   getRuntimeProviderForLanguage,
@@ -18,7 +18,6 @@ import {
   LiveCodingRuntime,
   VizPresetStore,
   bundledPresetId,
-  seedFromPreset,
   flushToPreset,
   getPresetIdForFile,
   registerPresetAsNamedViz,
@@ -27,173 +26,8 @@ import {
   type VizPreset,
   type PreviewProvider,
 } from "@stave/editor";
+import { PIANOROLL_P5_CODE, PIANOROLL_HYDRA_CODE } from "../templates";
 
-// ---------------------------------------------------------------------------
-// Demo code
-// ---------------------------------------------------------------------------
-
-const STRUDEL_CODE = `// Strudel — Declarative pattern algebra
-// Ctrl+Enter to play · Ctrl+. to stop
-
-setcps(130/240)
-
-$: stack(
-  note("c4 e4 g4 b4 c5 b4 g4 e4")
-    .s("sawtooth").gain(0.3).lpf(2400).release(0.12),
-  note("e3 g3 b3 e4")
-    .s("sine").gain(0.15).release(0.3)
-).viz("pianoroll")
-
-$: note("<c2 [g2 c2] f2 [g2 eb2]>")
-  .s("square").gain(0.4).lpf(500).release(0.2)
-  .viz("pitchwheel")
-
-$: stack(
-  s("hh*8").gain(0.3),
-  s("bd [~ bd] ~ bd").gain(0.5),
-  s("~ sd ~ [sd cp]").gain(0.4)
-).viz("wordfall")`;
-
-const SONIC_PI_CODE = `# Sonic Pi — Imperative play/sleep/live_loop
-# Ctrl+Enter to play · Ctrl+. to stop
-
-use_bpm 120
-
-live_loop :drums do
-  viz :pianoroll
-  sample :bd_haus
-  sleep 0.5
-  sample :sn_dub
-  sleep 0.5
-end
-
-live_loop :bass do
-  viz :scope
-  use_synth :tb303
-  play choose([36, 39, 43]), release: 0.3
-  sleep 0.5
-end
-
-live_loop :melody do
-  viz :pitchwheel
-  use_synth :prophet
-  play choose([60, 64, 67, 72]), release: 0.2
-  sleep 0.25
-end`;
-
-const PIANOROLL_P5_CODE = `// Stave p5 viz — Piano Roll
-//
-// Injected globals (provided by the Stave runtime, available from
-// preload onwards):
-//   stave.scheduler   — PatternScheduler | null. Poll with
-//                       scheduler.query(from, to) → NormalizedHap[].
-//                       Each hap has { begin, end, note, s, gain,
-//                       velocity, duration }.
-//   stave.analyser    — AnalyserNode | null. Web Audio FFT /
-//                       waveform data for any audio source.
-//   stave.hapStream   — HapStream | null. Event-driven feed of
-//                       currently-firing haps.
-//   stave.width       — preview pane width in pixels.
-//   stave.height      — preview pane height in pixels. Use these
-//                       in createCanvas — NOT the built-in p5
-//                       windowWidth/windowHeight, which track the
-//                       browser window rather than the preview pane.
-//
-// p5 globals (createCanvas, background, width, height, mouseX, HSB,
-// etc.) work exactly like the p5js editor. Read stave.* INSIDE
-// setup/draw, don't cache to module-level let — if the user
-// changes the audio source, setup() runs again with fresh values.
-
-let playhead
-
-function setup() {
-  createCanvas(stave.width, stave.height)
-  colorMode(HSB, 360, 100, 100, 1)
-  noStroke()
-  playhead = 0.75 // x position of the "now" line, as fraction of width
-}
-
-function draw() {
-  background(230, 30, 8, 0.25)
-
-  // Playhead — vertical line at the "now" position.
-  stroke(0, 0, 100, 0.4)
-  strokeWeight(1)
-  const px = width * playhead
-  line(px, 0, px, height)
-  noStroke()
-
-  // --- Pattern events (works when a pattern is playing) ---
-  if (stave.scheduler) {
-    const now = stave.scheduler.now()
-    const haps = stave.scheduler.query(now - 3, now + 1)
-
-    for (const h of haps) {
-      // Position on screen: begin=now maps to the playhead, begin
-      // earlier goes right (already played), later goes left.
-      const x = ((h.begin - now + 3) / 4) * width
-      const w = max(4, ((h.duration ?? h.end - h.begin) / 4) * width)
-      const y = (1 - (h.note ?? 60) / 127) * height
-      const isPlaying = h.begin <= now && (h.begin + (h.duration ?? 0.25)) > now
-
-      // Color by pitch class, brightened when currently playing.
-      const hue = (((h.note ?? 60) * 7) % 12) * 30
-      const sat = isPlaying ? 80 : 55
-      const brightness = isPlaying ? 100 : 70
-      fill(hue, sat, brightness, isPlaying ? 1 : 0.85)
-      rect(x, y - 3, w, 6, 2)
-    }
-  }
-
-  // --- Audio spectrum (works with any audio source, including the
-  // sample sound when no pattern is playing) ---
-  if (stave.analyser) {
-    const bins = new Uint8Array(stave.analyser.frequencyBinCount)
-    stave.analyser.getByteFrequencyData(bins)
-    fill(260, 50, 100, 0.25)
-    const bw = width / bins.length
-    for (let i = 0; i < bins.length; i++) {
-      const h = (bins[i] / 255) * (height * 0.25)
-      rect(i * bw, height - h, bw, h)
-    }
-  }
-
-  // --- Empty-state hint when neither scheduler nor analyser yielded
-  // anything to draw ---
-  if (!stave.scheduler && !stave.analyser) {
-    fill(0, 0, 60, 0.7)
-    textSize(11)
-    textAlign(CENTER)
-    text(
-      'no audio source — pick one from the chrome source dropdown, or play a pattern',
-      width / 2,
-      height - 14,
-    )
-  }
-}`;
-
-const PIANOROLL_HYDRA_CODE = `// Hydra Piano Roll — shader-based frequency bands
-// s.a.fft[0]=bass  s.a.fft[1]=low-mid  s.a.fft[2]=high-mid  s.a.fft[3]=treble
-
-s.osc(() => 10 + s.a.fft[0] * 50, -0.3, 0)
-  .thresh(() => 0.3 + s.a.fft[0] * 0.5, 0.1)
-  .color(0.46, 0.71, 1.0)
-  .add(
-    s.osc(() => 20 + s.a.fft[1] * 40, 0.2, 0)
-      .rotate(Math.PI / 2)
-      .thresh(() => 0.4 + s.a.fft[1] * 0.4, 0.08)
-      .color(1.0, 0.79, 0.16),
-    () => s.a.fft[1] * 0.8
-  )
-  .add(
-    s.osc(() => 40 + s.a.fft[2] * 60, 0.1, 0)
-      .thresh(() => 0.6 + s.a.fft[2] * 0.3, 0.05)
-      .color(0.54, 0.36, 0.96),
-    () => s.a.fft[2] * 0.5
-  )
-  .modulate(s.noise(2, () => s.a.fft[3] * 0.4), () => s.a.fft[0] * 0.015)
-  .scrollX(() => s.a.fft[0] * 0.02)
-  .out()`;
 
 // ---------------------------------------------------------------------------
 // Provider registration (idempotent — safe to call on every mount)
@@ -210,63 +44,6 @@ function ensureProviders() {
 }
 
 // ---------------------------------------------------------------------------
-// Seed workspace files synchronously before the shell mounts
-// ---------------------------------------------------------------------------
-
-function seedWorkspaceFiles(p5PresetId: string, hydraPresetId: string) {
-  // Pattern files — persistence-aware: if the user edited code last session
-  // and it was saved to IndexedDB via the Yjs doc, seedWorkspaceFile returns
-  // the persisted version instead of overwriting with the bundled default.
-  seedWorkspaceFile(
-    "pattern.strudel",
-    "pattern.strudel",
-    STRUDEL_CODE,
-    "strudel",
-  );
-  seedWorkspaceFile(
-    "pattern.sonicpi",
-    "pattern.sonicpi",
-    SONIC_PI_CODE,
-    "sonicpi",
-  );
-
-  // Seed viz files from the bundled presets, using the same bridge path
-  // Task 06 exposed. We build VizPreset objects in-memory (the IndexedDB
-  // write happens in the preset-seeding effect below) and use
-  // seedFromPreset to create WorkspaceFiles with the correct meta.
-  const p5Preset: VizPreset = {
-    id: p5PresetId,
-    name: "Piano Roll",
-    renderer: "p5",
-    code: PIANOROLL_P5_CODE,
-    requires: ["streaming"],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-  const hydraPreset: VizPreset = {
-    id: hydraPresetId,
-    name: "Piano Roll (Hydra)",
-    renderer: "hydra",
-    code: PIANOROLL_HYDRA_CODE,
-    requires: ["audio"],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-
-  const p5FileId = seedFromPreset(p5Preset);
-  const hydraFileId = seedFromPreset(hydraPreset);
-
-  // Register the presets under their user-chosen names so a pattern
-  // file can write `.viz("Piano Roll")` or `.viz("Piano Roll (Hydra)")`
-  // and have `resolveDescriptor` find the user's viz code instead of a
-  // built-in. These names shadow any built-in with the same string.
-  registerPresetAsNamedViz(p5Preset);
-  registerPresetAsNamedViz(hydraPreset);
-
-  return { p5FileId, hydraFileId };
-}
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -274,18 +51,37 @@ export default function StrudelEditorClient() {
   // Register providers once
   ensureProviders();
 
-  // Seed files synchronously via useState initializer so they exist before
-  // the first render of WorkspaceShell (avoiding the one-frame empty flash
-  // noted in the plan pre-mortem).
-  const [seedState] = useState(() => {
-    const p5PresetId = bundledPresetId("Piano Roll", "p5");
-    const hydraPresetId = bundledPresetId("Piano Roll Hydra", "hydra");
-    const { p5FileId, hydraFileId } = seedWorkspaceFiles(
-      p5PresetId,
-      hydraPresetId,
-    );
-    return { p5FileId, hydraFileId, p5PresetId, hydraPresetId };
-  });
+  // Bundled preset IDs (used for the preset-seeding effect + named-viz
+  // registration). Files themselves are seeded by templates.ts at
+  // project-creation time — NOT here.
+  const [seedState] = useState(() => ({
+    p5PresetId: bundledPresetId("Piano Roll", "p5"),
+    hydraPresetId: bundledPresetId("Piano Roll Hydra", "hydra"),
+  }));
+
+  // Register bundled presets as named viz (for `.viz("Piano Roll")` lookup).
+  useEffect(() => {
+    const p5Preset: VizPreset = {
+      id: seedState.p5PresetId,
+      name: "Piano Roll",
+      renderer: "p5",
+      code: PIANOROLL_P5_CODE,
+      requires: ["streaming"],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const hydraPreset: VizPreset = {
+      id: seedState.hydraPresetId,
+      name: "Piano Roll (Hydra)",
+      renderer: "hydra",
+      code: PIANOROLL_HYDRA_CODE,
+      requires: ["audio"],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    registerPresetAsNamedViz(p5Preset);
+    registerPresetAsNamedViz(hydraPreset);
+  }, [seedState.p5PresetId, seedState.hydraPresetId]);
 
   // Persist bundled presets to IndexedDB (non-blocking, fire-and-forget).
   useEffect(() => {
@@ -505,16 +301,34 @@ export default function StrudelEditorClient() {
     }
   }, []);
 
-  // Build the initial tab set: 4 editor tabs in one group
-  const initialTabs: WorkspaceTab[] = useState(() => [
-    { kind: "editor" as const, id: "tab-strudel", fileId: "pattern.strudel" },
-    { kind: "editor" as const, id: "tab-sonicpi", fileId: "pattern.sonicpi" },
-    { kind: "editor" as const, id: "tab-p5", fileId: seedState.p5FileId },
-    { kind: "editor" as const, id: "tab-hydra", fileId: seedState.hydraFileId },
-  ])[0];
+  // Build tabs from the project's current file list. One editor tab per
+  // file. The shell reads `initialTabs` once on mount — when the file
+  // list changes (add/delete file via sidebar), we remount the shell via
+  // the `key` prop so the new tab set takes effect. This is a coarse but
+  // simple approach for PM Phase 2.5; a finer imperative API for
+  // add/remove tabs is a later enhancement.
+  const [fileListRev, setFileListRev] = useState(0);
+  useEffect(() => subscribeToFileList(() => setFileListRev((r) => r + 1)), []);
+
+  const initialTabs: WorkspaceTab[] = React.useMemo(() => {
+    const files = listWorkspaceFiles();
+    return files.map((f) => ({
+      kind: "editor" as const,
+      id: `tab-${f.id}`,
+      fileId: f.id,
+    }));
+  }, [fileListRev]);
+
+  // Shell remount key — includes file ids so adding/deleting files
+  // triggers a remount with the new tab set.
+  const shellKey = React.useMemo(
+    () => initialTabs.map((t) => t.id).join("|"),
+    [initialTabs],
+  );
 
   return (
     <WorkspaceShell
+      key={shellKey}
       initialTabs={initialTabs}
       theme="dark"
       height={560}

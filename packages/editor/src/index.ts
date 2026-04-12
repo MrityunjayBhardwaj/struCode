@@ -98,6 +98,10 @@ export {
   setContent,
   subscribe as subscribeToWorkspaceFile,
   resetFileStore,
+  listWorkspaceFiles,
+  subscribeToFileList,
+  deleteWorkspaceFile,
+  renameWorkspaceFile,
 } from './workspace/WorkspaceFile'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady } from './workspace/projectDoc'
 export {
@@ -157,6 +161,7 @@ export {
   flushToPreset,
   getPresetIdForFile,
   registerPresetAsNamedViz,
+  workspaceFileIdForPreset,
 } from './workspace/preview'
 
 // Shell types

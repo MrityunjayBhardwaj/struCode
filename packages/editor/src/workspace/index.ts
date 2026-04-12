@@ -85,6 +85,10 @@ export {
   setContent,
   subscribe,
   resetFileStore,
+  listWorkspaceFiles,
+  subscribeToFileList,
+  deleteWorkspaceFile,
+  renameWorkspaceFile,
 } from './WorkspaceFile'
 export {
   initProjectDoc,

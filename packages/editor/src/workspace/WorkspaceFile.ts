@@ -92,6 +92,7 @@ function ensureFilesMapObserver(): void {
   if (filesMapObserverWired) return
   const filesMap = getFilesMap()
   filesMap.observe((event) => {
+    let anyStructuralChange = false
     for (const [key, change] of event.changes.keys) {
       if (change.action === 'add' || change.action === 'update') {
         const fileMap = filesMap.get(key) as Y.Map<unknown>
@@ -99,12 +100,15 @@ function ensureFilesMapObserver(): void {
         rebuildSnapshot(key)
         wireTextObserver(key, ytext)
         notify(key)
+        anyStructuralChange = true
       } else if (change.action === 'delete') {
         unwireTextObserver(key)
         cachedSnapshots.delete(key)
         notify(key)
+        anyStructuralChange = true
       }
     }
+    if (anyStructuralChange) notifyFileList()
   })
   filesMapObserverWired = true
 }
@@ -233,6 +237,89 @@ export function subscribe(id: string, cb: Subscriber): () => void {
   }
 }
 
+// ── File-list operations (PM Phase 2.5 — file tree) ──────────────────
+
+/**
+ * Subscribers for file-list-level changes (add/delete/rename). Fires when
+ * a file is created, deleted, or its path changes — useful for the file
+ * tree UI to update its rendering.
+ */
+const fileListSubscribers = new Set<Subscriber>()
+
+function notifyFileList(): void {
+  const snapshot = Array.from(fileListSubscribers)
+  for (const cb of snapshot) cb()
+}
+
+/**
+ * Register a subscriber for file-list-level changes (file added, deleted,
+ * or renamed). Fires after the change is committed to the Y.Doc.
+ */
+export function subscribeToFileList(cb: Subscriber): () => void {
+  fileListSubscribers.add(cb)
+  return () => {
+    fileListSubscribers.delete(cb)
+  }
+}
+
+/**
+ * Return all workspace files as a list. Snapshots are reference-stable
+ * so this return value is suitable for useSyncExternalStore.
+ */
+export function listWorkspaceFiles(): WorkspaceFile[] {
+  ensureDoc()
+  ensureFilesMapObserver()
+  // Ensure every file in the Y.Map has a cached snapshot
+  const filesMap = getFilesMap()
+  for (const id of filesMap.keys()) {
+    if (!cachedSnapshots.has(id)) {
+      rebuildSnapshot(id)
+      const fileMap = filesMap.get(id) as Y.Map<unknown>
+      const ytext = fileMap.get('content') as Y.Text
+      if (!textObservers.has(id)) {
+        wireTextObserver(id, ytext)
+      }
+    }
+  }
+  return Array.from(cachedSnapshots.values())
+}
+
+/**
+ * Delete a file from the Y.Doc. No-op if the id doesn't exist.
+ */
+export function deleteWorkspaceFile(id: string): void {
+  const filesMap = getFilesMap()
+  if (!filesMap.has(id)) return
+  const doc = ensureDoc()
+  doc.transact(() => {
+    filesMap.delete(id)
+  })
+  // Y.Map observer fires → 'delete' action → clears cache + notifies subscribers
+  notifyFileList()
+}
+
+/**
+ * Rename a file's path. The file id stays the same — only the path field
+ * is updated. This is how files move between folders (e.g., "foo.strudel"
+ * → "sketches/foo.strudel"). No-op if the id doesn't exist.
+ */
+export function renameWorkspaceFile(id: string, newPath: string): void {
+  const filesMap = getFilesMap()
+  const fileMap = filesMap.get(id) as Y.Map<unknown> | undefined
+  if (!fileMap) return
+  const currentPath = fileMap.get('path') as string
+  if (currentPath === newPath) return
+  const doc = ensureDoc()
+  doc.transact(() => {
+    fileMap.set('path', newPath)
+  })
+  // The inner Y.Map change doesn't auto-trigger the outer observer.
+  // Manually rebuild the snapshot and notify.
+  rebuildSnapshot(id)
+  notify(id)
+  notifyFileList()
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────
 
 function notify(id: string): void {
@@ -256,6 +343,9 @@ export function resetFileStore(): void {
   cachedSnapshots.clear()
   subscribersByFile.clear()
   filesMapObserverWired = false
+  // Notify file-list subscribers so the tree re-renders with the new
+  // project's files (they stay subscribed across project switches).
+  notifyFileList()
 }
 
 /**
@@ -271,6 +361,7 @@ export function __resetWorkspaceFilesForTests(): void {
   textObservers.clear()
   cachedSnapshots.clear()
   subscribersByFile.clear()
+  fileListSubscribers.clear()
   filesMapObserverWired = false
   destroyProjectDoc()
 }

@@ -6,13 +6,16 @@ import {
   createProject,
   renameProject,
   deleteProject,
-  duplicateProject,
   touchProject,
   switchProject,
   resetFileStore,
   type ProjectMeta,
 } from "@stave/editor";
-import { ProjectSidebar } from "./ProjectSidebar";
+import { seedProjectFromTemplate } from "../templates";
+import { MenuBar } from "./MenuBar";
+import { FileTree } from "./FileTree";
+import { TemplateModal } from "./TemplateModal";
+import { ProjectSwitcherModal } from "./ProjectSwitcherModal";
 import StrudelEditorClient from "./StrudelEditorClient";
 
 interface StaveAppProps {
@@ -20,13 +23,20 @@ interface StaveAppProps {
 }
 
 /**
- * StaveApp — the outer wrapper that renders ProjectSidebar + the editor.
+ * StaveApp — top-level layout.
  *
- * The editor (StrudelEditorClient) is keyed by the active project id.
- * When the project changes, React unmounts the old editor and mounts a
- * fresh one — all shell state (tabs, layout, pause, runtimes) resets
- * naturally. The new editor's seedWorkspaceFile calls find the new
- * project's persisted files (or seed with defaults for empty projects).
+ * Layout:
+ *   ┌────────────────────────────────────────────────┐
+ *   │ MenuBar (File, Edit, View, Help)               │
+ *   ├──────────┬─────────────────────────────────────┤
+ *   │          │                                     │
+ *   │ FileTree │ StrudelEditorClient (WorkspaceShell)│
+ *   │          │                                     │
+ *   └──────────┴─────────────────────────────────────┘
+ *
+ * Project actions (new/open/rename/export) are in the File menu.
+ * The sidebar is a file tree for the CURRENT project only.
+ * Switching projects remounts StrudelEditorClient via key={activeProject.id}.
  */
 export function StaveApp({ initialProject }: StaveAppProps) {
   const [activeProject, setActiveProject] = useState<ProjectMeta>(initialProject);
@@ -34,112 +44,153 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [switching, setSwitching] = useState(false);
 
-  // Load project list on mount and whenever it changes
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [switcherModalOpen, setSwitcherModalOpen] = useState(false);
+
+  // Open-file tracking passed to FileTree for visual highlight.
+  // In PM Phase 2.5 the shell opens tabs for ALL files on mount, so we
+  // seed this as the full file list. A future phase (controlled tabs or
+  // imperative API) will make this dynamic.
+  const [openFileIds] = useState<Set<string>>(new Set());
+
   const refreshProjects = useCallback(async () => {
-    const list = await listProjects();
-    setProjects(list);
+    setProjects(await listProjects());
   }, []);
 
-  useEffect(() => {
-    refreshProjects();
-  }, [refreshProjects]);
+  useEffect(() => { refreshProjects(); }, [refreshProjects]);
 
   // ── Project operations ──────────────────────────────────────────────
 
-  const handleSelectProject = useCallback(
-    async (id: string) => {
-      if (id === activeProject.id || switching) return;
-      setSwitching(true);
-      try {
-        // Reset the file store caches (old project's snapshots)
-        resetFileStore();
-        // Switch to the new Y.Doc (loads from IDB)
-        await switchProject(id);
-        await touchProject(id);
-        const list = await listProjects();
-        const selected = list.find((p) => p.id === id);
-        if (selected) {
-          setActiveProject(selected);
-          setProjects(list);
-        }
-      } finally {
-        setSwitching(false);
-      }
-    },
-    [activeProject.id, switching],
-  );
-
-  const handleNewProject = useCallback(async () => {
-    const meta = await createProject("Untitled");
-    // Switch to the new (empty) project
-    resetFileStore();
-    await switchProject(meta.id);
-    await touchProject(meta.id);
-    setActiveProject(meta);
-    await refreshProjects();
-  }, [refreshProjects]);
-
-  const handleRenameProject = useCallback(
-    async (id: string, name: string) => {
-      await renameProject(id, name);
+  const doSwitchProject = useCallback(async (id: string) => {
+    if (id === activeProject.id || switching) return;
+    setSwitching(true);
+    try {
+      resetFileStore();
+      await switchProject(id);
+      await touchProject(id);
       const list = await listProjects();
-      setProjects(list);
-      if (id === activeProject.id) {
-        const updated = list.find((p) => p.id === id);
-        if (updated) setActiveProject(updated);
+      const selected = list.find((p) => p.id === id);
+      if (selected) {
+        setActiveProject(selected);
+        setProjects(list);
       }
-    },
-    [activeProject.id],
-  );
+    } finally {
+      setSwitching(false);
+    }
+  }, [activeProject.id, switching]);
 
-  const handleDuplicateProject = useCallback(async (id: string) => {
-    await duplicateProject(id);
-    await refreshProjects();
+  const handleCreateProject = useCallback(async (name: string, templateId: string) => {
+    setTemplateModalOpen(false);
+    setSwitching(true);
+    try {
+      const meta = await createProject(name);
+      resetFileStore();
+      await switchProject(meta.id);
+      await touchProject(meta.id);
+      // Seed template files into the new Y.Doc
+      seedProjectFromTemplate(templateId);
+      setActiveProject(meta);
+      await refreshProjects();
+    } finally {
+      setSwitching(false);
+    }
   }, [refreshProjects]);
 
-  const handleDeleteProject = useCallback(
-    async (id: string) => {
-      // Don't allow deleting the last project
-      if (projects.length <= 1) return;
+  const handleRenameActiveProject = useCallback(async () => {
+    const newName = prompt("Rename project:", activeProject.name);
+    if (!newName || !newName.trim() || newName === activeProject.name) return;
+    await renameProject(activeProject.id, newName.trim());
+    const list = await listProjects();
+    const updated = list.find((p) => p.id === activeProject.id);
+    if (updated) setActiveProject(updated);
+    setProjects(list);
+  }, [activeProject]);
 
-      await deleteProject(id);
+  const handleRenameProjectFromSwitcher = useCallback(async (id: string) => {
+    const proj = projects.find((p) => p.id === id);
+    if (!proj) return;
+    const newName = prompt("Rename project:", proj.name);
+    if (!newName || !newName.trim() || newName === proj.name) return;
+    await renameProject(id, newName.trim());
+    const list = await listProjects();
+    if (id === activeProject.id) {
+      const updated = list.find((p) => p.id === id);
+      if (updated) setActiveProject(updated);
+    }
+    setProjects(list);
+  }, [projects, activeProject.id]);
 
-      if (id === activeProject.id) {
-        // Switch to another project
-        const remaining = projects.filter((p) => p.id !== id);
-        const next = remaining[0];
-        if (next) {
-          resetFileStore();
-          await switchProject(next.id);
-          await touchProject(next.id);
-          setActiveProject(next);
-        }
+  const handleDeleteProjectFromSwitcher = useCallback(async (id: string) => {
+    if (projects.length <= 1) return;
+    await deleteProject(id);
+    if (id === activeProject.id) {
+      const remaining = projects.filter((p) => p.id !== id);
+      const next = remaining[0];
+      if (next) {
+        resetFileStore();
+        await switchProject(next.id);
+        await touchProject(next.id);
+        setActiveProject(next);
       }
-      await refreshProjects();
-    },
-    [activeProject.id, projects, refreshProjects],
-  );
+    }
+    await refreshProjects();
+  }, [activeProject.id, projects, refreshProjects]);
+
+  // ── Tab tracking ────────────────────────────────────────────────────
+
+  const handleOpenFile = useCallback((_fileId: string) => {
+    // PM 2.5: all files are already open as tabs on mount, so clicking
+    // a file in the tree is a no-op for tab opening. A future phase
+    // will add controlled tabs or an imperative shell API for
+    // click-to-focus and re-open-closed-tab.
+  }, []);
 
   return (
     <div style={styles.root}>
-      <ProjectSidebar
+      <MenuBar
+        projectName={activeProject.name}
+        onNewProject={() => setTemplateModalOpen(true)}
+        onOpenProject={() => setSwitcherModalOpen(true)}
+        onRenameProject={handleRenameActiveProject}
+        onExportProject={() => alert("Export as .zip — coming in PM-5")}
+        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+        sidebarCollapsed={sidebarCollapsed}
+      />
+
+      <div style={styles.main}>
+        {!sidebarCollapsed && (
+          <FileTree
+            projectName={activeProject.name}
+            onOpenFile={handleOpenFile}
+            openFileIds={openFileIds}
+            onToggleCollapse={() => setSidebarCollapsed(true)}
+          />
+        )}
+
+        <div style={styles.editorArea}>
+          {switching ? (
+            <div style={styles.switchingOverlay}>Loading project...</div>
+          ) : (
+            <StrudelEditorClient key={activeProject.id} />
+          )}
+        </div>
+      </div>
+
+      <TemplateModal
+        open={templateModalOpen}
+        onClose={() => setTemplateModalOpen(false)}
+        onCreate={handleCreateProject}
+      />
+
+      <ProjectSwitcherModal
+        open={switcherModalOpen}
         projects={projects}
         activeProjectId={activeProject.id}
-        onSelectProject={handleSelectProject}
-        onNewProject={handleNewProject}
-        onRenameProject={handleRenameProject}
-        onDuplicateProject={handleDuplicateProject}
-        onDeleteProject={handleDeleteProject}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+        onClose={() => setSwitcherModalOpen(false)}
+        onSelect={doSwitchProject}
+        onRename={handleRenameProjectFromSwitcher}
+        onDelete={handleDeleteProjectFromSwitcher}
       />
-      <div style={styles.editorArea}>
-        {switching ? (
-          <div style={styles.switchingOverlay}>Loading project...</div>
-        ) : (
-          <StrudelEditorClient key={activeProject.id} />
-        )}
-      </div>
     </div>
   );
 }
@@ -147,8 +198,14 @@ export function StaveApp({ initialProject }: StaveAppProps) {
 const styles: Record<string, React.CSSProperties> = {
   root: {
     display: "flex",
+    flexDirection: "column" as const,
     width: "100%",
     height: "100%",
+  },
+  main: {
+    flex: 1,
+    display: "flex",
+    minHeight: 0,
   },
   editorArea: {
     flex: 1,
