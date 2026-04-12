@@ -243,6 +243,22 @@ function notify(id: string): void {
 }
 
 /**
+ * Reset the file store's caches and observers WITHOUT destroying the Y.Doc.
+ * Used during project switching: after initProjectDoc loads a new Y.Doc,
+ * call this to clear stale snapshots from the previous project and re-wire
+ * observers for the new doc's files.
+ */
+export function resetFileStore(): void {
+  for (const [id] of textObservers) {
+    unwireTextObserver(id)
+  }
+  textObservers.clear()
+  cachedSnapshots.clear()
+  subscribersByFile.clear()
+  filesMapObserverWired = false
+}
+
+/**
  * TESTING ONLY — reset the entire store. Destroys the Y.Doc and clears
  * all caches and observers. The next store access lazy-inits a fresh
  * in-memory doc.

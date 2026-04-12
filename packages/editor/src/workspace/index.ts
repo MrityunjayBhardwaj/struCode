@@ -84,12 +84,26 @@ export {
   getFile,
   setContent,
   subscribe,
+  resetFileStore,
 } from './WorkspaceFile'
 export {
   initProjectDoc,
   initProjectDocSync,
+  switchProject,
+  getActiveProjectId,
   isDocReady,
 } from './projectDoc'
+export {
+  listProjects,
+  getProject,
+  getLastOpenedProject,
+  createProject,
+  touchProject,
+  renameProject,
+  deleteProject,
+  duplicateProject,
+  type ProjectMeta,
+} from './projectRegistry'
 export { useWorkspaceFile } from './useWorkspaceFile'
 export type { UseWorkspaceFileResult } from './useWorkspaceFile'
 export { workspaceAudioBus } from './WorkspaceAudioBus'

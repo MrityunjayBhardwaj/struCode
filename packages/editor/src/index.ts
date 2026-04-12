@@ -97,8 +97,20 @@ export {
   getFile,
   setContent,
   subscribe as subscribeToWorkspaceFile,
+  resetFileStore,
 } from './workspace/WorkspaceFile'
-export { initProjectDoc, initProjectDocSync, isDocReady } from './workspace/projectDoc'
+export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady } from './workspace/projectDoc'
+export {
+  listProjects,
+  getProject,
+  getLastOpenedProject,
+  createProject,
+  touchProject,
+  renameProject,
+  deleteProject,
+  duplicateProject,
+  type ProjectMeta,
+} from './workspace/projectRegistry'
 
 // Sample sound (test audio source for viz development)
 export {

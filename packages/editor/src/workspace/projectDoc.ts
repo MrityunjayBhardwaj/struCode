@@ -23,6 +23,7 @@ type IndexeddbPersistenceType = import('y-indexeddb').IndexeddbPersistence
 
 let activeDoc: Y.Doc | null = null
 let activeProvider: IndexeddbPersistenceType | null = null
+let activeProjectId: string | null = null
 let docReady = false
 
 /**
@@ -50,6 +51,7 @@ export async function initProjectDoc(projectId: string): Promise<void> {
   activeProvider = new IndexeddbPersistence(`stave-${projectId}`, activeDoc)
 
   await activeProvider.whenSynced
+  activeProjectId = projectId
   docReady = true
 }
 
@@ -97,6 +99,24 @@ export function isDocReady(): boolean {
   return docReady
 }
 
+/** Returns the active project id, or null if none initialized. */
+export function getActiveProjectId(): string | null {
+  return activeProjectId
+}
+
+/**
+ * Switch to a different project. Destroys the current doc + provider,
+ * creates a new Y.Doc for the target project, and awaits IDB sync.
+ *
+ * Callers MUST also call resetFileStore() (from WorkspaceFile.ts) to
+ * clear cached snapshots and re-wire observers before any store reads.
+ * initProjectDoc already handles the doc-level cleanup; this function
+ * is a convenience alias that also updates the active project id.
+ */
+export async function switchProject(projectId: string): Promise<void> {
+  await initProjectDoc(projectId)
+}
+
 /**
  * Destroy the active doc and provider. Used by tests and project switching.
  */
@@ -109,5 +129,6 @@ export function destroyProjectDoc(): void {
     activeDoc.destroy()
     activeDoc = null
   }
+  activeProjectId = null
   docReady = false
 }
