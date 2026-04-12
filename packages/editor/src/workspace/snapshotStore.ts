@@ -22,7 +22,15 @@ export interface SnapshotMeta {
   readonly projectId: string
   readonly label: string
   readonly createdAt: number
+  readonly kind?: 'manual' | 'auto'
 }
+
+/**
+ * Marker prefix for labels of snapshots created by the auto-snapshot
+ * debouncer. Matching by this prefix lets the UI distinguish them
+ * from manual saves without a separate schema field on older rows.
+ */
+export const AUTO_SNAPSHOT_PREFIX = 'Auto — '
 
 export interface StoredSnapshot extends SnapshotMeta {
   readonly bytes: Uint8Array
@@ -52,11 +60,15 @@ function wrap<T>(req: IDBRequest<T>): Promise<T> {
 
 /**
  * Capture the active Y.Doc as a snapshot tied to the given project.
- * Returns the saved metadata.
+ * Returns the saved metadata. When `kind` is 'auto', prunes older
+ * auto-snapshots for the project down to `MAX_AUTO_SNAPSHOTS`.
  */
+const MAX_AUTO_SNAPSHOTS = 10
+
 export async function saveSnapshot(
   projectId: string,
   label: string,
+  kind: 'manual' | 'auto' = 'manual',
 ): Promise<SnapshotMeta> {
   const doc = getActiveDoc()
   const bytes = Y.encodeStateAsUpdate(doc)
@@ -65,12 +77,33 @@ export async function saveSnapshot(
     projectId,
     label: label.trim() || 'Untitled snapshot',
     createdAt: Date.now(),
+    kind,
   }
   const record: StoredSnapshot = { ...meta, bytes }
   const db = await openDb()
   await wrap(
     db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).put(record),
   )
+  if (kind === 'auto') {
+    // Find all auto-snapshots for this project, sorted newest-first.
+    const index = db
+      .transaction(STORE_NAME, 'readonly')
+      .objectStore(STORE_NAME)
+      .index('byProject')
+    const all = await wrap<StoredSnapshot[]>(index.getAll(projectId))
+    const autos = all
+      .filter(
+        (r) => r.kind === 'auto' || r.label.startsWith(AUTO_SNAPSHOT_PREFIX),
+      )
+      .sort((a, b) => b.createdAt - a.createdAt)
+    const toDelete = autos.slice(MAX_AUTO_SNAPSHOTS)
+    if (toDelete.length > 0) {
+      const wstore = db
+        .transaction(STORE_NAME, 'readwrite')
+        .objectStore(STORE_NAME)
+      for (const r of toDelete) await wrap(wstore.delete(r.id))
+    }
+  }
   db.close()
   return meta
 }

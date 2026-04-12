@@ -118,6 +118,38 @@ export async function switchProject(projectId: string): Promise<void> {
 }
 
 /**
+ * Subscribe to ANY update on the active Y.Doc (file content typing,
+ * structural file-list changes, folder-order changes, etc). Used by
+ * the app's auto-snapshot debouncer. Returns an unsubscribe function.
+ *
+ * Note: the subscription is bound to whatever Y.Doc is active at
+ * registration time. Callers should re-register when the project
+ * switches (the old doc gets destroyed).
+ */
+export function subscribeToDocUpdate(
+  cb: () => void,
+  options?: { localOnly?: boolean },
+): () => void {
+  const doc = ensureDoc()
+  const localOnly = options?.localOnly ?? false
+  const handler = (
+    _update: Uint8Array,
+    _origin: unknown,
+    _doc: Y.Doc,
+    tr: Y.Transaction,
+  ) => {
+    // When localOnly is set, skip transactions that aren't from a local
+    // user edit — y-indexeddb replays on project load have tr.local=false.
+    if (localOnly && !tr.local) return
+    cb()
+  }
+  doc.on('update', handler)
+  return () => {
+    doc.off('update', handler)
+  }
+}
+
+/**
  * Destroy the active doc and provider. Used by tests and project switching.
  */
 export function destroyProjectDoc(): void {

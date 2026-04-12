@@ -109,12 +109,13 @@ export {
   getSubfolderOrder,
   setSubfolderOrder,
 } from './workspace/WorkspaceFile'
-export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady } from './workspace/projectDoc'
+export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady, subscribeToDocUpdate } from './workspace/projectDoc'
 export {
   saveSnapshot,
   listSnapshots,
   deleteSnapshot,
   restoreSnapshot,
+  AUTO_SNAPSHOT_PREFIX,
 } from './workspace/snapshotStore'
 export type { SnapshotMeta } from './workspace/snapshotStore'
 export {
