@@ -86,6 +86,64 @@ export function FileTree({
   const files = useMemo(() => listWorkspaceFiles(), [fileListRev]);
   const tree = useMemo(() => buildTree(files), [files]);
 
+  // ── Resizable width ─────────────────────────────────────────────────
+  // The sidebar width is draggable via a thin handle on the right edge.
+  // Persisted to localStorage so it survives refresh. Clamped to a
+  // reasonable min/max to avoid degenerate states.
+  const MIN_WIDTH = 160;
+  const MAX_WIDTH = 600;
+  const DEFAULT_WIDTH = 240;
+  const [width, setWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return DEFAULT_WIDTH;
+    const saved = window.localStorage.getItem("stave:sidebar-width");
+    const parsed = saved ? parseInt(saved, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed >= MIN_WIDTH && parsed <= MAX_WIDTH) {
+      return parsed;
+    }
+    return DEFAULT_WIDTH;
+  });
+
+  // Persist to localStorage (debounced slightly via rAF)
+  const persistTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (persistTimerRef.current !== null) cancelAnimationFrame(persistTimerRef.current);
+    persistTimerRef.current = requestAnimationFrame(() => {
+      try { window.localStorage.setItem("stave:sidebar-width", String(width)); } catch { /* ignore quota */ }
+    });
+    return () => {
+      if (persistTimerRef.current !== null) cancelAnimationFrame(persistTimerRef.current);
+    };
+  }, [width]);
+
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [resizing, setResizing] = useState(false);
+
+  // During a drag, track mouse globally (user can drag outside the
+  // sidebar). Using window listeners instead of React events so the
+  // drag works even if the pointer leaves the handle briefly.
+  useEffect(() => {
+    if (!resizing) return;
+    const handleMove = (e: MouseEvent) => {
+      if (!sidebarRef.current) return;
+      const rect = sidebarRef.current.getBoundingClientRect();
+      const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, e.clientX - rect.left));
+      setWidth(next);
+    };
+    const handleUp = () => setResizing(false);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    // Disable text selection while dragging
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      document.body.style.userSelect = prevSelect;
+      document.body.style.cursor = "";
+    };
+  }, [resizing]);
+
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
 
   // When the active file changes, ensure all its parent folders are
@@ -319,7 +377,14 @@ export function FileTree({
   );
 
   return (
-    <div style={styles.sidebar}>
+    <div
+      ref={sidebarRef}
+      style={{
+        ...styles.sidebar,
+        width,
+        minWidth: width,
+      }}
+    >
       <div style={styles.header}>
         <span style={styles.title} title={projectName}>{projectName}</span>
         <div style={styles.headerActions}>
@@ -415,6 +480,22 @@ export function FileTree({
           </button>
         </div>
       )}
+
+      {/* Resize handle — 5px wide strip on the right edge. Cursor is
+          col-resize; mousedown enters resize mode and window-level
+          listeners (see effect above) drive the width update. */}
+      <div
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setResizing(true);
+        }}
+        style={{
+          ...styles.resizeHandle,
+          ...(resizing ? styles.resizeHandleActive : {}),
+        }}
+        title="Drag to resize sidebar"
+        aria-label="Resize sidebar"
+      />
     </div>
   );
 }
@@ -579,8 +660,7 @@ function fileIconFor(name: string): string {
 
 const styles: Record<string, React.CSSProperties> = {
   sidebar: {
-    width: 240,
-    minWidth: 240,
+    // width + minWidth overridden dynamically by the resize hook
     height: "100%",
     background: "#1a1a2e",
     borderRight: "1px solid #2a2a4a",
@@ -590,6 +670,21 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: "#c8c8d4",
     userSelect: "none" as const,
+    position: "relative" as const,
+  },
+  resizeHandle: {
+    position: "absolute" as const,
+    top: 0,
+    right: -2,
+    width: 5,
+    height: "100%",
+    cursor: "col-resize",
+    zIndex: 10,
+    background: "transparent",
+    transition: "background 0.1s",
+  },
+  resizeHandleActive: {
+    background: "#6a6ac8",
   },
   header: {
     display: "flex",
