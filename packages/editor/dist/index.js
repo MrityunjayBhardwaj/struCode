@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
+import React, { forwardRef, useRef, useState, useEffect, useMemo, useCallback, useImperativeHandle, useSyncExternalStore } from 'react';
 import p5 from 'p5';
 import { jsx, jsxs, Fragment } from 'react/jsx-runtime';
 import MonacoEditorRaw from '@monaco-editor/react';
@@ -8162,7 +8162,7 @@ function createInitialGroupState(initialTabs) {
   groups.set(id, group);
   return { groups, layout: [[id]], activeGroupId: id };
 }
-function WorkspaceShell({
+var WorkspaceShell = forwardRef(function WorkspaceShell2({
   initialTabs = [],
   theme = "dark",
   height = "100%",
@@ -8172,7 +8172,7 @@ function WorkspaceShell({
   chromeForTab,
   editorExtrasForTab,
   onSaveFile
-}) {
+}, forwardedRef) {
   const shellRootRef = useRef(null);
   const initialState = useRef(createInitialGroupState(initialTabs));
   const [groups, setGroups] = useState(
@@ -9120,6 +9120,55 @@ function WorkspaceShell({
     () => allGroupIds(layout).length,
     [layout]
   );
+  useImperativeHandle(
+    forwardedRef,
+    () => ({
+      openOrFocusFile: (fileId) => {
+        let foundGroupId = null;
+        let foundTabId = null;
+        for (const [gid, group] of groups) {
+          const hit = group.tabs.find(
+            (t) => t.kind === "editor" && t.fileId === fileId
+          );
+          if (hit) {
+            foundGroupId = gid;
+            foundTabId = hit.id;
+            break;
+          }
+        }
+        if (foundGroupId && foundTabId) {
+          const targetGid = foundGroupId;
+          const targetTid = foundTabId;
+          setGroups((prev) => {
+            const existing = prev.get(targetGid);
+            if (!existing || existing.activeTabId === targetTid) return prev;
+            const next = new Map(prev);
+            next.set(targetGid, { ...existing, activeTabId: targetTid });
+            return next;
+          });
+          setActiveGroupId(targetGid);
+          return;
+        }
+        const newTab = {
+          kind: "editor",
+          id: `tab-${fileId}-${Date.now()}`,
+          fileId
+        };
+        setGroups((prev) => {
+          const existing = prev.get(activeGroupId);
+          if (!existing) return prev;
+          const next = new Map(prev);
+          next.set(activeGroupId, {
+            ...existing,
+            tabs: [...existing.tabs, newTab],
+            activeTabId: newTab.id
+          });
+          return next;
+        });
+      }
+    }),
+    [groups, activeGroupId]
+  );
   return /* @__PURE__ */ jsxs(
     "div",
     {
@@ -9221,7 +9270,7 @@ function WorkspaceShell({
       ]
     }
   );
-}
+});
 function QuadrantGuideOverlay({
   target,
   shellRootRef
