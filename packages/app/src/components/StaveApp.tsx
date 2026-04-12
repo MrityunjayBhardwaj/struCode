@@ -212,12 +212,18 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   );
 }
 
+// Editor pane height (px). Matches StrudelEditorClient's WorkspaceShell
+// height={560} prop. Plus the 28px MenuBar → 588px total app shell.
+const MENU_BAR_HEIGHT = 28;
+const EDITOR_HEIGHT = 560;
+const SHELL_HEIGHT = MENU_BAR_HEIGHT + EDITOR_HEIGHT;
+
 const styles: Record<string, React.CSSProperties> = {
   root: {
     display: "flex",
     flexDirection: "column" as const,
     width: "100%",
-    height: "100%",
+    height: SHELL_HEIGHT,
   },
   main: {
     flex: 1,
