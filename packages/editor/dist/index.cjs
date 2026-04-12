@@ -5821,6 +5821,7 @@ function ensureFilesMapObserver() {
   if (filesMapObserverWired) return;
   const filesMap = getFilesMap();
   filesMap.observe((event) => {
+    let anyStructuralChange = false;
     for (const [key, change] of event.changes.keys) {
       if (change.action === "add" || change.action === "update") {
         const fileMap = filesMap.get(key);
@@ -5828,12 +5829,15 @@ function ensureFilesMapObserver() {
         rebuildSnapshot(key);
         wireTextObserver(key, ytext);
         notify(key);
+        anyStructuralChange = true;
       } else if (change.action === "delete") {
         unwireTextObserver(key);
         cachedSnapshots.delete(key);
         notify(key);
+        anyStructuralChange = true;
       }
     }
+    if (anyStructuralChange) notifyFileList();
   });
   filesMapObserverWired = true;
 }
@@ -5904,6 +5908,56 @@ function subscribe(id, cb) {
     }
   };
 }
+var fileListSubscribers = /* @__PURE__ */ new Set();
+function notifyFileList() {
+  const snapshot = Array.from(fileListSubscribers);
+  for (const cb of snapshot) cb();
+}
+function subscribeToFileList(cb) {
+  fileListSubscribers.add(cb);
+  return () => {
+    fileListSubscribers.delete(cb);
+  };
+}
+function listWorkspaceFiles() {
+  ensureDoc();
+  ensureFilesMapObserver();
+  const filesMap = getFilesMap();
+  for (const id of filesMap.keys()) {
+    if (!cachedSnapshots.has(id)) {
+      rebuildSnapshot(id);
+      const fileMap = filesMap.get(id);
+      const ytext = fileMap.get("content");
+      if (!textObservers.has(id)) {
+        wireTextObserver(id, ytext);
+      }
+    }
+  }
+  return Array.from(cachedSnapshots.values());
+}
+function deleteWorkspaceFile(id) {
+  const filesMap = getFilesMap();
+  if (!filesMap.has(id)) return;
+  const doc = ensureDoc();
+  doc.transact(() => {
+    filesMap.delete(id);
+  });
+  notifyFileList();
+}
+function renameWorkspaceFile(id, newPath) {
+  const filesMap = getFilesMap();
+  const fileMap = filesMap.get(id);
+  if (!fileMap) return;
+  const currentPath = fileMap.get("path");
+  if (currentPath === newPath) return;
+  const doc = ensureDoc();
+  doc.transact(() => {
+    fileMap.set("path", newPath);
+  });
+  rebuildSnapshot(id);
+  notify(id);
+  notifyFileList();
+}
 function notify(id) {
   const set = subscribersByFile.get(id);
   if (!set) return;
@@ -5918,6 +5972,7 @@ function resetFileStore() {
   cachedSnapshots.clear();
   subscribersByFile.clear();
   filesMapObserverWired = false;
+  notifyFileList();
 }
 
 // src/workspace/useWorkspaceFile.ts
@@ -18730,6 +18785,7 @@ exports.createProject = createProject;
 exports.createVizConfig = createVizConfig;
 exports.createWorkspaceFile = createWorkspaceFile;
 exports.deleteProject = deleteProject;
+exports.deleteWorkspaceFile = deleteWorkspaceFile;
 exports.duplicateProject = duplicateProject;
 exports.filter = filter;
 exports.flushToPreset = flushToPreset;
@@ -18756,6 +18812,7 @@ exports.isSampleSoundPlaying = isSampleSoundPlaying;
 exports.listNamedVizEntries = listNamedVizEntries;
 exports.listNamedVizNames = listNamedVizNames;
 exports.listProjects = listProjects;
+exports.listWorkspaceFiles = listWorkspaceFiles;
 exports.liveCodingRuntimeRegistry = liveCodingRuntimeRegistry;
 exports.merge = merge;
 exports.normalizeStrudelHap = normalizeStrudelHap;
@@ -18772,6 +18829,7 @@ exports.registerPresetAsNamedViz = registerPresetAsNamedViz;
 exports.registerPreviewProvider = registerPreviewProvider;
 exports.registerRuntimeProvider = registerRuntimeProvider;
 exports.renameProject = renameProject;
+exports.renameWorkspaceFile = renameWorkspaceFile;
 exports.resetFileStore = resetFileStore;
 exports.resolveDescriptor = resolveDescriptor;
 exports.sanitizePresetName = sanitizePresetName;
@@ -18783,6 +18841,7 @@ exports.setContent = setContent;
 exports.setVizConfig = setVizConfig;
 exports.startSampleSound = startSampleSound;
 exports.stopSampleSound = stopSampleSound;
+exports.subscribeToFileList = subscribeToFileList;
 exports.subscribeToWorkspaceFile = subscribe;
 exports.switchProject = switchProject;
 exports.timestretch = timestretch;
@@ -18792,5 +18851,6 @@ exports.transpose = transpose;
 exports.unregisterNamedViz = unregisterNamedViz;
 exports.useWorkspaceFile = useWorkspaceFile;
 exports.workspaceAudioBus = workspaceAudioBus;
+exports.workspaceFileIdForPreset = workspaceFileIdForPreset;
 //# sourceMappingURL=index.cjs.map
 //# sourceMappingURL=index.cjs.map
