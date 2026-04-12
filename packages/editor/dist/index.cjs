@@ -5828,12 +5828,15 @@ function notifyFolderOrder() {
 function getFolderOrderMap() {
   return ensureDoc().getMap("fileOrder");
 }
+function getSubfolderOrderMap() {
+  return ensureDoc().getMap("subfolderOrder");
+}
 function ensureFolderOrderObserver() {
   if (folderOrderObserverWired) return;
   const map = getFolderOrderMap();
-  map.observeDeep(() => {
-    notifyFolderOrder();
-  });
+  const submap = getSubfolderOrderMap();
+  map.observeDeep(() => notifyFolderOrder());
+  submap.observeDeep(() => notifyFolderOrder());
   folderOrderObserverWired = true;
 }
 var filesMapObserverWired = false;
@@ -6002,6 +6005,24 @@ function subscribeToFolderOrder(cb) {
   return () => {
     folderOrderSubscribers.delete(cb);
   };
+}
+function getSubfolderOrder(parentPath) {
+  ensureDoc();
+  ensureFolderOrderObserver();
+  const map = getSubfolderOrderMap();
+  const arr = map.get(parentPath);
+  return arr ? arr.toArray() : [];
+}
+function setSubfolderOrder(parentPath, orderedNames) {
+  ensureDoc();
+  ensureFolderOrderObserver();
+  const map = getSubfolderOrderMap();
+  const doc = ensureDoc();
+  doc.transact(() => {
+    const next = new Y3__namespace.Array();
+    next.push(orderedNames);
+    map.set(parentPath, next);
+  });
 }
 function notify(id) {
   const set = subscribersByFile.get(id);
@@ -18124,12 +18145,15 @@ async function restoreSnapshot(id) {
   Y3__namespace.applyUpdate(snapDoc, stored.bytes);
   const snapFiles = snapDoc.getMap("files");
   const snapOrder = snapDoc.getMap("fileOrder");
+  const snapSubOrder = snapDoc.getMap("subfolderOrder");
   const activeDoc2 = getActiveDoc();
   const activeFiles = activeDoc2.getMap("files");
   const activeOrder = activeDoc2.getMap("fileOrder");
+  const activeSubOrder = activeDoc2.getMap("subfolderOrder");
   activeDoc2.transact(() => {
     for (const key of Array.from(activeFiles.keys())) activeFiles.delete(key);
     for (const key of Array.from(activeOrder.keys())) activeOrder.delete(key);
+    for (const key of Array.from(activeSubOrder.keys())) activeSubOrder.delete(key);
     for (const [fid, snapFile] of snapFiles.entries()) {
       const clone = new Y3__namespace.Map();
       clone.set("id", snapFile.get("id"));
@@ -18147,6 +18171,11 @@ async function restoreSnapshot(id) {
       const next = new Y3__namespace.Array();
       next.push(arr.toArray());
       activeOrder.set(folder, next);
+    }
+    for (const [folder, arr] of snapSubOrder.entries()) {
+      const next = new Y3__namespace.Array();
+      next.push(arr.toArray());
+      activeSubOrder.set(folder, next);
     }
   });
   snapDoc.destroy();
@@ -19001,6 +19030,7 @@ exports.getPreviewProviderForLanguage = getPreviewProviderForLanguage;
 exports.getProject = getProject;
 exports.getRuntimeProviderForExtension = getRuntimeProviderForExtension;
 exports.getRuntimeProviderForLanguage = getRuntimeProviderForLanguage;
+exports.getSubfolderOrder = getSubfolderOrder;
 exports.getVizConfig = getVizConfig;
 exports.hydraKaleidoscope = hydraKaleidoscope;
 exports.hydraPianoroll = hydraPianoroll;
@@ -19043,6 +19073,7 @@ exports.seedFromPresetId = seedFromPresetId;
 exports.seedWorkspaceFile = seedWorkspaceFile;
 exports.setContent = setContent;
 exports.setFolderOrder = setFolderOrder;
+exports.setSubfolderOrder = setSubfolderOrder;
 exports.setVizConfig = setVizConfig;
 exports.startSampleSound = startSampleSound;
 exports.stopSampleSound = stopSampleSound;

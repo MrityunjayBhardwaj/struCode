@@ -5801,12 +5801,15 @@ function notifyFolderOrder() {
 function getFolderOrderMap() {
   return ensureDoc().getMap("fileOrder");
 }
+function getSubfolderOrderMap() {
+  return ensureDoc().getMap("subfolderOrder");
+}
 function ensureFolderOrderObserver() {
   if (folderOrderObserverWired) return;
   const map = getFolderOrderMap();
-  map.observeDeep(() => {
-    notifyFolderOrder();
-  });
+  const submap = getSubfolderOrderMap();
+  map.observeDeep(() => notifyFolderOrder());
+  submap.observeDeep(() => notifyFolderOrder());
   folderOrderObserverWired = true;
 }
 var filesMapObserverWired = false;
@@ -5975,6 +5978,24 @@ function subscribeToFolderOrder(cb) {
   return () => {
     folderOrderSubscribers.delete(cb);
   };
+}
+function getSubfolderOrder(parentPath) {
+  ensureDoc();
+  ensureFolderOrderObserver();
+  const map = getSubfolderOrderMap();
+  const arr = map.get(parentPath);
+  return arr ? arr.toArray() : [];
+}
+function setSubfolderOrder(parentPath, orderedNames) {
+  ensureDoc();
+  ensureFolderOrderObserver();
+  const map = getSubfolderOrderMap();
+  const doc = ensureDoc();
+  doc.transact(() => {
+    const next = new Y3.Array();
+    next.push(orderedNames);
+    map.set(parentPath, next);
+  });
 }
 function notify(id) {
   const set = subscribersByFile.get(id);
@@ -18097,12 +18118,15 @@ async function restoreSnapshot(id) {
   Y3.applyUpdate(snapDoc, stored.bytes);
   const snapFiles = snapDoc.getMap("files");
   const snapOrder = snapDoc.getMap("fileOrder");
+  const snapSubOrder = snapDoc.getMap("subfolderOrder");
   const activeDoc2 = getActiveDoc();
   const activeFiles = activeDoc2.getMap("files");
   const activeOrder = activeDoc2.getMap("fileOrder");
+  const activeSubOrder = activeDoc2.getMap("subfolderOrder");
   activeDoc2.transact(() => {
     for (const key of Array.from(activeFiles.keys())) activeFiles.delete(key);
     for (const key of Array.from(activeOrder.keys())) activeOrder.delete(key);
+    for (const key of Array.from(activeSubOrder.keys())) activeSubOrder.delete(key);
     for (const [fid, snapFile] of snapFiles.entries()) {
       const clone = new Y3.Map();
       clone.set("id", snapFile.get("id"));
@@ -18120,6 +18144,11 @@ async function restoreSnapshot(id) {
       const next = new Y3.Array();
       next.push(arr.toArray());
       activeOrder.set(folder, next);
+    }
+    for (const [folder, arr] of snapSubOrder.entries()) {
+      const next = new Y3.Array();
+      next.push(arr.toArray());
+      activeSubOrder.set(folder, next);
     }
   });
   snapDoc.destroy();
@@ -18907,6 +18936,6 @@ function registerPresetAsNamedViz(preset) {
   }
 }
 
-export { BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyTheme, bundledPresetId, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resolveDescriptor, restoreSnapshot, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setFolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToFileList, subscribeToFolderOrder, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, touchProject, transpose, unregisterNamedViz, useWorkspaceFile, workspaceAudioBus, workspaceFileIdForPreset };
+export { BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyTheme, bundledPresetId, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resolveDescriptor, restoreSnapshot, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setFolderOrder, setSubfolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToFileList, subscribeToFolderOrder, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, touchProject, transpose, unregisterNamedViz, useWorkspaceFile, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map
