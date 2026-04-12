@@ -125,15 +125,18 @@ export async function restoreSnapshot(id: string): Promise<void> {
   Y.applyUpdate(snapDoc, stored.bytes)
   const snapFiles = snapDoc.getMap('files') as Y.Map<Y.Map<unknown>>
   const snapOrder = snapDoc.getMap('fileOrder') as Y.Map<Y.Array<string>>
+  const snapSubOrder = snapDoc.getMap('subfolderOrder') as Y.Map<Y.Array<string>>
 
   const activeDoc = getActiveDoc()
   const activeFiles = activeDoc.getMap('files') as Y.Map<Y.Map<unknown>>
   const activeOrder = activeDoc.getMap('fileOrder') as Y.Map<Y.Array<string>>
+  const activeSubOrder = activeDoc.getMap('subfolderOrder') as Y.Map<Y.Array<string>>
 
   activeDoc.transact(() => {
     // Clear existing files + order
     for (const key of Array.from(activeFiles.keys())) activeFiles.delete(key)
     for (const key of Array.from(activeOrder.keys())) activeOrder.delete(key)
+    for (const key of Array.from(activeSubOrder.keys())) activeSubOrder.delete(key)
 
     // Copy files from snapshot
     for (const [fid, snapFile] of snapFiles.entries()) {
@@ -150,11 +153,16 @@ export async function restoreSnapshot(id: string): Promise<void> {
       activeFiles.set(fid, clone)
     }
 
-    // Copy order
+    // Copy order (files + subfolders)
     for (const [folder, arr] of snapOrder.entries()) {
       const next = new Y.Array<string>()
       next.push(arr.toArray())
       activeOrder.set(folder, next)
+    }
+    for (const [folder, arr] of snapSubOrder.entries()) {
+      const next = new Y.Array<string>()
+      next.push(arr.toArray())
+      activeSubOrder.set(folder, next)
     }
   })
 

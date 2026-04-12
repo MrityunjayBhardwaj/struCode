@@ -98,14 +98,20 @@ function getFolderOrderMap(): Y.Map<Y.Array<string>> {
   return ensureDoc().getMap('fileOrder') as Y.Map<Y.Array<string>>
 }
 
+function getSubfolderOrderMap(): Y.Map<Y.Array<string>> {
+  return ensureDoc().getMap('subfolderOrder') as Y.Map<Y.Array<string>>
+}
+
 function ensureFolderOrderObserver(): void {
   if (folderOrderObserverWired) return
   const map = getFolderOrderMap()
+  const submap = getSubfolderOrderMap()
   // Observe both shallow (keys added/removed) and deep (inner Y.Array
-  // mutations) so reordering within a folder propagates.
-  map.observeDeep(() => {
-    notifyFolderOrder()
-  })
+  // mutations) so reordering within a folder propagates. Both file-order
+  // and subfolder-order share the same subscribers — callers re-render
+  // the whole tree on either change.
+  map.observeDeep(() => notifyFolderOrder())
+  submap.observeDeep(() => notifyFolderOrder())
   folderOrderObserverWired = true
 }
 
@@ -381,7 +387,8 @@ export function setFolderOrder(folderPath: string, orderedIds: string[]): void {
 }
 
 /**
- * Subscribe to folder-order changes. Fires after any reorder commits.
+ * Subscribe to folder-order changes (both files and subfolders).
+ * Fires after any reorder commits.
  */
 export function subscribeToFolderOrder(cb: Subscriber): () => void {
   ensureFolderOrderObserver()
@@ -389,6 +396,36 @@ export function subscribeToFolderOrder(cb: Subscriber): () => void {
   return () => {
     folderOrderSubscribers.delete(cb)
   }
+}
+
+/**
+ * Return the explicit subfolder-name order for a parent folder, or an
+ * empty array if none is set. Names are relative (immediate children),
+ * not full paths. Root = "".
+ */
+export function getSubfolderOrder(parentPath: string): string[] {
+  ensureDoc()
+  ensureFolderOrderObserver()
+  const map = getSubfolderOrderMap()
+  const arr = map.get(parentPath)
+  return arr ? arr.toArray() : []
+}
+
+/**
+ * Replace the ordered subfolder-name list for a parent folder. Names
+ * that no longer correspond to a real subfolder are filtered out at
+ * render time.
+ */
+export function setSubfolderOrder(parentPath: string, orderedNames: string[]): void {
+  ensureDoc()
+  ensureFolderOrderObserver()
+  const map = getSubfolderOrderMap()
+  const doc = ensureDoc()
+  doc.transact(() => {
+    const next = new Y.Array<string>()
+    next.push(orderedNames)
+    map.set(parentPath, next)
+  })
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────

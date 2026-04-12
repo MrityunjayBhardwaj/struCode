@@ -106,6 +106,8 @@ export {
   getFolderOrder,
   setFolderOrder,
   subscribeToFolderOrder,
+  getSubfolderOrder,
+  setSubfolderOrder,
 } from './workspace/WorkspaceFile'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady } from './workspace/projectDoc'
 export {
