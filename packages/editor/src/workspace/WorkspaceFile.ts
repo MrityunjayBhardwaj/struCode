@@ -84,6 +84,31 @@ function unwireTextObserver(id: string): void {
   }
 }
 
+// ── Folder-order observer (PM-3) ────────────────────────────────────
+
+let folderOrderObserverWired = false
+const folderOrderSubscribers = new Set<Subscriber>()
+
+function notifyFolderOrder(): void {
+  const snapshot = Array.from(folderOrderSubscribers)
+  for (const cb of snapshot) cb()
+}
+
+function getFolderOrderMap(): Y.Map<Y.Array<string>> {
+  return ensureDoc().getMap('fileOrder') as Y.Map<Y.Array<string>>
+}
+
+function ensureFolderOrderObserver(): void {
+  if (folderOrderObserverWired) return
+  const map = getFolderOrderMap()
+  // Observe both shallow (keys added/removed) and deep (inner Y.Array
+  // mutations) so reordering within a folder propagates.
+  map.observeDeep(() => {
+    notifyFolderOrder()
+  })
+  folderOrderObserverWired = true
+}
+
 // ── Y.Map observer (structural: file added/removed) ─────────────────
 
 let filesMapObserverWired = false
@@ -320,6 +345,52 @@ export function renameWorkspaceFile(id: string, newPath: string): void {
   notifyFileList()
 }
 
+// ── Folder order (PM-3) ──────────────────────────────────────────────
+
+/**
+ * Return the explicit file-id order for a folder, or an empty array if
+ * none is set (callers should fall back to alphabetical). The root is
+ * addressed as the empty string `""`.
+ */
+export function getFolderOrder(folderPath: string): string[] {
+  ensureDoc()
+  ensureFolderOrderObserver()
+  const map = getFolderOrderMap()
+  const arr = map.get(folderPath)
+  return arr ? arr.toArray() : []
+}
+
+/**
+ * Replace the ordered file-id list for a folder. Missing file ids are
+ * ignored at render time (tree builder filters to files that actually
+ * belong to the folder). Empty array clears the explicit order.
+ */
+export function setFolderOrder(folderPath: string, orderedIds: string[]): void {
+  ensureDoc()
+  ensureFolderOrderObserver()
+  const map = getFolderOrderMap()
+  const doc = ensureDoc()
+  doc.transact(() => {
+    // Replace the whole Y.Array rather than diffing — simpler and the
+    // folder-level scope keeps the update tiny.
+    const next = new Y.Array<string>()
+    next.push(orderedIds)
+    map.set(folderPath, next)
+  })
+  // observeDeep fires → notifyFolderOrder
+}
+
+/**
+ * Subscribe to folder-order changes. Fires after any reorder commits.
+ */
+export function subscribeToFolderOrder(cb: Subscriber): () => void {
+  ensureFolderOrderObserver()
+  folderOrderSubscribers.add(cb)
+  return () => {
+    folderOrderSubscribers.delete(cb)
+  }
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────
 
 function notify(id: string): void {
@@ -343,9 +414,11 @@ export function resetFileStore(): void {
   cachedSnapshots.clear()
   subscribersByFile.clear()
   filesMapObserverWired = false
+  folderOrderObserverWired = false
   // Notify file-list subscribers so the tree re-renders with the new
   // project's files (they stay subscribed across project switches).
   notifyFileList()
+  notifyFolderOrder()
 }
 
 /**
@@ -362,6 +435,8 @@ export function __resetWorkspaceFilesForTests(): void {
   cachedSnapshots.clear()
   subscribersByFile.clear()
   fileListSubscribers.clear()
+  folderOrderSubscribers.clear()
   filesMapObserverWired = false
+  folderOrderObserverWired = false
   destroyProjectDoc()
 }

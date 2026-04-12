@@ -103,6 +103,9 @@ export {
   subscribeToFileList,
   deleteWorkspaceFile,
   renameWorkspaceFile,
+  getFolderOrder,
+  setFolderOrder,
+  subscribeToFolderOrder,
 } from './workspace/WorkspaceFile'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady } from './workspace/projectDoc'
 export {
