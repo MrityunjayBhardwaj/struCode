@@ -342,7 +342,10 @@ export function FileTree({
   } | null>(null);
 
   // Move a file into a folder (or root if targetFolderPath is ""). No-op
-  // if the file is already directly in that folder.
+  // if the file is already directly in that folder. Also migrates the
+  // file's fileOrder entry from the source folder's order array to the
+  // target folder's (append at end) so within-folder ordering stays
+  // consistent after a cross-folder drop (#15).
   const moveFileToFolder = useCallback(
     (fileId: string, targetFolderPath: string) => {
       const file = files.find((f) => f.id === fileId);
@@ -352,7 +355,21 @@ export function FileTree({
         ? `${targetFolderPath}/${fileName}`
         : fileName;
       if (newPath === file.path) return;
+      const oldFolder = file.path.includes("/")
+        ? file.path.slice(0, file.path.lastIndexOf("/"))
+        : "";
       renameWorkspaceFile(fileId, newPath);
+      if (oldFolder === targetFolderPath) return; // same folder — no order change
+      // Remove from source folder order (if present).
+      const sourceOrder = getFolderOrder(oldFolder);
+      if (sourceOrder.includes(fileId)) {
+        setFolderOrder(oldFolder, sourceOrder.filter((id) => id !== fileId));
+      }
+      // Append to target folder order (creating / extending).
+      const targetOrder = getFolderOrder(targetFolderPath);
+      if (!targetOrder.includes(fileId)) {
+        setFolderOrder(targetFolderPath, [...targetOrder, fileId]);
+      }
     },
     [files],
   );
