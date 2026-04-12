@@ -9035,7 +9035,7 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
                   borderBottom: "1px solid var(--border)",
                   height: 30,
                   flexShrink: 0,
-                  overflow: "auto"
+                  overflow: "hidden"
                 },
                 children: [
                   group.tabs.map((tab) => {
