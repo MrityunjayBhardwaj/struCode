@@ -2616,6 +2616,13 @@ declare function setContent(id: string, newContent: string): void;
  * Register a subscriber for a specific file id. Returns unsubscribe fn.
  */
 declare function subscribe(id: string, cb: Subscriber): () => void;
+/**
+ * Reset the file store's caches and observers WITHOUT destroying the Y.Doc.
+ * Used during project switching: after initProjectDoc loads a new Y.Doc,
+ * call this to clear stale snapshots from the previous project and re-wire
+ * observers for the new doc's files.
+ */
+declare function resetFileStore(): void;
 
 /**
  * projectDoc — PM Phase 1 (local persistence).
@@ -2649,6 +2656,60 @@ declare function initProjectDoc(projectId: string): Promise<void>;
 declare function initProjectDocSync(): void;
 /** Whether the doc has finished loading from IDB (always true for sync init). */
 declare function isDocReady(): boolean;
+/** Returns the active project id, or null if none initialized. */
+declare function getActiveProjectId(): string | null;
+/**
+ * Switch to a different project. Destroys the current doc + provider,
+ * creates a new Y.Doc for the target project, and awaits IDB sync.
+ *
+ * Callers MUST also call resetFileStore() (from WorkspaceFile.ts) to
+ * clear cached snapshots and re-wire observers before any store reads.
+ * initProjectDoc already handles the doc-level cleanup; this function
+ * is a convenience alias that also updates the active project id.
+ */
+declare function switchProject(projectId: string): Promise<void>;
+
+/**
+ * ProjectRegistry — PM Phase 2.
+ *
+ * IDB-backed metadata store for the project list. Each project's actual
+ * content lives in a separate y-indexeddb database (one Y.Doc per project).
+ * This store only holds the lightweight metadata needed to populate the
+ * sidebar without loading any Y.Doc.
+ *
+ * Follows the same raw IndexedDB pattern as VizPresetStore.
+ */
+interface ProjectMeta {
+    readonly id: string;
+    readonly name: string;
+    readonly createdAt: number;
+    readonly lastOpenedAt: number;
+}
+/** List all projects, sorted by lastOpenedAt descending (most recent first). */
+declare function listProjects(): Promise<ProjectMeta[]>;
+/** Get a single project by id, or undefined if not found. */
+declare function getProject(id: string): Promise<ProjectMeta | undefined>;
+/** Get the most recently opened project, or undefined if none exist. */
+declare function getLastOpenedProject(): Promise<ProjectMeta | undefined>;
+/** Create a new project and return its metadata. */
+declare function createProject(name: string): Promise<ProjectMeta>;
+/** Update the lastOpenedAt timestamp. Call when opening a project. */
+declare function touchProject(id: string): Promise<void>;
+/** Rename a project. */
+declare function renameProject(id: string, name: string): Promise<void>;
+/**
+ * Delete a project's metadata. Also deletes the y-indexeddb database
+ * for the project's Y.Doc content.
+ */
+declare function deleteProject(id: string): Promise<void>;
+/**
+ * Duplicate a project. Creates a new metadata entry with a new id.
+ * NOTE: does NOT duplicate the Y.Doc content — that requires loading
+ * the source doc and creating a snapshot. For PM Phase 2, duplicate
+ * creates an empty project with the same name + " (copy)". Full
+ * content duplication is a Phase 3+ feature.
+ */
+declare function duplicateProject(id: string): Promise<ProjectMeta | undefined>;
 
 /**
  * sampleSound — test audio source for viz development.
@@ -3546,4 +3607,4 @@ declare function getPresetIdForFile(file: WorkspaceFile): string | undefined;
  */
 declare function registerPresetAsNamedViz(preset: VizPreset): boolean;
 
-export { type AudioPayload, type AudioSourceRef, BUNDLED_PREFIX, BufferedScheduler, type ChromeContext, type ChromeForTab, type CollectContext, type ComponentBag, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, type EngineComponents, HYDRA_VIZ, type HapEvent, HapStream, type HydraPatternFn, HydraVizRenderer, IR, type IRComponent, type IREvent, IREventCollectSystem, type IRPattern, LIGHT_THEME_TOKENS, LiveCodingEditor, type LiveCodingEditorProps, type LiveCodingEngine, LiveCodingRuntime, type LiveCodingRuntime$1 as LiveCodingRuntimeInterface, type LiveCodingRuntimeProvider, LiveRecorder, type NormalizedHap, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, type PatternIR, type PatternScheduler, PianorollSketch, PitchwheelSketch, type PlayParams, type PreviewContext, type PreviewProvider, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine, type SourceLocation, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, type StrudelEditorProps, StrudelEngine, StrudelParseSystem, type StrudelTheme, type System, type UseWorkspaceFileResult, type VizConfig, type VizDescriptor, VizDropdown, VizEditor, type VizEditorProps, VizPanel, VizPicker, type VizPreset, VizPresetStore, type VizRefs, type VizRenderer, type VizRendererSource, WavEncoder, type WorkspaceAudioBus, type WorkspaceFile, type WorkspaceGroupState, type WorkspaceLanguage, WorkspaceShell, type WorkspaceShellProps, type WorkspaceTab, applyTheme, bundledPresetId, collect, compilePreset, createVizConfig, createWorkspaceFile, filter, flushToPreset, generateUniquePresetId, getFile, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, resolveDescriptor, sanitizePresetName, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setVizConfig, startSampleSound, stopSampleSound, subscribe as subscribeToWorkspaceFile, timestretch, toStrudel, transpose, unregisterNamedViz, useWorkspaceFile, workspaceAudioBus };
+export { type AudioPayload, type AudioSourceRef, BUNDLED_PREFIX, BufferedScheduler, type ChromeContext, type ChromeForTab, type CollectContext, type ComponentBag, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, type EngineComponents, HYDRA_VIZ, type HapEvent, HapStream, type HydraPatternFn, HydraVizRenderer, IR, type IRComponent, type IREvent, IREventCollectSystem, type IRPattern, LIGHT_THEME_TOKENS, LiveCodingEditor, type LiveCodingEditorProps, type LiveCodingEngine, LiveCodingRuntime, type LiveCodingRuntime$1 as LiveCodingRuntimeInterface, type LiveCodingRuntimeProvider, LiveRecorder, type NormalizedHap, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, type PatternIR, type PatternScheduler, PianorollSketch, PitchwheelSketch, type PlayParams, type PreviewContext, type PreviewProvider, PreviewView, type ProjectMeta, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine, type SourceLocation, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, type StrudelEditorProps, StrudelEngine, StrudelParseSystem, type StrudelTheme, type System, type UseWorkspaceFileResult, type VizConfig, type VizDescriptor, VizDropdown, VizEditor, type VizEditorProps, VizPanel, VizPicker, type VizPreset, VizPresetStore, type VizRefs, type VizRenderer, type VizRendererSource, WavEncoder, type WorkspaceAudioBus, type WorkspaceFile, type WorkspaceGroupState, type WorkspaceLanguage, WorkspaceShell, type WorkspaceShellProps, type WorkspaceTab, applyTheme, bundledPresetId, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getFile, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, resetFileStore, resolveDescriptor, sanitizePresetName, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setVizConfig, startSampleSound, stopSampleSound, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, touchProject, transpose, unregisterNamedViz, useWorkspaceFile, workspaceAudioBus };

@@ -5705,6 +5705,7 @@ function defineStrudelMonacoTheme(monaco) {
 }
 var activeDoc = null;
 var activeProvider = null;
+var activeProjectId = null;
 var docReady = false;
 async function initProjectDoc(projectId) {
   if (activeProvider) {
@@ -5719,6 +5720,7 @@ async function initProjectDoc(projectId) {
   const { IndexeddbPersistence } = await import('y-indexeddb');
   activeProvider = new IndexeddbPersistence(`stave-${projectId}`, activeDoc);
   await activeProvider.whenSynced;
+  activeProjectId = projectId;
   docReady = true;
 }
 function initProjectDocSync() {
@@ -5743,6 +5745,12 @@ function getFilesMap() {
 }
 function isDocReady() {
   return docReady;
+}
+function getActiveProjectId() {
+  return activeProjectId;
+}
+async function switchProject(projectId) {
+  await initProjectDoc(projectId);
 }
 
 // src/workspace/WorkspaceFile.ts
@@ -5874,6 +5882,15 @@ function notify(id) {
   if (!set) return;
   const snapshot = Array.from(set);
   for (const cb of snapshot) cb();
+}
+function resetFileStore() {
+  for (const [id] of textObservers) {
+    unwireTextObserver(id);
+  }
+  textObservers.clear();
+  cachedSnapshots.clear();
+  subscribersByFile.clear();
+  filesMapObserverWired = false;
 }
 
 // src/workspace/useWorkspaceFile.ts
@@ -16044,8 +16061,8 @@ function openDB() {
 async function loadAllCustomSamples() {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx2 = db.transaction(STORE_NAME, "readonly");
-    const request = tx2.objectStore(STORE_NAME).getAll();
+    const tx3 = db.transaction(STORE_NAME, "readonly");
+    const request = tx3.objectStore(STORE_NAME).getAll();
     request.onsuccess = () => {
       db.close();
       resolve(request.result);
@@ -17853,6 +17870,95 @@ function compileHydraCode(code) {
     fn(s);
   };
 }
+
+// src/workspace/projectRegistry.ts
+var DB_NAME3 = "stave-projects";
+var DB_VERSION3 = 1;
+var STORE_NAME3 = "projects";
+function openDb2() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME3, DB_VERSION3);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME3)) {
+        db.createObjectStore(STORE_NAME3, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function tx2(db, mode) {
+  return db.transaction(STORE_NAME3, mode).objectStore(STORE_NAME3);
+}
+function wrap2(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function listProjects() {
+  const db = await openDb2();
+  const all = await wrap2(tx2(db, "readonly").getAll());
+  db.close();
+  return all.sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+}
+async function getProject(id) {
+  const db = await openDb2();
+  const result = await wrap2(tx2(db, "readonly").get(id));
+  db.close();
+  return result;
+}
+async function getLastOpenedProject() {
+  const list = await listProjects();
+  return list[0];
+}
+async function createProject(name2) {
+  const meta = {
+    id: crypto.randomUUID(),
+    name: name2,
+    createdAt: Date.now(),
+    lastOpenedAt: Date.now()
+  };
+  const db = await openDb2();
+  await wrap2(tx2(db, "readwrite").put(meta));
+  db.close();
+  return meta;
+}
+async function touchProject(id) {
+  const db = await openDb2();
+  const store = tx2(db, "readwrite");
+  const existing = await wrap2(store.get(id));
+  if (existing) {
+    await wrap2(store.put({ ...existing, lastOpenedAt: Date.now() }));
+  }
+  db.close();
+}
+async function renameProject(id, name2) {
+  const db = await openDb2();
+  const store = tx2(db, "readwrite");
+  const existing = await wrap2(store.get(id));
+  if (existing) {
+    await wrap2(store.put({ ...existing, name: name2 }));
+  }
+  db.close();
+}
+async function deleteProject(id) {
+  const db = await openDb2();
+  await wrap2(tx2(db, "readwrite").delete(id));
+  db.close();
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(`stave-${id}`);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => resolve();
+  });
+}
+async function duplicateProject(id) {
+  const source = await getProject(id);
+  if (!source) return void 0;
+  return createProject(`${source.name} (copy)`);
+}
 function LiveModeToggle({
   autoRefresh,
   onToggle
@@ -18547,6 +18653,6 @@ function registerPresetAsNamedViz(preset) {
   }
 }
 
-export { BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyTheme, bundledPresetId, collect, compilePreset, createVizConfig, createWorkspaceFile, filter, flushToPreset, generateUniquePresetId, getFile, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, resolveDescriptor, sanitizePresetName, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setVizConfig, startSampleSound, stopSampleSound, subscribe as subscribeToWorkspaceFile, timestretch, toStrudel, transpose, unregisterNamedViz, useWorkspaceFile, workspaceAudioBus };
+export { BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyTheme, bundledPresetId, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getFile, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, resetFileStore, resolveDescriptor, sanitizePresetName, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setVizConfig, startSampleSound, stopSampleSound, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, touchProject, transpose, unregisterNamedViz, useWorkspaceFile, workspaceAudioBus };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map
