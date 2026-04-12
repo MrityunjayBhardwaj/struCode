@@ -75,13 +75,15 @@ function buildTree(files: WorkspaceFile[]): TreeNode[] {
 export function FileTree({
   projectName, onOpenFile, activeFileId, onToggleCollapse,
 }: FileTreeProps) {
-  // Subscribe to file list changes
-  const [, forceUpdate] = useState(0);
+  // Subscribe to file list changes — re-list whenever a file is added,
+  // removed, or renamed. `fileListRev` is the dep that forces the memo
+  // to recompute (empty dep array would compute once and never again).
+  const [fileListRev, setFileListRev] = useState(0);
   useEffect(() => {
-    return subscribeToFileList(() => forceUpdate((n) => n + 1));
+    return subscribeToFileList(() => setFileListRev((n) => n + 1));
   }, []);
 
-  const files = useMemo(() => listWorkspaceFiles(), [/* depends on forceUpdate */]); // eslint-disable-line react-hooks/exhaustive-deps
+  const files = useMemo(() => listWorkspaceFiles(), [fileListRev]);
   const tree = useMemo(() => buildTree(files), [files]);
 
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
