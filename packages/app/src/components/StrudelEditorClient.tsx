@@ -341,7 +341,7 @@ export default function StrudelEditorClient({
       ref={shellRef}
       initialTabs={initialTabs}
       theme="dark"
-      height={560}
+      height="100%"
       chromeForTab={chromeForTab}
       editorExtrasForTab={editorExtrasForTab}
       previewProviderFor={previewProviderFor}
