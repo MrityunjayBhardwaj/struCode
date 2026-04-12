@@ -255,11 +255,14 @@ export function FileTree({
   }, [activeFileId, files]);
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [contextMenu, setContextMenu] = useState<{
-    fileId: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  // Context menu — kind-tagged so each target (file / folder / empty root)
+  // renders its own item list. `x/y` are viewport coords; the menu itself
+  // clamps so it never spills off the right or bottom edge.
+  type ContextMenuState =
+    | { kind: "file"; fileId: string; x: number; y: number }
+    | { kind: "folder"; folderPath: string; x: number; y: number }
+    | { kind: "root"; x: number; y: number };
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -324,6 +327,47 @@ export function FileTree({
     if (!file) return;
     if (confirm(`Delete "${file.path}"?`)) {
       deleteWorkspaceFile(fileId);
+    }
+    setContextMenu(null);
+  }, [files]);
+
+  // Folder rename — cascade-rename every file whose path starts with
+  // `oldPath + "/"` (plus the .keep placeholder), swapping the prefix.
+  const handleRenameFolder = useCallback((oldPath: string) => {
+    const oldName = oldPath.split("/").pop() ?? "";
+    const parentPath = oldPath.includes("/")
+      ? oldPath.slice(0, oldPath.lastIndexOf("/"))
+      : "";
+    const newName = prompt("Rename folder:", oldName);
+    if (!newName || !newName.trim() || newName === oldName) {
+      setContextMenu(null);
+      return;
+    }
+    const newPath = parentPath ? `${parentPath}/${newName.trim()}` : newName.trim();
+    for (const f of files) {
+      if (f.path === oldPath || f.path.startsWith(oldPath + "/")) {
+        const suffix = f.path.slice(oldPath.length);
+        renameWorkspaceFile(f.id, `${newPath}${suffix}`);
+      }
+    }
+    setContextMenu(null);
+  }, [files]);
+
+  // Folder delete — cascade-delete every file under the folder.
+  const handleDeleteFolder = useCallback((path: string) => {
+    const doomed = files.filter(
+      (f) => f.path === path || f.path.startsWith(path + "/"),
+    );
+    if (doomed.length === 0) {
+      setContextMenu(null);
+      return;
+    }
+    const visible = doomed.filter((f) => !f.path.endsWith("/.keep")).length;
+    const msg = visible === 0
+      ? `Delete empty folder "${path}"?`
+      : `Delete "${path}" and ${visible} file${visible === 1 ? "" : "s"}?`;
+    if (confirm(msg)) {
+      for (const f of doomed) deleteWorkspaceFile(f.id);
     }
     setContextMenu(null);
   }, [files]);
@@ -742,6 +786,13 @@ export function FileTree({
           }
         }}
         onDrop={(e) => handleDrop(e, "")}
+        onContextMenu={(e) => {
+          // Only fire for the empty root area — if the click landed on a
+          // child row, that row's own handler stops propagation first.
+          if (e.target !== e.currentTarget) return;
+          e.preventDefault();
+          setContextMenu({ kind: "root", x: e.clientX, y: e.clientY });
+        }}
       >
         {tree.length === 0 && (
           <div style={styles.empty}>
@@ -763,7 +814,8 @@ export function FileTree({
             setEditValue={setEditValue}
             onCommitRename={commitRename}
             onCancelRename={() => setEditingFileId(null)}
-            onContextMenu={(fileId, x, y) => setContextMenu({ fileId, x, y })}
+            onContextMenu={(fileId, x, y) => setContextMenu({ kind: "file", fileId, x, y })}
+            onContextMenuFolder={(folderPath, x, y) => setContextMenu({ kind: "folder", folderPath, x, y })}
             inputRef={inputRef}
             onNewFile={handleNewFile}
             onNewFolder={handleNewFolder}
@@ -780,26 +832,22 @@ export function FileTree({
       </div>
 
       {contextMenu && (
-        <div
-          style={{ ...styles.contextMenu, left: contextMenu.x, top: contextMenu.y }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            style={styles.menuItem}
-            onClick={() => {
-              const f = files.find((x) => x.id === contextMenu.fileId);
-              if (f) startRename(f);
-            }}
-          >
-            Rename
-          </button>
-          <button
-            style={{ ...styles.menuItem, color: "#f87171" }}
-            onClick={() => handleDelete(contextMenu.fileId)}
-          >
-            Delete
-          </button>
-        </div>
+        <ContextMenu
+          state={contextMenu}
+          onClose={() => setContextMenu(null)}
+          onOpenFile={onOpenFile}
+          onRenameFile={(id) => {
+            const f = files.find((x) => x.id === id);
+            if (f) startRename(f);
+          }}
+          onDeleteFile={handleDelete}
+          onNewFile={handleNewFile}
+          onNewFolder={handleNewFolder}
+          onToggleFolder={toggleFolder}
+          collapsedFolders={collapsedFolders}
+          onRenameFolder={handleRenameFolder}
+          onDeleteFolder={handleDeleteFolder}
+        />
       )}
 
       {/* Resize handle — 5px wide strip on the right edge. Cursor is
@@ -836,6 +884,7 @@ interface TreeItemProps {
   onCommitRename: () => void;
   onCancelRename: () => void;
   onContextMenu: (fileId: string, x: number, y: number) => void;
+  onContextMenuFolder: (folderPath: string, x: number, y: number) => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onNewFile: (folderPath?: string) => void;
   onNewFolder: (parentPath?: string) => void;
@@ -891,7 +940,8 @@ function TreeItem(props: TreeItemProps) {
           onClick={() => props.onToggleFolder(node.path)}
           onContextMenu={(e) => {
             e.preventDefault();
-            props.onNewFile(node.path);
+            e.stopPropagation();
+            props.onContextMenuFolder(node.path, e.clientX, e.clientY);
           }}
         >
           <span style={styles.chevron}>{collapsed ? "▸" : "▾"}</span>
@@ -944,6 +994,7 @@ function TreeItem(props: TreeItemProps) {
       }}
       onContextMenu={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         props.onContextMenu(file.id, e.clientX, e.clientY);
       }}
       onDoubleClick={(e) => {
@@ -966,6 +1017,124 @@ function TreeItem(props: TreeItemProps) {
         />
       ) : (
         <span style={styles.itemName}>{node.name}</span>
+      )}
+    </div>
+  );
+}
+
+// ── Context menu ────────────────────────────────────────────────────
+
+type ContextMenuState =
+  | { kind: "file"; fileId: string; x: number; y: number }
+  | { kind: "folder"; folderPath: string; x: number; y: number }
+  | { kind: "root"; x: number; y: number };
+
+interface ContextMenuProps {
+  state: ContextMenuState;
+  onClose: () => void;
+  onOpenFile: (fileId: string) => void;
+  onRenameFile: (fileId: string) => void;
+  onDeleteFile: (fileId: string) => void;
+  onNewFile: (folderPath?: string) => void;
+  onNewFolder: (parentPath?: string) => void;
+  onToggleFolder: (folderPath: string) => void;
+  collapsedFolders: Set<string>;
+  onRenameFolder: (folderPath: string) => void;
+  onDeleteFolder: (folderPath: string) => void;
+}
+
+// Split nested labels — "New File..." is one item, but we want a
+// divider rule between "Open" and "Rename". A `null` entry renders a
+// horizontal divider.
+type MenuEntry =
+  | { label: string; onClick: () => void; danger?: boolean }
+  | null;
+
+// Inject a one-time hover-highlight rule for context-menu items.
+let ctxMenuStyleInjected = false;
+function ensureCtxMenuStyle() {
+  if (ctxMenuStyleInjected) return;
+  if (typeof document === "undefined") return;
+  const el = document.createElement("style");
+  el.setAttribute("data-stave-style", "context-menu");
+  el.textContent =
+    '[data-stave-ctx-item]:hover{background:#2a2a55;}' +
+    '[data-stave-ctx-item][data-danger="true"]:hover{background:#4a1f28;}';
+  document.head.appendChild(el);
+  ctxMenuStyleInjected = true;
+}
+
+function ContextMenu(props: ContextMenuProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x: props.state.x, y: props.state.y });
+  useEffect(() => { ensureCtxMenuStyle(); }, []);
+
+  // After mount, clamp to viewport so the menu never spills off the
+  // right or bottom edge (VS Code behaviour).
+  useEffect(() => {
+    if (!ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const margin = 4;
+    let nx = props.state.x;
+    let ny = props.state.y;
+    if (nx + rect.width > window.innerWidth - margin) {
+      nx = Math.max(margin, window.innerWidth - rect.width - margin);
+    }
+    if (ny + rect.height > window.innerHeight - margin) {
+      ny = Math.max(margin, window.innerHeight - rect.height - margin);
+    }
+    if (nx !== pos.x || ny !== pos.y) setPos({ x: nx, y: ny });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.state]);
+
+  const entries: MenuEntry[] =
+    props.state.kind === "file"
+      ? [
+          { label: "Open", onClick: () => { props.onOpenFile((props.state as {fileId: string}).fileId); props.onClose(); } },
+          null,
+          { label: "Rename...", onClick: () => { props.onRenameFile((props.state as {fileId: string}).fileId); props.onClose(); } },
+          { label: "Delete", danger: true, onClick: () => props.onDeleteFile((props.state as {fileId: string}).fileId) },
+        ]
+      : props.state.kind === "folder"
+      ? (() => {
+          const fp = (props.state as { folderPath: string }).folderPath;
+          const isCollapsed = props.collapsedFolders.has(fp);
+          return [
+            { label: "New File...", onClick: () => { props.onNewFile(fp); props.onClose(); } },
+            { label: "New Folder...", onClick: () => { props.onNewFolder(fp); props.onClose(); } },
+            null,
+            { label: isCollapsed ? "Expand" : "Collapse", onClick: () => { props.onToggleFolder(fp); props.onClose(); } },
+            null,
+            { label: "Rename...", onClick: () => props.onRenameFolder(fp) },
+            { label: "Delete", danger: true, onClick: () => props.onDeleteFolder(fp) },
+          ];
+        })()
+      : [
+          { label: "New File...", onClick: () => { props.onNewFile(""); props.onClose(); } },
+          { label: "New Folder...", onClick: () => { props.onNewFolder(""); props.onClose(); } },
+        ];
+
+  return (
+    <div
+      ref={ref}
+      style={{ ...styles.contextMenu, left: pos.x, top: pos.y }}
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {entries.map((entry, i) =>
+        entry === null ? (
+          <div key={`div-${i}`} style={styles.menuDivider} />
+        ) : (
+          <button
+            key={entry.label}
+            data-stave-ctx-item
+            data-danger={entry.danger ? "true" : "false"}
+            style={{ ...styles.menuItem, ...(entry.danger ? styles.menuItemDanger : {}) }}
+            onClick={entry.onClick}
+          >
+            {entry.label}
+          </button>
+        ),
       )}
     </div>
   );
@@ -1145,12 +1314,22 @@ const styles: Record<string, React.CSSProperties> = {
   menuItem: {
     display: "block",
     width: "100%",
-    padding: "6px 12px",
+    padding: "6px 14px",
     background: "none",
     border: "none",
     color: "#c8c8d4",
-    fontSize: 13,
+    fontSize: 12,
+    lineHeight: 1.5,
     textAlign: "left" as const,
     cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  menuItemDanger: {
+    color: "#f87171",
+  },
+  menuDivider: {
+    height: 1,
+    margin: "4px 0",
+    background: "#2a2a4a",
   },
 };
