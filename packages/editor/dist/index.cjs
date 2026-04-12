@@ -8247,6 +8247,16 @@ var BUILTIN_SOURCE_IDS = new Set(
 function findBuiltinExampleSource(sourceId) {
   return BUILTIN_EXAMPLE_SOURCES.find((s) => s.sourceId === sourceId);
 }
+var tabbarScrollStyleInjected = false;
+function ensureTabbarScrollStyle() {
+  if (tabbarScrollStyleInjected) return;
+  if (typeof document === "undefined") return;
+  const el = document.createElement("style");
+  el.setAttribute("data-stave-style", "tabbar-scroll");
+  el.textContent = "[data-workspace-group-tabbar]::-webkit-scrollbar{display:none;width:0;height:0}";
+  document.head.appendChild(el);
+  tabbarScrollStyleInjected = true;
+}
 function assertNever(value) {
   throw new Error(
     `WorkspaceShell: unhandled tab kind in dispatch: ${JSON.stringify(value)}`
@@ -8303,6 +8313,9 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
     if (!shellRootRef.current) return;
     applyTheme(shellRootRef.current, theme);
   }, [theme]);
+  React.useEffect(() => {
+    ensureTabbarScrollStyle();
+  }, []);
   const activeTab = React.useMemo(() => {
     const group = groups.get(activeGroupId);
     if (!group || group.activeTabId === null) return null;
@@ -9062,7 +9075,12 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
                   borderBottom: "1px solid var(--border)",
                   height: 30,
                   flexShrink: 0,
-                  overflow: "hidden"
+                  overflowX: "auto",
+                  overflowY: "hidden",
+                  // Hide the scrollbar visually (Firefox + legacy IE).
+                  // Webkit uses the injected CSS rule in tabbarScrollStyle below.
+                  scrollbarWidth: "none",
+                  msOverflowStyle: "none"
                 },
                 children: [
                   group.tabs.map((tab) => {
