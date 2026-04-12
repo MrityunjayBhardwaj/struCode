@@ -66,10 +66,15 @@ export function SnapshotModal({
           {snapshots.length === 0 && (
             <div style={styles.empty}>No versions saved yet.</div>
           )}
-          {snapshots.map((s) => (
+          {snapshots.map((s) => {
+            const isAuto = s.kind === "auto" || s.label.startsWith("Auto — ");
+            return (
             <div key={s.id} style={styles.row}>
               <div style={styles.rowLeft}>
-                <div style={styles.rowName}>{s.label}</div>
+                <div style={{ ...styles.rowName, ...(isAuto ? styles.rowNameAuto : {}) }}>
+                  {isAuto && <span style={styles.autoBadge}>AUTO</span>}
+                  {s.label}
+                </div>
                 <div style={styles.rowMeta}>{formatRelative(s.createdAt)}</div>
               </div>
               <div style={styles.rowActions}>
@@ -91,7 +96,8 @@ export function SnapshotModal({
                 </button>
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
       </div>
     </div>
@@ -173,7 +179,13 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "10px 20px",
   },
   rowLeft: { display: "flex", flexDirection: "column" as const, gap: 2 },
-  rowName: { fontSize: 13, color: "#e8e8f0", fontWeight: 500 },
+  rowName: { fontSize: 13, color: "#e8e8f0", fontWeight: 500, display: "flex", alignItems: "center", gap: 6 },
+  rowNameAuto: { color: "#9a9ac0", fontWeight: 400 },
+  autoBadge: {
+    fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
+    padding: "1px 5px", borderRadius: 3,
+    background: "#3a3a5a", color: "#c8c8d4",
+  },
   rowMeta: { fontSize: 11, color: "#6a6a88" },
   rowActions: { display: "flex", gap: 4 },
   actionBtn: {

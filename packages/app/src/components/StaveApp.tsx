@@ -13,6 +13,8 @@ import {
   listSnapshots,
   deleteSnapshot,
   restoreSnapshot,
+  subscribeToDocUpdate,
+  AUTO_SNAPSHOT_PREFIX,
   type ProjectMeta,
   type SnapshotMeta,
   type WorkspaceShellHandle,
@@ -80,6 +82,40 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     await restoreSnapshot(id);
     resetFileStore();
   }, []);
+
+  // Auto-snapshot: debounce doc updates; after IDLE_MS of inactivity,
+  // capture an auto-labelled snapshot. The snapshotStore prunes older
+  // auto entries down to MAX_AUTO_SNAPSHOTS (10) so this stays bounded.
+  // Tracked per-session only — if the user reloads or switches projects
+  // before the debounce fires, the pending save is dropped.
+  useEffect(() => {
+    // Idle duration can be shortened via localStorage for automated
+    // tests — production default is 60s.
+    const override =
+      typeof window !== "undefined"
+        ? parseInt(window.localStorage.getItem("stave:autosnapIdleMs") ?? "", 10)
+        : NaN;
+    const IDLE_MS = Number.isFinite(override) && override > 0 ? override : 60_000;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const projectId = activeProject.id;
+    const unsubscribe = subscribeToDocUpdate(
+      () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          const now = new Date();
+          const hh = String(now.getHours()).padStart(2, "0");
+          const mm = String(now.getMinutes()).padStart(2, "0");
+          saveSnapshot(projectId, `${AUTO_SNAPSHOT_PREFIX}${hh}:${mm}`, "auto")
+            .catch((err) => console.warn("[stave] auto-snapshot failed:", err));
+        }, IDLE_MS);
+      },
+      { localOnly: true },
+    );
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [activeProject.id]);
 
   // Bidirectional sync between FileTree ↔ WorkspaceShell.
   //
