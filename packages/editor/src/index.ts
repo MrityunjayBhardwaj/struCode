@@ -109,6 +109,13 @@ export {
 } from './workspace/WorkspaceFile'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady } from './workspace/projectDoc'
 export {
+  saveSnapshot,
+  listSnapshots,
+  deleteSnapshot,
+  restoreSnapshot,
+} from './workspace/snapshotStore'
+export type { SnapshotMeta } from './workspace/snapshotStore'
+export {
   listProjects,
   getProject,
   getLastOpenedProject,
