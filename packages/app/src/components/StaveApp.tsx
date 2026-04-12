@@ -162,13 +162,22 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       />
 
       <div style={styles.main}>
-        {!sidebarCollapsed && (
+        {!sidebarCollapsed ? (
           <FileTree
             projectName={activeProject.name}
             onOpenFile={handleOpenFile}
             activeFileId={activeFileId}
             onToggleCollapse={() => setSidebarCollapsed(true)}
           />
+        ) : (
+          <button
+            style={styles.collapsedStrip}
+            onClick={() => setSidebarCollapsed(false)}
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
+          >
+            ▸
+          </button>
         )}
 
         <div style={styles.editorArea}>
@@ -220,6 +229,25 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     height: "100%",
     position: "relative",
+  },
+  collapsedStrip: {
+    width: 28,
+    minWidth: 28,
+    height: "100%",
+    background: "#1a1a2e",
+    borderRight: "1px solid #2a2a4a",
+    color: "#8888aa",
+    cursor: "pointer",
+    border: "none",
+    borderTop: "none",
+    borderBottom: "none",
+    borderLeft: "none",
+    padding: "8px 0",
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "center",
+    fontSize: 14,
+    fontFamily: "inherit",
   },
   switchingOverlay: {
     display: "flex",
