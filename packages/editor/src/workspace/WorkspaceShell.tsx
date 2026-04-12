@@ -144,6 +144,20 @@ import { findBuiltinExampleSource } from './builtinExampleSources'
  * ever sees a new `WorkspaceTab` variant without a branch added above the
  * default case, this call fails the type-check at compile time.
  */
+// Webkit/Blink doesn't honour `scrollbarWidth: 'none'` inline style yet —
+// inject a one-time stylesheet rule so the tabbar can scroll horizontally
+// without showing a visible track/thumb.
+let tabbarScrollStyleInjected = false
+function ensureTabbarScrollStyle(): void {
+  if (tabbarScrollStyleInjected) return
+  if (typeof document === 'undefined') return
+  const el = document.createElement('style')
+  el.setAttribute('data-stave-style', 'tabbar-scroll')
+  el.textContent = '[data-workspace-group-tabbar]::-webkit-scrollbar{display:none;width:0;height:0}'
+  document.head.appendChild(el)
+  tabbarScrollStyleInjected = true
+}
+
 function assertNever(value: never): never {
   throw new Error(
     `WorkspaceShell: unhandled tab kind in dispatch: ${JSON.stringify(value)}`,
@@ -299,6 +313,12 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
     if (!shellRootRef.current) return
     applyTheme(shellRootRef.current, theme)
   }, [theme])
+
+  // Inject the tabbar-scrollbar hide rule once (webkit/blink fallback
+  // because inline scrollbarWidth: 'none' isn't honoured there).
+  useEffect(() => {
+    ensureTabbarScrollStyle()
+  }, [])
 
   // Resolve the current shell-wide active tab from the group map.
   // Memoized on the [groups, activeGroupId] dep set so the identity
@@ -1499,7 +1519,12 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
               borderBottom: '1px solid var(--border)',
               height: 30,
               flexShrink: 0,
-              overflow: 'hidden',
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              // Hide the scrollbar visually (Firefox + legacy IE).
+              // Webkit uses the injected CSS rule in tabbarScrollStyle below.
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none',
             }}
           >
             {group.tabs.map((tab) => {
