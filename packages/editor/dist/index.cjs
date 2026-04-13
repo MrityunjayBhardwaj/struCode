@@ -7546,9 +7546,7 @@ function applyCropRegion(container, crop, zoneHeight, contentWidth) {
   if (wrapper) {
     const scaleX2 = 1 / crop.w;
     const scaleY2 = 1 / crop.h;
-    const tx4 = -crop.x * contentWidth * scaleX2;
-    const ty2 = -crop.y * zoneHeight * scaleY2;
-    wrapper.style.transform = `translate(${tx4}px, ${ty2}px) scale(${scaleX2}, ${scaleY2})`;
+    wrapper.style.transform = `translate(${-crop.x * contentWidth * scaleX2}px, ${-crop.y * zoneHeight * scaleY2}px) scale(${scaleX2}, ${scaleY2})`;
     wrapper.style.transformOrigin = "0 0";
     return;
   }
@@ -7557,19 +7555,18 @@ function applyCropRegion(container, crop, zoneHeight, contentWidth) {
   cropWrapper.style.cssText = `position:absolute;inset:0;overflow:hidden;transform-origin:0 0;`;
   const scaleX = 1 / crop.w;
   const scaleY = 1 / crop.h;
-  const tx3 = -crop.x * contentWidth * scaleX;
-  const ty = -crop.y * zoneHeight * scaleY;
-  cropWrapper.style.transform = `translate(${tx3}px, ${ty}px) scale(${scaleX}, ${scaleY})`;
+  cropWrapper.style.transform = `translate(${-crop.x * contentWidth * scaleX}px, ${-crop.y * zoneHeight * scaleY}px) scale(${scaleX}, ${scaleY})`;
   while (container.firstChild) cropWrapper.appendChild(container.firstChild);
   container.style.position = "relative";
   container.appendChild(cropWrapper);
 }
-function createActionBar(vizId, presetId, actions) {
+function createFloatingActionBar(editorDom) {
   const bar = document.createElement("div");
   bar.setAttribute("data-viz-actions", "");
   bar.style.cssText = `
-    position:absolute;top:4px;right:8px;z-index:10;
-    display:flex;gap:4px;opacity:0;transition:opacity 0.15s;
+    position:absolute;z-index:100;
+    display:flex;gap:4px;
+    opacity:0;transition:opacity 0.15s;
     pointer-events:none;
   `;
   const btnCss = `
@@ -7581,28 +7578,38 @@ function createActionBar(vizId, presetId, actions) {
     font-family:system-ui,sans-serif;
     pointer-events:auto;
   `;
-  if (actions.onEdit) {
-    const btn = document.createElement("button");
-    btn.textContent = "\u270E";
-    btn.title = "Edit viz file";
-    btn.style.cssText = btnCss;
-    btn.onclick = (e) => {
+  const blockMonaco = (el) => {
+    el.addEventListener("mousedown", (e) => {
       e.stopPropagation();
-      actions.onEdit(vizId);
-    };
-    bar.appendChild(btn);
-  }
-  if (actions.onCrop) {
-    const btn = document.createElement("button");
-    btn.textContent = "\u2702";
-    btn.title = "Crop inline region";
-    btn.style.cssText = btnCss;
-    btn.onclick = (e) => {
+      e.stopImmediatePropagation();
+    }, true);
+    el.addEventListener("mouseup", (e) => {
       e.stopPropagation();
-      actions.onCrop(vizId, presetId);
-    };
-    bar.appendChild(btn);
-  }
+      e.stopImmediatePropagation();
+    }, true);
+    el.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    }, true);
+    el.addEventListener("pointerup", (e) => {
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    }, true);
+  };
+  const editBtn = document.createElement("button");
+  editBtn.textContent = "\u270E";
+  editBtn.title = "Edit viz file";
+  editBtn.style.cssText = btnCss;
+  blockMonaco(editBtn);
+  bar.appendChild(editBtn);
+  const cropBtn = document.createElement("button");
+  cropBtn.textContent = "\u2702";
+  cropBtn.title = "Crop inline region";
+  cropBtn.style.cssText = btnCss;
+  blockMonaco(cropBtn);
+  bar.appendChild(cropBtn);
+  const guard = editorDom.querySelector(".overflow-guard") || editorDom;
+  guard.appendChild(bar);
   return bar;
 }
 function addInlineViewZones(editor, components, vizDescriptors, actions) {
@@ -7665,66 +7672,82 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
       );
       renderers.push(renderer);
       disconnects.push(disconnect);
-      zoneEntries.push({ afterLine, container });
-      void (async () => {
-        try {
-          const presets = await VizPresetStore.getAll();
-          const preset = presets.find((p) => p.name === vizId);
-          if (preset?.cropRegion) {
-            applyCropRegion(container, preset.cropRegion, zoneHeight, contentWidth || 400);
-          }
-          if (actions && (actions.onEdit || actions.onCrop)) {
-            container.appendChild(createActionBar(vizId, preset?.id ?? null, actions));
-          }
-        } catch {
-          if (actions && (actions.onEdit || actions.onCrop)) {
-            container.appendChild(createActionBar(vizId, null, actions));
-          }
-        }
-      })();
+      zoneEntries.push({ afterLine, container, vizId, presetId: null });
     }
   });
-  let activeBar = null;
-  const mouseMoveDisposable = editor.onMouseMove?.((e) => {
-    const mouseY = e.event.posy;
-    const mouseX = e.event.posx;
-    let found = false;
-    for (const { container } of zoneEntries) {
-      const rect = container.getBoundingClientRect();
-      if (mouseY >= rect.top && mouseY <= rect.bottom && mouseX >= rect.left && mouseX <= rect.right) {
-        const bar = container.querySelector("[data-viz-actions]");
-        if (bar && bar !== activeBar) {
-          if (activeBar) {
-            activeBar.style.opacity = "0";
-            activeBar.style.pointerEvents = "none";
+  const normalize = (s) => s.toLowerCase().replace(/[\s\-_]/g, "");
+  void (async () => {
+    try {
+      const presets = await VizPresetStore.getAll();
+      for (const entry of zoneEntries) {
+        const normViz = normalize(entry.vizId);
+        const preset = presets.find((p) => normalize(p.name) === normViz);
+        if (preset) {
+          entry.presetId = preset.id;
+          if (preset.cropRegion) {
+            applyCropRegion(entry.container, preset.cropRegion, zoneHeight, contentWidth || 400);
           }
-          bar.style.opacity = "1";
-          bar.style.pointerEvents = "auto";
-          activeBar = bar;
         }
-        found = true;
-        break;
       }
+    } catch {
     }
-    if (!found && activeBar) {
-      activeBar.style.opacity = "0";
-      activeBar.style.pointerEvents = "none";
-      activeBar = null;
-    }
-  });
+  })();
+  const editorDom = editor.getDomNode?.();
+  let floatingBar = null;
+  let mouseMoveDisposable = null;
+  if (editorDom && actions && (actions.onEdit || actions.onCrop)) {
+    floatingBar = createFloatingActionBar(editorDom);
+    const editBtn = floatingBar.children[0];
+    const cropBtn = floatingBar.children[1];
+    editBtn.onclick = (e) => {
+      e.stopPropagation();
+      const vizId = floatingBar?.getAttribute("data-viz-id");
+      if (vizId && actions.onEdit) actions.onEdit(vizId);
+    };
+    cropBtn.onclick = (e) => {
+      e.stopPropagation();
+      const vizId = floatingBar?.getAttribute("data-viz-id");
+      const presetId = floatingBar?.getAttribute("data-preset-id") || null;
+      if (vizId && actions.onCrop) actions.onCrop(vizId, presetId);
+    };
+    mouseMoveDisposable = editor.onMouseMove?.((ev) => {
+      const mouseY = ev.event.posy;
+      const mouseX = ev.event.posx;
+      let found = null;
+      for (const entry of zoneEntries) {
+        const rect = entry.container.getBoundingClientRect();
+        if (mouseY >= rect.top && mouseY <= rect.bottom && mouseX >= rect.left && mouseX <= rect.right) {
+          found = entry;
+          break;
+        }
+      }
+      if (found && floatingBar) {
+        const rect = found.container.getBoundingClientRect();
+        const guardRect = (editorDom.querySelector(".overflow-guard") || editorDom).getBoundingClientRect();
+        floatingBar.style.top = `${rect.top - guardRect.top + 4}px`;
+        floatingBar.style.left = `${rect.right - guardRect.left - 68}px`;
+        floatingBar.style.opacity = "1";
+        floatingBar.style.pointerEvents = "auto";
+        floatingBar.setAttribute("data-viz-id", found.vizId);
+        floatingBar.setAttribute("data-preset-id", found.presetId || "");
+      } else if (floatingBar) {
+        floatingBar.style.opacity = "0";
+        floatingBar.style.pointerEvents = "none";
+      }
+    }) ?? null;
+  }
   const mouseLeaveHandler = () => {
-    if (activeBar) {
-      activeBar.style.opacity = "0";
-      activeBar.style.pointerEvents = "none";
-      activeBar = null;
+    if (floatingBar) {
+      floatingBar.style.opacity = "0";
+      floatingBar.style.pointerEvents = "none";
     }
   };
-  const editorDom = editor.getDomNode?.();
   editorDom?.addEventListener("mouseleave", mouseLeaveHandler);
   return {
     cleanup() {
       mouseMoveDisposable?.dispose?.();
       editorDom?.removeEventListener("mouseleave", mouseLeaveHandler);
+      floatingBar?.remove();
       disconnects.forEach((fn) => fn());
       renderers.forEach((r) => r.destroy());
       bufferedSchedulers.forEach((s) => s.dispose());

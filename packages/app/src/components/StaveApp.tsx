@@ -749,12 +749,15 @@ export function StaveApp({ initialProject }: StaveAppProps) {
                   setTabContextMenu({ tabId: tab.id, fileId, x, y });
                 }}
                 onEditViz={(vizId) => {
-                  // Resolve viz name to a workspace file and open it
+                  // Resolve viz name to a workspace file — fuzzy match
+                  // (strip spaces, lowercase) so "pianoroll" matches "Piano Roll.p5".
+                  const norm = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, "");
+                  const target = norm(vizId);
                   const allFiles = listWorkspaceFiles();
                   for (const f of allFiles) {
                     const baseName = f.path.replace(/\.[^.]+$/, "");
                     const lastSeg = baseName.split("/").pop() ?? "";
-                    if (lastSeg === vizId || baseName === vizId) {
+                    if (norm(lastSeg) === target || norm(baseName) === target) {
                       handleOpenFile(f.id);
                       setActivePanelId("explorer");
                       setTimeout(() => fileTreeRef.current?.revealFile(f.id), 50);

@@ -28,9 +28,7 @@ function applyCropRegion(
   if (wrapper) {
     const scaleX = 1 / crop.w
     const scaleY = 1 / crop.h
-    const tx = -crop.x * contentWidth * scaleX
-    const ty = -crop.y * zoneHeight * scaleY
-    wrapper.style.transform = `translate(${tx}px, ${ty}px) scale(${scaleX}, ${scaleY})`
+    wrapper.style.transform = `translate(${-crop.x * contentWidth * scaleX}px, ${-crop.y * zoneHeight * scaleY}px) scale(${scaleX}, ${scaleY})`
     wrapper.style.transformOrigin = '0 0'
     return
   }
@@ -39,26 +37,27 @@ function applyCropRegion(
   cropWrapper.style.cssText = `position:absolute;inset:0;overflow:hidden;transform-origin:0 0;`
   const scaleX = 1 / crop.w
   const scaleY = 1 / crop.h
-  const tx = -crop.x * contentWidth * scaleX
-  const ty = -crop.y * zoneHeight * scaleY
-  cropWrapper.style.transform = `translate(${tx}px, ${ty}px) scale(${scaleX}, ${scaleY})`
+  cropWrapper.style.transform = `translate(${-crop.x * contentWidth * scaleX}px, ${-crop.y * zoneHeight * scaleY}px) scale(${scaleX}, ${scaleY})`
   while (container.firstChild) cropWrapper.appendChild(container.firstChild)
   container.style.position = 'relative'
   container.appendChild(cropWrapper)
 }
 
-function createActionBar(
-  vizId: string,
-  presetId: string | null,
-  actions: VizZoneActions,
-): HTMLElement {
+/**
+ * Create a floating action bar that lives in the editor's overflow-guard
+ * (above all Monaco layers including text). Positioned absolutely; the
+ * caller moves it to the right zone on hover.
+ */
+function createFloatingActionBar(editorDom: HTMLElement): HTMLElement {
   const bar = document.createElement('div')
   bar.setAttribute('data-viz-actions', '')
   bar.style.cssText = `
-    position:absolute;top:4px;right:8px;z-index:10;
-    display:flex;gap:4px;opacity:0;transition:opacity 0.15s;
+    position:absolute;z-index:100;
+    display:flex;gap:4px;
+    opacity:0;transition:opacity 0.15s;
     pointer-events:none;
   `
+
   const btnCss = `
     background:var(--bg-elevated,#1e1e38);
     border:1px solid var(--border-strong,#3a3a5a);
@@ -68,23 +67,41 @@ function createActionBar(
     font-family:system-ui,sans-serif;
     pointer-events:auto;
   `
-  if (actions.onEdit) {
-    const btn = document.createElement('button')
-    btn.textContent = '\u270E'
-    btn.title = 'Edit viz file'
-    btn.style.cssText = btnCss
-    btn.onclick = (e) => { e.stopPropagation(); actions.onEdit!(vizId) }
-    bar.appendChild(btn)
+
+  // Prevent Monaco from capturing mouse events on the buttons.
+  const blockMonaco = (el: HTMLElement) => {
+    el.addEventListener('mousedown', (e) => { e.stopPropagation(); e.stopImmediatePropagation() }, true)
+    el.addEventListener('mouseup', (e) => { e.stopPropagation(); e.stopImmediatePropagation() }, true)
+    el.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.stopImmediatePropagation() }, true)
+    el.addEventListener('pointerup', (e) => { e.stopPropagation(); e.stopImmediatePropagation() }, true)
   }
-  if (actions.onCrop) {
-    const btn = document.createElement('button')
-    btn.textContent = '\u2702'
-    btn.title = 'Crop inline region'
-    btn.style.cssText = btnCss
-    btn.onclick = (e) => { e.stopPropagation(); actions.onCrop!(vizId, presetId) }
-    bar.appendChild(btn)
-  }
+
+  const editBtn = document.createElement('button')
+  editBtn.textContent = '\u270E'
+  editBtn.title = 'Edit viz file'
+  editBtn.style.cssText = btnCss
+  blockMonaco(editBtn)
+  bar.appendChild(editBtn)
+
+  const cropBtn = document.createElement('button')
+  cropBtn.textContent = '\u2702'
+  cropBtn.title = 'Crop inline region'
+  cropBtn.style.cssText = btnCss
+  blockMonaco(cropBtn)
+  bar.appendChild(cropBtn)
+
+  // Append to the overflow-guard (topmost Monaco wrapper)
+  const guard = editorDom.querySelector('.overflow-guard') || editorDom
+  guard.appendChild(bar)
+
   return bar
+}
+
+interface ZoneEntry {
+  afterLine: number
+  container: HTMLElement
+  vizId: string
+  presetId: string | null
 }
 
 export function addInlineViewZones(
@@ -102,8 +119,7 @@ export function addInlineViewZones(
   const renderers: VizRenderer[] = []
   const disconnects: (() => void)[] = []
   const bufferedSchedulers: BufferedScheduler[] = []
-  // Track zone containers + their line positions for mouse-hover detection.
-  const zoneEntries: Array<{ afterLine: number; container: HTMLElement }> = []
+  const zoneEntries: ZoneEntry[] = []
 
   const contentWidth = editor.getLayoutInfo().contentWidth
   const audioCtx = components.audio?.audioCtx
@@ -119,7 +135,6 @@ export function addInlineViewZones(
 
       let trackScheduler = components.queryable?.trackSchedulers.get(trackKey) ?? null
       const trackStream = components.inlineViz?.trackStreams?.get(trackKey)
-
       if (!trackScheduler && trackStream && audioCtx) {
         const buffered = new BufferedScheduler(trackStream, audioCtx)
         bufferedSchedulers.push(buffered)
@@ -158,83 +173,104 @@ export function addInlineViewZones(
         descriptor.factory,
         zoneComponents,
         { w: contentWidth || 400, h: zoneHeight },
-        console.error
+        console.error,
       )
       renderers.push(renderer)
       disconnects.push(disconnect)
 
-      zoneEntries.push({ afterLine, container })
-
-      // Async: load preset for crop + action icons
-      void (async () => {
-        try {
-          const presets = await VizPresetStore.getAll()
-          const preset = presets.find(p => p.name === vizId)
-          if (preset?.cropRegion) {
-            applyCropRegion(container, preset.cropRegion, zoneHeight, contentWidth || 400)
-          }
-          if (actions && (actions.onEdit || actions.onCrop)) {
-            container.appendChild(createActionBar(vizId, preset?.id ?? null, actions))
-          }
-        } catch {
-          if (actions && (actions.onEdit || actions.onCrop)) {
-            container.appendChild(createActionBar(vizId, null, actions))
-          }
-        }
-      })()
+      zoneEntries.push({ afterLine, container, vizId, presetId: null })
     }
   })
 
-  // ── Mouse-move listener: show/hide action bars based on cursor Y ──
-  // Monaco's text layer sits above view zones, so CSS :hover doesn't
-  // fire on the zone container. Instead we listen to the editor's mouse
-  // move event and check if the cursor is within a zone's screen region.
-  let activeBar: HTMLElement | null = null
-  const mouseMoveDisposable = editor.onMouseMove?.((e: Monaco.editor.IEditorMouseEvent) => {
-    const mouseY = e.event.posy
-    const mouseX = e.event.posx
-    let found = false
-
-    for (const { container } of zoneEntries) {
-      const rect = container.getBoundingClientRect()
-      if (
-        mouseY >= rect.top && mouseY <= rect.bottom &&
-        mouseX >= rect.left && mouseX <= rect.right
-      ) {
-        const bar = container.querySelector<HTMLElement>('[data-viz-actions]')
-        if (bar && bar !== activeBar) {
-          if (activeBar) { activeBar.style.opacity = '0'; activeBar.style.pointerEvents = 'none' }
-          bar.style.opacity = '1'
-          bar.style.pointerEvents = 'auto'
-          activeBar = bar
+  // ── Async: load presets for crop regions + resolve preset IDs ──
+  // Match viz names fuzzy: strip spaces, lowercase, ignore hyphens.
+  const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '')
+  void (async () => {
+    try {
+      const presets = await VizPresetStore.getAll()
+      for (const entry of zoneEntries) {
+        const normViz = normalize(entry.vizId)
+        const preset = presets.find(p => normalize(p.name) === normViz)
+        if (preset) {
+          entry.presetId = preset.id
+          if (preset.cropRegion) {
+            applyCropRegion(entry.container, preset.cropRegion, zoneHeight, contentWidth || 400)
+          }
         }
-        found = true
-        break
       }
+    } catch { /* ignore */ }
+  })()
+
+  // ── Floating action bar (lives above text layer) ──
+  const editorDom = editor.getDomNode?.()
+  let floatingBar: HTMLElement | null = null
+  let activeEntry: ZoneEntry | null = null
+  let mouseMoveDisposable: { dispose(): void } | null = null
+
+  if (editorDom && actions && (actions.onEdit || actions.onCrop)) {
+    floatingBar = createFloatingActionBar(editorDom)
+
+    // Wire click handlers — update targets on hover
+    const editBtn = floatingBar.children[0] as HTMLElement
+    const cropBtn = floatingBar.children[1] as HTMLElement
+
+    editBtn.onclick = (e) => {
+      e.stopPropagation()
+      const vizId = floatingBar?.getAttribute('data-viz-id')
+      if (vizId && actions.onEdit) actions.onEdit(vizId)
+    }
+    cropBtn.onclick = (e) => {
+      e.stopPropagation()
+      const vizId = floatingBar?.getAttribute('data-viz-id')
+      const presetId = floatingBar?.getAttribute('data-preset-id') || null
+      if (vizId && actions.onCrop) actions.onCrop(vizId, presetId)
     }
 
-    if (!found && activeBar) {
-      activeBar.style.opacity = '0'
-      activeBar.style.pointerEvents = 'none'
-      activeBar = null
-    }
-  })
+    mouseMoveDisposable = editor.onMouseMove?.((ev: Monaco.editor.IEditorMouseEvent) => {
+      const mouseY = ev.event.posy
+      const mouseX = ev.event.posx
+      let found: ZoneEntry | null = null
 
-  // Also hide when the mouse leaves the editor entirely
+      for (const entry of zoneEntries) {
+        const rect = entry.container.getBoundingClientRect()
+        if (mouseY >= rect.top && mouseY <= rect.bottom && mouseX >= rect.left && mouseX <= rect.right) {
+          found = entry
+          break
+        }
+      }
+
+      if (found && floatingBar) {
+        const rect = found.container.getBoundingClientRect()
+        const guardRect = (editorDom.querySelector('.overflow-guard') || editorDom).getBoundingClientRect()
+        floatingBar.style.top = `${rect.top - guardRect.top + 4}px`
+        floatingBar.style.left = `${rect.right - guardRect.left - 68}px`
+        floatingBar.style.opacity = '1'
+        floatingBar.style.pointerEvents = 'auto'
+        floatingBar.setAttribute('data-viz-id', found.vizId)
+        floatingBar.setAttribute('data-preset-id', found.presetId || '')
+        activeEntry = found
+      } else if (floatingBar) {
+        floatingBar.style.opacity = '0'
+        floatingBar.style.pointerEvents = 'none'
+        activeEntry = null
+      }
+    }) ?? null
+  }
+
   const mouseLeaveHandler = () => {
-    if (activeBar) {
-      activeBar.style.opacity = '0'
-      activeBar.style.pointerEvents = 'none'
-      activeBar = null
+    if (floatingBar) {
+      floatingBar.style.opacity = '0'
+      floatingBar.style.pointerEvents = 'none'
+      activeEntry = null
     }
   }
-  const editorDom = editor.getDomNode?.()
   editorDom?.addEventListener('mouseleave', mouseLeaveHandler)
 
   return {
     cleanup() {
       mouseMoveDisposable?.dispose?.()
       editorDom?.removeEventListener('mouseleave', mouseLeaveHandler)
+      floatingBar?.remove()
       disconnects.forEach(fn => fn())
       renderers.forEach(r => r.destroy())
       bufferedSchedulers.forEach(s => s.dispose())
