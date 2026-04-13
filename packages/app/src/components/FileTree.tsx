@@ -15,6 +15,7 @@ import {
   withStructBatch,
   type WorkspaceFile,
 } from "@stave/editor";
+import { showPrompt, showConfirm, showToast } from "../dialogs/host";
 
 interface FileTreeProps {
   projectName: string;
@@ -323,27 +324,34 @@ export function FileTree({
     setEditingFileId(null);
   }, [editingFileId, editValue, files]);
 
-  const handleDelete = useCallback((fileId: string) => {
+  const handleDelete = useCallback(async (fileId: string) => {
     const file = files.find((f) => f.id === fileId);
     if (!file) return;
-    if (confirm(`Delete "${file.path}"?`)) {
-      deleteWorkspaceFile(fileId);
-    }
     setContextMenu(null);
+    const ok = await showConfirm({
+      title: "Delete file?",
+      description: `"${file.path}" will be removed from this project.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (ok) deleteWorkspaceFile(fileId);
   }, [files]);
 
   // Folder rename — cascade-rename every file whose path starts with
   // `oldPath + "/"` (plus the .keep placeholder), swapping the prefix.
-  const handleRenameFolder = useCallback((oldPath: string) => {
+  const handleRenameFolder = useCallback(async (oldPath: string) => {
     const oldName = oldPath.split("/").pop() ?? "";
     const parentPath = oldPath.includes("/")
       ? oldPath.slice(0, oldPath.lastIndexOf("/"))
       : "";
-    const newName = prompt("Rename folder:", oldName);
-    if (!newName || !newName.trim() || newName === oldName) {
-      setContextMenu(null);
-      return;
-    }
+    setContextMenu(null);
+    const newName = await showPrompt({
+      title: "Rename folder",
+      initialValue: oldName,
+      placeholder: "Folder name",
+      confirmLabel: "Rename",
+    });
+    if (!newName || !newName.trim() || newName === oldName) return;
     const newPath = parentPath ? `${parentPath}/${newName.trim()}` : newName.trim();
     withStructBatch(() => {
       for (const f of files) {
@@ -353,47 +361,61 @@ export function FileTree({
         }
       }
     });
-    setContextMenu(null);
   }, [files]);
 
   // Folder delete — cascade-delete every file under the folder.
-  const handleDeleteFolder = useCallback((path: string) => {
+  const handleDeleteFolder = useCallback(async (path: string) => {
     const doomed = files.filter(
       (f) => f.path === path || f.path.startsWith(path + "/"),
     );
-    if (doomed.length === 0) {
-      setContextMenu(null);
-      return;
-    }
+    setContextMenu(null);
+    if (doomed.length === 0) return;
     const visible = doomed.filter((f) => !f.path.endsWith("/.keep")).length;
-    const msg = visible === 0
-      ? `Delete empty folder "${path}"?`
-      : `Delete "${path}" and ${visible} file${visible === 1 ? "" : "s"}?`;
-    if (confirm(msg)) {
+    const description = visible === 0
+      ? `The empty folder "${path}" will be removed.`
+      : `"${path}" and ${visible} file${visible === 1 ? "" : "s"} will be removed.`;
+    const ok = await showConfirm({
+      title: "Delete folder?",
+      description,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (ok) {
       withStructBatch(() => {
         for (const f of doomed) deleteWorkspaceFile(f.id);
       });
     }
-    setContextMenu(null);
   }, [files]);
 
-  const handleNewFile = useCallback((folderPath = "") => {
-    const name = prompt("New file name (e.g., sketch.strudel):");
+  const handleNewFile = useCallback(async (folderPath = "") => {
+    const name = await showPrompt({
+      title: "New file",
+      description: "Include an extension — .strudel, .sonicpi, .hydra, .p5, or .md.",
+      placeholder: "sketch.strudel",
+      confirmLabel: "Create",
+    });
     if (!name || !name.trim()) return;
     const trimmedName = name.trim();
     const path = folderPath ? `${folderPath}/${trimmedName}` : trimmedName;
     const ext = trimmedName.split(".").pop()?.toLowerCase() ?? "";
     const language = extensionToLanguage(ext);
     if (!language) {
-      alert(`Unknown file extension ".${ext}". Supported: .strudel, .sonicpi, .hydra, .p5, .md`);
+      showToast(
+        `Unknown file extension ".${ext}". Supported: .strudel, .sonicpi, .hydra, .p5, .md`,
+        "error",
+      );
       return;
     }
     const id = `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     createWorkspaceFile(id, path, "", language);
   }, []);
 
-  const handleNewFolder = useCallback((parentPath = "") => {
-    const name = prompt("New folder name:");
+  const handleNewFolder = useCallback(async (parentPath = "") => {
+    const name = await showPrompt({
+      title: "New folder",
+      placeholder: "Folder name",
+      confirmLabel: "Create",
+    });
     if (!name || !name.trim()) return;
     // Folders are implicit — create a .keep placeholder file so the folder
     // appears in the tree and persists to IDB. The user can delete it later.

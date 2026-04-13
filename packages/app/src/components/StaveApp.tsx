@@ -32,6 +32,8 @@ import { TemplateModal } from "./TemplateModal";
 import { ProjectSwitcherModal } from "./ProjectSwitcherModal";
 import { SnapshotView } from "./SnapshotView";
 import { OutlineView } from "./OutlineView";
+import { DialogHost } from "./DialogHost";
+import { showPrompt, showToast } from "../dialogs/host";
 import { CommandPalette, type PaletteRow } from "./CommandPalette";
 import { WorkspaceSearchView, type WorkspaceSearchViewHandle } from "./WorkspaceSearchView";
 import { ActivityBar } from "./ActivityBar";
@@ -237,7 +239,12 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   }, [refreshProjects]);
 
   const handleRenameActiveProject = useCallback(async () => {
-    const newName = prompt("Rename project:", activeProject.name);
+    const newName = await showPrompt({
+      title: "Rename project",
+      initialValue: activeProject.name,
+      placeholder: "Project name",
+      confirmLabel: "Rename",
+    });
     if (!newName || !newName.trim() || newName === activeProject.name) return;
     await renameProject(activeProject.id, newName.trim());
     const list = await listProjects();
@@ -249,7 +256,12 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const handleRenameProjectFromSwitcher = useCallback(async (id: string) => {
     const proj = projects.find((p) => p.id === id);
     if (!proj) return;
-    const newName = prompt("Rename project:", proj.name);
+    const newName = await showPrompt({
+      title: "Rename project",
+      initialValue: proj.name,
+      placeholder: "Project name",
+      confirmLabel: "Rename",
+    });
     if (!newName || !newName.trim() || newName === proj.name) return;
     await renameProject(id, newName.trim());
     const list = await listProjects();
@@ -326,7 +338,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       run: () => {
         exportProjectAsZip(activeProject).catch((err) => {
           console.error("[stave] export failed:", err);
-          alert("Export failed — see console for details.");
+          showToast("Export failed — see console for details.", "error");
         });
       },
     }));
@@ -452,7 +464,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           onExportProject={() => {
             exportProjectAsZip(activeProject).catch((err) => {
               console.error("[stave] export failed:", err);
-              alert("Export failed — see console for details.");
+              showToast("Export failed — see console for details.", "error");
             });
           }}
           onVersionHistory={openSnapshotPanel}
@@ -542,6 +554,8 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         onRename={handleRenameProjectFromSwitcher}
         onDelete={handleDeleteProjectFromSwitcher}
       />
+
+      <DialogHost />
 
       {!zenMode && <StatusBar
         projectName={activeProject.name}

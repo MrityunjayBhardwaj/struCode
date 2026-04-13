@@ -2,6 +2,7 @@
 
 import React, { useEffect } from "react";
 import type { ProjectMeta } from "@stave/editor";
+import { showConfirm } from "../dialogs/host";
 
 interface ProjectSwitcherModalProps {
   open: boolean;
@@ -67,10 +68,14 @@ export function ProjectSwitcherModal({
                 {projects.length > 1 && p.id !== activeProjectId && (
                   <button
                     style={styles.deleteBtn}
-                    onClick={() => {
-                      if (confirm(`Delete project "${p.name}"? This cannot be undone.`)) {
-                        onDelete(p.id);
-                      }
+                    onClick={async () => {
+                      const ok = await showConfirm({
+                        title: "Delete project?",
+                        description: `"${p.name}" and all its files will be permanently removed.`,
+                        confirmLabel: "Delete",
+                        danger: true,
+                      });
+                      if (ok) onDelete(p.id);
                     }}
                     title="Delete"
                   >

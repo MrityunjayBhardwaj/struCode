@@ -2,6 +2,7 @@
 
 import React, { useCallback, useState } from "react";
 import type { SnapshotMeta } from "@stave/editor";
+import { showConfirm } from "../dialogs/host";
 
 interface SnapshotViewProps {
   snapshots: SnapshotMeta[];
@@ -59,7 +60,12 @@ export function SnapshotView({ snapshots, onSaveNew, onRestore, onDelete }: Snap
                   style={styles.actionBtn}
                   title="Restore this version"
                   onClick={async () => {
-                    if (!confirm(`Restore "${s.label}"? This replaces the current files.`)) return;
+                    const ok = await showConfirm({
+                      title: "Restore this version?",
+                      description: `"${s.label}" will replace the current file contents. You can save a new version first if you want to keep them.`,
+                      confirmLabel: "Restore",
+                    });
+                    if (!ok) return;
                     await onRestore(s.id);
                   }}
                 >↻</button>
