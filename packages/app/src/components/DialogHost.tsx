@@ -22,8 +22,8 @@ export function DialogHost() {
     <>
       {dialog && <DialogBody dialog={dialog} key={dialog.id} />}
       {toasts.length > 0 && <ToastStack toasts={toasts} />}
-      {/* eslint-disable-next-line @typescript-eslint/no-unused-expressions */}
-      {tick}
+      {/* tick referenced to keep React subscribed to dialog state */}
+      <span data-stave-dialog-tick={tick} hidden />
     </>
   );
 }
