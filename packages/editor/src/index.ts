@@ -67,6 +67,7 @@ export {
   generateUniquePresetId,
 } from './visualizers/vizPreset'
 export { compilePreset } from './visualizers/vizCompiler'
+export { mountVizRenderer } from './visualizers/mountVizRenderer'
 
 // Visualizers — editor internals (advanced use)
 export { SplitPane } from './visualizers/editor/SplitPane'

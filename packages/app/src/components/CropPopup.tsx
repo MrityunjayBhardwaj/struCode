@@ -3,8 +3,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   VizPresetStore,
+  compilePreset,
+  mountVizRenderer,
+  workspaceAudioBus,
   type CropRegion,
   type VizPreset,
+  type VizRenderer,
 } from "@stave/editor";
 import { showToast } from "../dialogs/host";
 
@@ -17,12 +21,6 @@ interface CropPopupProps {
 const PREVIEW_W = 640;
 const PREVIEW_H = 400;
 
-/**
- * Overlay popup with a live viz preview and a draggable/resizable crop
- * visor. The user adjusts the crop region, then clicks Save to persist
- * it to VizPreset.cropRegion. The inline viz picks it up on next
- * remount (via the namedVizRegistry change listener).
- */
 export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
   const [preset, setPreset] = useState<VizPreset | null>(null);
   const [crop, setCrop] = useState<CropRegion>({ x: 0, y: 0, w: 1, h: 1 });
@@ -31,6 +29,9 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
     | { kind: "resize"; edge: string; startX: number; startY: number; origCrop: CropRegion }
     | null
   >(null);
+
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<{ renderer: VizRenderer; disconnect: () => void } | null>(null);
 
   // Load preset on mount
   useEffect(() => {
@@ -41,6 +42,51 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
       }
     });
   }, [presetId]);
+
+  // Mount the live viz renderer once the preset is loaded
+  useEffect(() => {
+    if (!preset || !canvasContainerRef.current) return;
+
+    let descriptor;
+    try {
+      descriptor = compilePreset(preset);
+    } catch {
+      return; // compile error — show placeholder only
+    }
+
+    // Subscribe to the default audio bus to get engine components
+    let unsub: (() => void) | null = null;
+    let mounted = false;
+
+    unsub = workspaceAudioBus.subscribe(
+      { kind: "default" },
+      (payload) => {
+        if (mounted || !canvasContainerRef.current) return;
+        mounted = true;
+
+        // Build minimal engine components from the payload
+        const components = payload?.engineComponents ?? payload ?? {};
+
+        rendererRef.current = mountVizRenderer(
+          canvasContainerRef.current! as HTMLDivElement,
+          descriptor.factory,
+          components,
+          { w: PREVIEW_W, h: PREVIEW_H },
+          console.error,
+        );
+        rendererRef.current.renderer.resume?.();
+      },
+    );
+
+    return () => {
+      unsub?.();
+      if (rendererRef.current) {
+        rendererRef.current.renderer.destroy();
+        rendererRef.current.disconnect();
+        rendererRef.current = null;
+      }
+    };
+  }, [preset]);
 
   const handleSave = useCallback(async () => {
     if (!preset) return;
@@ -59,9 +105,7 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
     showToast(`Crop cleared for "${vizId}"`, "info");
   }, [preset, vizId]);
 
-  // Drag handlers (move + edge resize)
-  const overlayRef = useRef<HTMLDivElement>(null);
-
+  // Drag handlers
   const handleMouseDown = useCallback(
     (e: React.MouseEvent, kind: "move" | "resize", edge = "") => {
       e.preventDefault();
@@ -88,9 +132,9 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
       } else if (dragging.kind === "resize") {
         const edge = (dragging as any).edge as string;
         let { x, y, w, h } = orig;
-        if (edge.includes("e")) { w = Math.max(0.05, Math.min(1 - x, w + dx)); }
+        if (edge.includes("e")) w = Math.max(0.05, Math.min(1 - x, w + dx));
         if (edge.includes("w")) { x = Math.max(0, Math.min(x + w - 0.05, x + dx)); w = orig.x + orig.w - x; }
-        if (edge.includes("s")) { h = Math.max(0.05, Math.min(1 - y, h + dy)); }
+        if (edge.includes("s")) h = Math.max(0.05, Math.min(1 - y, h + dy));
         if (edge.includes("n")) { y = Math.max(0, Math.min(y + h - 0.05, y + dy)); h = orig.y + orig.h - y; }
         setCrop({ x, y, w, h });
       }
@@ -133,15 +177,10 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
     ...area,
   });
 
-  // Resize handles on edges
   const edgeHandle = (edge: string, style: React.CSSProperties): React.ReactElement => (
     <div
       key={edge}
-      style={{
-        position: "absolute",
-        zIndex: 3,
-        ...style,
-      }}
+      style={{ position: "absolute", zIndex: 3, ...style }}
       onMouseDown={(e) => handleMouseDown(e, "resize", edge)}
     />
   );
@@ -155,9 +194,7 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
         </div>
 
         <div style={styles.body}>
-          {/* Preview area with crop visor overlay */}
           <div
-            ref={overlayRef}
             style={{
               position: "relative",
               width: PREVIEW_W,
@@ -168,13 +205,15 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
               border: "1px solid var(--border-strong, #3a3a5a)",
             }}
           >
-            {/* Placeholder for viz canvas — shows a checkerboard pattern */}
-            <div style={{
-              position: "absolute", inset: 0,
-              backgroundImage: "repeating-conic-gradient(var(--bg-hover) 0% 25%, transparent 0% 50%)",
-              backgroundSize: "20px 20px",
-              opacity: 0.3,
-            }} />
+            {/* Live viz canvas */}
+            <div
+              ref={canvasContainerRef}
+              style={{
+                position: "absolute",
+                inset: 0,
+                overflow: "hidden",
+              }}
+            />
 
             {/* Dim areas outside crop */}
             <div style={dimStyle({ top: 0, left: 0, right: 0, height: `${crop.y * 100}%` })} />
@@ -187,7 +226,6 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
               style={visorStyle}
               onMouseDown={(e) => handleMouseDown(e, "move")}
             >
-              {/* Corner + edge resize handles */}
               {edgeHandle("nw", { top: -4, left: -4, width: 8, height: 8, cursor: "nw-resize" })}
               {edgeHandle("ne", { top: -4, right: -4, width: 8, height: 8, cursor: "ne-resize" })}
               {edgeHandle("sw", { bottom: -4, left: -4, width: 8, height: 8, cursor: "sw-resize" })}
@@ -199,7 +237,6 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
             </div>
           </div>
 
-          {/* Crop info */}
           <div style={styles.info}>
             <span>x: {(crop.x * 100).toFixed(0)}%</span>
             <span>y: {(crop.y * 100).toFixed(0)}%</span>
@@ -216,10 +253,6 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
     </div>
   );
 }
-
-// ── dimStyle is used inline above as a function; the static "dim"
-//    elements are generated imperatively. This helper just returns JSX
-//    for the four dimming divs. ──
 
 const styles: Record<string, React.CSSProperties> = {
   backdrop: {

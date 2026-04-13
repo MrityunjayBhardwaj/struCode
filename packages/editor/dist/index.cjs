@@ -19966,6 +19966,7 @@ exports.listSnapshots = listSnapshots;
 exports.listWorkspaceFiles = listWorkspaceFiles;
 exports.liveCodingRuntimeRegistry = liveCodingRuntimeRegistry;
 exports.merge = merge;
+exports.mountVizRenderer = mountVizRenderer;
 exports.normalizeStrudelHap = normalizeStrudelHap;
 exports.noteToMidi = noteToMidi;
 exports.onNamedVizChanged = onNamedVizChanged;
