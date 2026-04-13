@@ -27,6 +27,13 @@ import {
 import { seedProjectFromTemplate } from "../templates";
 import { exportProjectAsZip } from "../exportProject";
 import { importProjectFromZip } from "../importProject";
+import {
+  buildShareUrl,
+  decodeSharePayload,
+  applyShareManifest,
+  readShareFragment,
+  clearShareFragment,
+} from "../shareProject";
 import { MenuBar } from "./MenuBar";
 import { FileTree, type FileTreeHandle } from "./FileTree";
 import { TemplateModal } from "./TemplateModal";
@@ -43,7 +50,7 @@ import {
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { EditorSettingsModal } from "./EditorSettingsModal";
 import { DialogHost } from "./DialogHost";
-import { showPrompt, showToast } from "../dialogs/host";
+import { showPrompt, showToast, showConfirm } from "../dialogs/host";
 import { CommandPalette, type PaletteRow } from "./CommandPalette";
 import { WorkspaceSearchView, type WorkspaceSearchViewHandle } from "./WorkspaceSearchView";
 import { ActivityBar } from "./ActivityBar";
@@ -132,6 +139,56 @@ export function StaveApp({ initialProject }: StaveAppProps) {
 
   const triggerImportPicker = useCallback(() => {
     importInputRef.current?.click();
+  }, []);
+
+  const handleShareProject = useCallback(async () => {
+    if (!activeProject) return;
+    try {
+      const url = await buildShareUrl(activeProject);
+      await navigator.clipboard.writeText(url);
+      showToast(`Share link copied (${url.length.toLocaleString()} chars).`, "info");
+    } catch (err) {
+      console.error("[stave] share failed:", err);
+      showToast(
+        `Share failed — ${(err as Error).message ?? "see console"}`,
+        "error",
+      );
+    }
+  }, [activeProject]);
+
+  // On-mount: if we landed with #share=, decode and offer to import.
+  // Runs once per session — the fragment is cleared either way so a
+  // refresh doesn't re-prompt.
+  const sharePromptHandledRef = useRef(false);
+  useEffect(() => {
+    if (sharePromptHandledRef.current) return;
+    sharePromptHandledRef.current = true;
+    const encoded = readShareFragment();
+    if (!encoded) return;
+    void (async () => {
+      try {
+        const manifest = await decodeSharePayload(encoded);
+        const ok = await showConfirm({
+          title: "Import shared project?",
+          description: `Import "${manifest.project.name}" as a new project? It contains ${manifest.files.length} file(s).`,
+          confirmLabel: "Import",
+        });
+        clearShareFragment();
+        if (!ok) return;
+        const meta = await applyShareManifest(manifest);
+        const list = await listProjects();
+        setProjects(list);
+        setActiveProject(meta);
+        showToast(`Imported ${meta.name}`, "info");
+      } catch (err) {
+        console.error("[stave] share import failed:", err);
+        showToast(
+          `Couldn't import shared project — ${(err as Error).message ?? "malformed link"}`,
+          "error",
+        );
+        clearShareFragment();
+      }
+    })();
   }, []);
 
   // Esc exits zen mode. Registered at window level because there's no
@@ -471,6 +528,13 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       run: () => { shellRef.current?.splitActiveGroup?.("south"); },
     }));
     unregs.push(registerCommand({
+      id: "stave.file.share",
+      title: "Copy Share Link",
+      category: "File",
+      description: "Copy a URL that imports this project on another machine.",
+      run: () => { void handleShareProject(); },
+    }));
+    unregs.push(registerCommand({
       id: "stave.view.shortcuts",
       title: "Keyboard Shortcuts",
       category: "View",
@@ -530,7 +594,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       render: () => null,
     }));
     return () => { for (const u of unregs) u(); };
-  }, [activeProject, handleRenameActiveProject, openSnapshotPanel]);
+  }, [activeProject, handleRenameActiveProject, openSnapshotPanel, handleShareProject]);
 
   // Build file rows for QuickOpen — memoised so mount of the palette
   // has a stable array. Rebuilt when the file list changes.
@@ -569,6 +633,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
             });
           }}
           onImportProject={triggerImportPicker}
+          onShareProject={handleShareProject}
           onVersionHistory={openSnapshotPanel}
           onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
           sidebarCollapsed={sidebarCollapsed}
