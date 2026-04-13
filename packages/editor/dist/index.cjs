@@ -5914,12 +5914,17 @@ function getFolderOrderMap() {
 function getSubfolderOrderMap() {
   return ensureDoc().getMap("subfolderOrder");
 }
+function getChildOrderMap() {
+  return ensureDoc().getMap("childOrder");
+}
 function ensureFolderOrderObserver() {
   if (folderOrderObserverWired) return;
   const map = getFolderOrderMap();
   const submap = getSubfolderOrderMap();
+  const childmap = getChildOrderMap();
   map.observeDeep(() => notifyFolderOrder());
   submap.observeDeep(() => notifyFolderOrder());
+  childmap.observeDeep(() => notifyFolderOrder());
   folderOrderObserverWired = true;
 }
 var wiredFilesMap = null;
@@ -6119,6 +6124,24 @@ function setSubfolderOrder(parentPath, orderedNames) {
   doc.transact(() => {
     const next = new Y4__namespace.Array();
     next.push(orderedNames);
+    map.set(parentPath, next);
+  }, STRUCT_ORIGIN);
+}
+function getChildOrder(parentPath) {
+  ensureDoc();
+  ensureFolderOrderObserver();
+  const map = getChildOrderMap();
+  const arr = map.get(parentPath);
+  return arr ? arr.toArray() : [];
+}
+function setChildOrder(parentPath, entries) {
+  ensureDoc();
+  ensureFolderOrderObserver();
+  const map = getChildOrderMap();
+  const doc = ensureDoc();
+  doc.transact(() => {
+    const next = new Y4__namespace.Array();
+    next.push(entries);
     map.set(parentPath, next);
   }, STRUCT_ORIGIN);
 }
@@ -19734,6 +19757,7 @@ exports.filter = filter;
 exports.flushToPreset = flushToPreset;
 exports.generateUniquePresetId = generateUniquePresetId;
 exports.getActiveProjectId = getActiveProjectId;
+exports.getChildOrder = getChildOrder;
 exports.getEditorFontSize = getEditorFontSize;
 exports.getEditorMinimap = getEditorMinimap;
 exports.getEditorTheme = getEditorTheme;
@@ -19793,6 +19817,7 @@ exports.scaleGain = scaleGain;
 exports.seedFromPreset = seedFromPreset;
 exports.seedFromPresetId = seedFromPresetId;
 exports.seedWorkspaceFile = seedWorkspaceFile;
+exports.setChildOrder = setChildOrder;
 exports.setContent = setContent;
 exports.setEditorFontSize = setEditorFontSize;
 exports.setEditorTheme = setEditorTheme;

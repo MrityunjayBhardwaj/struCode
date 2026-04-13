@@ -103,16 +103,22 @@ function getSubfolderOrderMap(): Y.Map<Y.Array<string>> {
   return ensureDoc().getMap('subfolderOrder') as Y.Map<Y.Array<string>>
 }
 
+function getChildOrderMap(): Y.Map<Y.Array<string>> {
+  return ensureDoc().getMap('childOrder') as Y.Map<Y.Array<string>>
+}
+
 function ensureFolderOrderObserver(): void {
   if (folderOrderObserverWired) return
   const map = getFolderOrderMap()
   const submap = getSubfolderOrderMap()
+  const childmap = getChildOrderMap()
   // Observe both shallow (keys added/removed) and deep (inner Y.Array
-  // mutations) so reordering within a folder propagates. Both file-order
-  // and subfolder-order share the same subscribers — callers re-render
-  // the whole tree on either change.
+  // mutations) so reordering within a folder propagates. All three
+  // share the same subscribers — callers re-render the whole tree on
+  // any change.
   map.observeDeep(() => notifyFolderOrder())
   submap.observeDeep(() => notifyFolderOrder())
+  childmap.observeDeep(() => notifyFolderOrder())
   folderOrderObserverWired = true
 }
 
@@ -458,6 +464,38 @@ export function setSubfolderOrder(parentPath: string, orderedNames: string[]): v
   doc.transact(() => {
     const next = new Y.Array<string>()
     next.push(orderedNames)
+    map.set(parentPath, next)
+  }, STRUCT_ORIGIN)
+}
+
+/**
+ * Return the explicit mixed child order for a folder, or an empty array
+ * if none is set. Each entry is `"d:folderName"` or `"f:fileId"`. When
+ * present, this overrides the separate fileOrder + subfolderOrder for
+ * rendering purposes — items appear in exactly this order (folders and
+ * files interleaved).
+ */
+export function getChildOrder(parentPath: string): string[] {
+  ensureDoc()
+  ensureFolderOrderObserver()
+  const map = getChildOrderMap()
+  const arr = map.get(parentPath)
+  return arr ? arr.toArray() : []
+}
+
+/**
+ * Replace the mixed child order for a folder. Entries are `"d:name"` for
+ * folders and `"f:id"` for files. Empty array clears (reverts to
+ * folders-first fallback).
+ */
+export function setChildOrder(parentPath: string, entries: string[]): void {
+  ensureDoc()
+  ensureFolderOrderObserver()
+  const map = getChildOrderMap()
+  const doc = ensureDoc()
+  doc.transact(() => {
+    const next = new Y.Array<string>()
+    next.push(entries)
     map.set(parentPath, next)
   }, STRUCT_ORIGIN)
 }

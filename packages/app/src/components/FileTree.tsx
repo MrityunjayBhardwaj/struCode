@@ -12,6 +12,8 @@ import {
   subscribeToFolderOrder,
   getSubfolderOrder,
   setSubfolderOrder,
+  getChildOrder,
+  setChildOrder,
   withStructBatch,
   type WorkspaceFile,
 } from "@stave/editor";
@@ -87,65 +89,94 @@ function buildTree(files: WorkspaceFile[]): TreeNode[] {
 }
 
 /**
- * Apply fileOrder and subfolderOrder to a freshly-built alphabetical
- * tree. For each folder (including root, keyed as ""), we partition
- * children into folders + files, then:
- *   - folders are reordered per subfolderOrder (immediate child names).
- *     Unknown names stay alphabetical at the tail.
- *   - files are reordered per fileOrder (file ids). Unknown ids stay
- *     alphabetical at the tail.
- * Final render is `folders first, then files` (VS Code convention).
+ * Apply ordering to a tree level. If a mixed `childOrder` exists for
+ * this folder, it's used as-is (folders and files interleaved). Otherwise
+ * falls back to the legacy model: folders first (ordered by
+ * subfolderOrder), then files (ordered by fileOrder).
  */
 function applyFolderOrder(
   nodes: TreeNode[],
   folderPath: string,
   getFileOrderFn: (path: string) => string[],
   getSubOrderFn: (path: string) => string[],
+  getChildOrderFn: (path: string) => string[],
 ): void {
-  const folders: TreeNode[] = [];
-  const files: TreeNode[] = [];
-  for (const n of nodes) {
-    if (n.kind === "folder") folders.push(n);
-    else files.push(n);
-  }
-
-  const fileOrder = getFileOrderFn(folderPath);
-  if (fileOrder.length > 0) {
-    const idx = new Map<string, number>();
-    fileOrder.forEach((id, i) => idx.set(id, i));
-    const ordered: TreeNode[] = [];
-    const rest: TreeNode[] = [];
-    for (const n of files) {
-      if (n.file && idx.has(n.file.id)) ordered.push(n);
-      else rest.push(n);
+  // ── Mixed child order (new) ──
+  const childOrder = getChildOrderFn(folderPath);
+  if (childOrder.length > 0) {
+    const folderByName = new Map<string, TreeNode>();
+    const fileById = new Map<string, TreeNode>();
+    for (const n of nodes) {
+      if (n.kind === "folder") folderByName.set(n.name, n);
+      else if (n.file) fileById.set(n.file.id, n);
     }
-    ordered.sort((a, b) => idx.get(a.file!.id)! - idx.get(b.file!.id)!);
-    files.length = 0;
-    files.push(...ordered, ...rest);
-  }
-
-  const subOrder = getSubOrderFn(folderPath);
-  if (subOrder.length > 0) {
-    const idx = new Map<string, number>();
-    subOrder.forEach((name, i) => idx.set(name, i));
     const ordered: TreeNode[] = [];
-    const rest: TreeNode[] = [];
-    for (const n of folders) {
-      if (idx.has(n.name)) ordered.push(n);
-      else rest.push(n);
+    const seen = new Set<string>();
+    for (const entry of childOrder) {
+      if (entry.startsWith("d:")) {
+        const name = entry.slice(2);
+        const node = folderByName.get(name);
+        if (node) { ordered.push(node); seen.add("d:" + name); }
+      } else if (entry.startsWith("f:")) {
+        const id = entry.slice(2);
+        const node = fileById.get(id);
+        if (node) { ordered.push(node); seen.add("f:" + id); }
+      }
     }
-    ordered.sort((a, b) => idx.get(a.name)! - idx.get(b.name)!);
-    folders.length = 0;
-    folders.push(...ordered, ...rest);
-  }
+    // Append any nodes not covered by childOrder (newly created items).
+    for (const n of nodes) {
+      const key = n.kind === "folder" ? "d:" + n.name : "f:" + (n.file?.id ?? "");
+      if (!seen.has(key)) ordered.push(n);
+    }
+    nodes.length = 0;
+    nodes.push(...ordered);
+  } else {
+    // ── Legacy: folders first, then files ──
+    const folders: TreeNode[] = [];
+    const files: TreeNode[] = [];
+    for (const n of nodes) {
+      if (n.kind === "folder") folders.push(n);
+      else files.push(n);
+    }
 
-  nodes.length = 0;
-  nodes.push(...folders, ...files);
+    const fileOrder = getFileOrderFn(folderPath);
+    if (fileOrder.length > 0) {
+      const idx = new Map<string, number>();
+      fileOrder.forEach((id, i) => idx.set(id, i));
+      const ordered: TreeNode[] = [];
+      const rest: TreeNode[] = [];
+      for (const n of files) {
+        if (n.file && idx.has(n.file.id)) ordered.push(n);
+        else rest.push(n);
+      }
+      ordered.sort((a, b) => idx.get(a.file!.id)! - idx.get(b.file!.id)!);
+      files.length = 0;
+      files.push(...ordered, ...rest);
+    }
+
+    const subOrder = getSubOrderFn(folderPath);
+    if (subOrder.length > 0) {
+      const idx = new Map<string, number>();
+      subOrder.forEach((name, i) => idx.set(name, i));
+      const ordered: TreeNode[] = [];
+      const rest: TreeNode[] = [];
+      for (const n of folders) {
+        if (idx.has(n.name)) ordered.push(n);
+        else rest.push(n);
+      }
+      ordered.sort((a, b) => idx.get(a.name)! - idx.get(b.name)!);
+      folders.length = 0;
+      folders.push(...ordered, ...rest);
+    }
+
+    nodes.length = 0;
+    nodes.push(...folders, ...files);
+  }
 
   // Recurse into each folder with that folder's own path as parent.
   for (const n of nodes) {
     if (n.kind === "folder" && n.children) {
-      applyFolderOrder(n.children, n.path, getFileOrderFn, getSubOrderFn);
+      applyFolderOrder(n.children, n.path, getFileOrderFn, getSubOrderFn, getChildOrderFn);
     }
   }
 }
@@ -175,6 +206,7 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
       "",
       (path) => getFolderOrder(path),
       (path) => getSubfolderOrder(path),
+      (path) => getChildOrder(path),
     );
     return t;
     // folderOrderRev is a trigger-only dep — the lookup closes over the
@@ -636,25 +668,16 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
         setDropTarget(folderPath);
         return;
       }
-      const isFolderDrag = e.dataTransfer.types.includes(
-        "application/stave-folder-drag",
-      );
-      // For FILE drags, only the "drop INTO folder" affordance is valid
-      // (there's nowhere to reorder to — files always render below folders).
-      if (!isFolderDrag) {
-        setBetweenFolderTarget(null);
-        setDropTarget(folderPath);
-        return;
-      }
-      // Folder drag: zone detection — top 25% = insert above,
-      // bottom 25% = insert below, middle 50% = nest into the folder.
+      // Zone detection — top 25% = insert above, bottom 25% = below,
+      // middle 50% = nest into the folder. Works for both file and folder
+      // drags so items can be interleaved at the same level.
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const y = e.clientY - rect.top;
-      const third = rect.height / 4;
-      if (y < third) {
+      const quarter = rect.height / 4;
+      if (y < quarter) {
         setBetweenFolderTarget({ folderPath, position: "above" });
         setDropTarget(null);
-      } else if (y > rect.height - third) {
+      } else if (y > rect.height - quarter) {
         setBetweenFolderTarget({ folderPath, position: "below" });
         setDropTarget(null);
       } else {
@@ -719,9 +742,6 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
   const handleDragOverFile = useCallback(
     (e: React.DragEvent, targetFileId: string) => {
       if (!e.dataTransfer.types.includes("application/stave-tree-item")) return;
-      // Only file-on-file drags get the between-indicator. Folder-on-file
-      // is a no-op — bail early so no misleading marker shows.
-      if (!e.dataTransfer.types.includes("application/stave-file-drag")) return;
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = "move";
@@ -743,68 +763,102 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
     return i < 0 ? "" : filePath.slice(0, i);
   }, []);
 
-  // Reorder a folder within its parent. `sourceFolderPath` is the drag
-  // source; `anchorFolderPath` is the folder being hovered over; `position`
-  // = where the source should land relative to the anchor. Both folders
-  // must share the same parent. No-op otherwise.
-  const reorderFolderWithin = useCallback(
+  /**
+   * Unified child reorder — moves `sourceEntry` relative to
+   * `anchorEntry` at the same folder level. Both entries use the
+   * `"d:name"` / `"f:id"` encoding. Writes to `childOrder`, which
+   * supports interleaved folders and files.
+   */
+  const reorderChildWithin = useCallback(
     (
-      sourceFolderPath: string,
-      anchorFolderPath: string,
+      parentPath: string,
+      sourceEntry: string,
+      anchorEntry: string,
       position: "above" | "below",
     ) => {
-      if (sourceFolderPath === anchorFolderPath) return;
-      const parentOf = (p: string) => {
-        const i = p.lastIndexOf("/");
-        return i < 0 ? "" : p.slice(0, i);
-      };
-      const nameOf = (p: string) => {
-        const i = p.lastIndexOf("/");
-        return i < 0 ? p : p.slice(i + 1);
-      };
-      const parent = parentOf(sourceFolderPath);
-      if (parent !== parentOf(anchorFolderPath)) return;
-      const sourceName = nameOf(sourceFolderPath);
-      const anchorName = nameOf(anchorFolderPath);
-      // Seed an order from the alphabetical list of siblings (derived
-      // from current files — each unique immediate-child folder under
-      // `parent`).
-      const prefix = parent ? parent + "/" : "";
-      const siblingNames = new Set<string>();
+      if (sourceEntry === anchorEntry) return;
+      // Build the current child order — seed from existing childOrder,
+      // or synthesise from the tree (folders-first then files).
+      const prefix = parentPath ? parentPath + "/" : "";
+      const folderNames = new Set<string>();
+      const fileEntries: string[] = [];
       for (const f of files) {
         if (!f.path.startsWith(prefix)) continue;
         const rest = f.path.slice(prefix.length);
         const slash = rest.indexOf("/");
-        if (slash < 0) continue; // file, not a folder
-        siblingNames.add(rest.slice(0, slash));
+        if (slash >= 0) {
+          folderNames.add(rest.slice(0, slash));
+        } else if (!f.path.endsWith("/.keep")) {
+          fileEntries.push("f:" + f.id);
+        }
       }
-      const existing = getSubfolderOrder(parent).filter((n) => siblingNames.has(n));
-      const base =
-        existing.length > 0
-          ? [
-              ...existing,
-              ...[...siblingNames]
-                .filter((n) => !existing.includes(n))
-                .sort(),
-            ]
-          : [...siblingNames].sort();
-      const without = base.filter((n) => n !== sourceName);
-      const anchorIdx = without.indexOf(anchorName);
+      const folderEntries = [...folderNames].sort().map((n) => "d:" + n);
+
+      // If childOrder already exists, use it as seed. Otherwise
+      // synthesise from subfolderOrder + fileOrder, or alphabetical.
+      let existing = getChildOrder(parentPath);
+      if (existing.length === 0) {
+        // Build from legacy ordering
+        const subOrder = getSubfolderOrder(parentPath);
+        const fileOrder = getFolderOrder(parentPath);
+
+        let orderedFolders = folderEntries;
+        if (subOrder.length > 0) {
+          const idx = new Map(subOrder.map((n, i) => [n, i]));
+          orderedFolders = [...folderEntries].sort((a, b) => {
+            const na = a.slice(2), nb = b.slice(2);
+            const ia = idx.get(na) ?? Infinity, ib = idx.get(nb) ?? Infinity;
+            return ia - ib;
+          });
+        }
+
+        let orderedFiles = fileEntries;
+        if (fileOrder.length > 0) {
+          const idx = new Map(fileOrder.map((id, i) => [id, i]));
+          orderedFiles = [...fileEntries].sort((a, b) => {
+            const ia = idx.get(a.slice(2)) ?? Infinity, ib = idx.get(b.slice(2)) ?? Infinity;
+            return ia - ib;
+          });
+        }
+
+        existing = [...orderedFolders, ...orderedFiles];
+      }
+
+      // Ensure source and anchor are in the list
+      const allEntries = new Set(existing);
+      for (const e of [...folderEntries, ...fileEntries]) allEntries.add(e);
+      const base = [...allEntries].filter((e) => {
+        if (e.startsWith("d:")) return folderNames.has(e.slice(2));
+        if (e.startsWith("f:")) return fileEntries.includes(e);
+        return false;
+      });
+
+      const without = base.filter((e) => e !== sourceEntry);
+      const anchorIdx = without.indexOf(anchorEntry);
       if (anchorIdx < 0) return;
       const insertAt = position === "above" ? anchorIdx : anchorIdx + 1;
       const next = [
         ...without.slice(0, insertAt),
-        sourceName,
+        sourceEntry,
         ...without.slice(insertAt),
       ];
-      setSubfolderOrder(parent, next);
+      setChildOrder(parentPath, next);
     },
     [files],
   );
 
-  // Reorder `fileId` within its parent folder relative to `anchorId`.
-  // Cross-folder drops are NOT handled here — those still go through
-  // handleDrop's moveFileToFolder path.
+  // Legacy wrappers used by handleDrop and handleDropOnFile
+  const reorderFolderWithin = useCallback(
+    (sourcePath: string, anchorPath: string, position: "above" | "below") => {
+      const parentOf = (p: string) => { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
+      const nameOf = (p: string) => { const i = p.lastIndexOf("/"); return i < 0 ? p : p.slice(i + 1); };
+      const parent = parentOf(sourcePath);
+      if (parent !== parentOf(anchorPath)) return;
+      reorderChildWithin(parent, "d:" + nameOf(sourcePath), "d:" + nameOf(anchorPath), position);
+    },
+    [reorderChildWithin],
+  );
+
   const reorderFileWithin = useCallback(
     (fileId: string, anchorId: string, position: "above" | "below") => {
       if (fileId === anchorId) return;
@@ -812,47 +866,10 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
       const anchor = files.find((f) => f.id === anchorId);
       if (!source || !anchor) return;
       const folder = folderPathOf(source.path);
-      if (folder !== folderPathOf(anchor.path)) return; // MVP: same folder only
-      // Seed an order from the current tree view: alphabetical filtered
-      // to this folder. Include the current explicit order as a base if
-      // present so we don't lose user-set positions for siblings.
-      const siblings = files
-        .filter(
-          (f) =>
-            folderPathOf(f.path) === folder && !f.path.endsWith("/.keep"),
-        )
-        .map((f) => f.id);
-      const existing = getFolderOrder(folder).filter((id) =>
-        siblings.includes(id),
-      );
-      const base =
-        existing.length > 0
-          ? [
-              ...existing,
-              ...siblings.filter((id) => !existing.includes(id)).sort((a, b) => {
-                const fa = files.find((x) => x.id === a)!.path;
-                const fb = files.find((x) => x.id === b)!.path;
-                return fa.localeCompare(fb);
-              }),
-            ]
-          : [...siblings].sort((a, b) => {
-              const fa = files.find((x) => x.id === a)!.path;
-              const fb = files.find((x) => x.id === b)!.path;
-              return fa.localeCompare(fb);
-            });
-      // Remove the source from its current position.
-      const without = base.filter((id) => id !== fileId);
-      const anchorIdx = without.indexOf(anchorId);
-      if (anchorIdx < 0) return;
-      const insertAt = position === "above" ? anchorIdx : anchorIdx + 1;
-      const next = [
-        ...without.slice(0, insertAt),
-        fileId,
-        ...without.slice(insertAt),
-      ];
-      setFolderOrder(folder, next);
+      if (folder !== folderPathOf(anchor.path)) return;
+      reorderChildWithin(folder, "f:" + fileId, "f:" + anchorId, position);
     },
-    [files, folderPathOf],
+    [files, folderPathOf, reorderChildWithin],
   );
 
   const handleDropOnFile = useCallback(
@@ -866,16 +883,22 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
         const payload = JSON.parse(raw) as
           | { kind: "file"; fileId: string }
           | { kind: "folder"; folderPath: string };
-        if (payload.kind !== "file") return; // folder-on-file is undefined
-        // Resolve position from the last known betweenTarget (it mirrors
-        // the dragover state at drop time). Fall back to "below".
         const position = betweenTarget?.position ?? "below";
-        reorderFileWithin(payload.fileId, targetFileId, position);
+        if (payload.kind === "file") {
+          reorderFileWithin(payload.fileId, targetFileId, position);
+        } else {
+          // Folder dropped on a file row — reorder the folder relative
+          // to the file within their shared parent level.
+          const targetFile = files.find((f) => f.id === targetFileId);
+          if (!targetFile) return;
+          const parentPath = folderPathOf(targetFile.path);
+          reorderChildWithin(parentPath, "d:" + payload.folderPath.split("/").pop()!, "f:" + targetFileId, position);
+        }
       } catch {
         /* ignore */
       }
     },
-    [betweenTarget, reorderFileWithin],
+    [betweenTarget, reorderFileWithin, reorderChildWithin, files, folderPathOf],
   );
 
   const handleDrop = useCallback(
@@ -897,20 +920,23 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
         const payload = JSON.parse(raw) as
           | { kind: "file"; fileId: string }
           | { kind: "folder"; folderPath: string };
-        // Folder-on-folder drop AND between-zone active → reorder.
-        if (
-          payload.kind === "folder" &&
-          pendingBetween &&
-          pendingBetween.folderPath === targetFolderPath
-        ) {
-          reorderFolderWithin(
-            payload.folderPath,
-            targetFolderPath,
-            pendingBetween.position,
-          );
+        // Between-zone active on a folder row → reorder (not nest).
+        if (pendingBetween && pendingBetween.folderPath === targetFolderPath) {
+          const anchorEntry = "d:" + targetFolderPath.split("/").pop()!;
+          const parentOf = (p: string) => { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
+          const parentPath = parentOf(targetFolderPath);
+
+          if (payload.kind === "folder") {
+            reorderFolderWithin(payload.folderPath, targetFolderPath, pendingBetween.position);
+          } else {
+            // File dropped on the edge of a folder row → reorder file
+            // relative to the folder at their shared parent level.
+            reorderChildWithin(parentPath, "f:" + payload.fileId, anchorEntry, pendingBetween.position);
+          }
           setDropTarget(null);
           return;
         }
+        // Middle zone or no between → nest into folder.
         if (payload.kind === "file") {
           moveFileToFolder(payload.fileId, targetFolderPath);
         } else if (payload.kind === "folder") {
@@ -921,7 +947,7 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
       }
       setDropTarget(null);
     },
-    [moveFileToFolder, moveFolderToFolder, betweenFolderTarget, reorderFolderWithin, importNativeFiles],
+    [moveFileToFolder, moveFolderToFolder, betweenFolderTarget, reorderFolderWithin, reorderChildWithin, importNativeFiles],
   );
 
   return (
