@@ -78,9 +78,9 @@ function LiveModeToggle({
   }
   const activeStyle: React.CSSProperties = {
     ...baseStyle,
-    background: 'rgba(196, 181, 253, 0.15)',
-    color: '#c4b5fd',
-    border: '1px solid rgba(196, 181, 253, 0.3)',
+    background: 'var(--accent-dim)',
+    color: 'var(--accent-strong, var(--accent))',
+    border: '1px solid var(--accent-dim)',
   }
   const inactiveStyle: React.CSSProperties = {
     ...baseStyle,

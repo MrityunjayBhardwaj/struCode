@@ -17,7 +17,7 @@
  *   - Close group merges tabs into the neighbor group.
  *   - Drag tab from group A to group B ends up in B, active in B,
  *     removed from A.
- *   - Theme applied via `style.getPropertyValue('--background')` on the
+ *   - Theme applied via `style.getPropertyValue('--code-bg')` on the
  *     shell root container (PV6 guard).
  *   - PV7 acceptance test — the shell's own source file contains ZERO
  *     occurrences of `previewMode`.
@@ -1095,7 +1095,7 @@ describe('WorkspaceShell', () => {
         '[data-workspace-shell="root"]',
       ) as HTMLElement
       expect(root).not.toBeNull()
-      expect(root.style.getPropertyValue('--background')).toBe('#090912')
+      expect(root.style.getPropertyValue('--code-bg')).toBe('#090912')
     })
 
     it('applies the light theme when requested', () => {
@@ -1106,7 +1106,7 @@ describe('WorkspaceShell', () => {
       const root = container.querySelector(
         '[data-workspace-shell="root"]',
       ) as HTMLElement
-      expect(root.style.getPropertyValue('--background')).toBe('#f8f7ff')
+      expect(root.style.getPropertyValue('--code-bg')).toBe('#f0f0f6')
     })
   })
 

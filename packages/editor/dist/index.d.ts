@@ -605,6 +605,14 @@ declare class StrudelEngine implements LiveCodingEngine {
     dispose(): void;
 }
 
+/**
+ * Theme tokens applied to the WorkspaceShell root via inline CSS vars.
+ *
+ * Surface / text / border / accent tokens are NOT included here — they
+ * come from globals.css's [data-stave-theme="dark|light"] selectors so
+ * the editor chrome and the app chrome share one palette. Only
+ * code-specific tokens (syntax colours, stem colours, font) live here.
+ */
 declare const DARK_THEME_TOKENS: Record<string, string>;
 declare const LIGHT_THEME_TOKENS: Record<string, string>;
 interface StrudelTheme {

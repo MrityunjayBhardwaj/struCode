@@ -33,7 +33,7 @@
  *     is still rendered (not a placeholder).
  *
  * Theme (PV6 / P6):
- *   - `applyTheme` is called on mount; `--background` resolves to the
+ *   - `applyTheme` is called on mount; `--code-bg` resolves to the
  *     dark-theme color on the container.
  */
 
@@ -515,7 +515,7 @@ describe('PreviewView', () => {
       '[data-workspace-view="preview"]',
     ) as HTMLElement
     expect(viewRoot).not.toBeNull()
-    expect(viewRoot.style.getPropertyValue('--background')).toBe('#090912')
+    expect(viewRoot.style.getPropertyValue('--code-bg')).toBe('#090912')
   })
 
   it('updates provider key formula when sourceRef changes', () => {

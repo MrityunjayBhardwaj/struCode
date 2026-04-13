@@ -414,9 +414,9 @@ export function VizEditorChrome({
           borderRadius: 3,
           fontSize: 10,
           fontFamily: 'inherit',
-          background: 'rgba(196, 181, 253, 0.12)',
-          color: '#c4b5fd',
-          border: '1px solid rgba(196, 181, 253, 0.25)',
+          background: 'var(--accent-dim)',
+          color: 'var(--accent-strong, var(--accent))',
+          border: '1px solid var(--accent-dim)',
           userSelect: 'none',
         }}
       >

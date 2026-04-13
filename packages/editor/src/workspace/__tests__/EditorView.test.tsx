@@ -172,7 +172,7 @@ describe('EditorView', () => {
     // `applyTheme` writes CSS custom properties to the element's inline
     // style. jsdom does not compute CSS variable cascade, but inline
     // style.setProperty is observable via `style.getPropertyValue`.
-    expect(viewRoot.style.getPropertyValue('--background')).toBe('#090912')
+    expect(viewRoot.style.getPropertyValue('--code-bg')).toBe('#090912')
   })
 
   it('applies the light theme when requested', () => {
@@ -181,7 +181,7 @@ describe('EditorView', () => {
     const viewRoot = container.querySelector(
       '[data-workspace-view="editor"]',
     ) as HTMLElement
-    expect(viewRoot.style.getPropertyValue('--background')).toBe('#f8f7ff')
+    expect(viewRoot.style.getPropertyValue('--code-bg')).toBe('#f0f0f6')
   })
 
   it('renders the chromeSlot above the Monaco editor inside the same root', () => {
