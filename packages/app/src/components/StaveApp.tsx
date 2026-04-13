@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   listProjects,
   createProject,
@@ -31,9 +31,11 @@ import { FileTree } from "./FileTree";
 import { TemplateModal } from "./TemplateModal";
 import { ProjectSwitcherModal } from "./ProjectSwitcherModal";
 import { SnapshotModal } from "./SnapshotModal";
-import { CommandPalette } from "./CommandPalette";
+import { CommandPalette, type PaletteRow } from "./CommandPalette";
+import { WorkspaceSearchPalette } from "./WorkspaceSearchPalette";
 import { registerCommand } from "../commands/registry";
 import { installKeybindingDispatcher } from "../commands/keybindings";
+import { listWorkspaceFiles } from "@stave/editor";
 import StrudelEditorClient from "./StrudelEditorClient";
 
 interface StaveAppProps {
@@ -68,6 +70,8 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [quickOpenOpen, setQuickOpenOpen] = useState(false);
+  const [workspaceSearchOpen, setWorkspaceSearchOpen] = useState(false);
 
   // Subscribe to the structural undo manager so Edit menu items can
   // enable/disable reactively.
@@ -314,8 +318,42 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       keybinding: "mod+b",
       run: () => setSidebarCollapsed((c) => !c),
     }));
+    unregs.push(registerCommand({
+      id: "stave.quickOpen",
+      title: "Quick Open File",
+      category: "Go",
+      keybinding: "mod+p",
+      run: () => setQuickOpenOpen(true),
+    }));
+    unregs.push(registerCommand({
+      id: "stave.workspaceSearch",
+      title: "Search in Files",
+      category: "Find",
+      keybinding: "mod+shift+f",
+      run: () => setWorkspaceSearchOpen(true),
+    }));
     return () => { for (const u of unregs) u(); };
   }, [activeProject, handleRenameActiveProject, openSnapshotModal]);
+
+  // Build file rows for QuickOpen — memoised so mount of the palette
+  // has a stable array. Rebuilt when the file list changes.
+  const quickOpenRows: PaletteRow[] = useMemo(() => {
+    if (!quickOpenOpen) return [];
+    return listWorkspaceFiles()
+      .filter((f) => !f.path.endsWith("/.keep"))
+      .map((f) => {
+        const name = f.path.split("/").pop() ?? f.path;
+        const folder = f.path.includes("/")
+          ? f.path.slice(0, f.path.lastIndexOf("/"))
+          : "";
+        return {
+          id: `file:${f.id}`,
+          title: name,
+          description: folder || undefined,
+          run: () => handleOpenFile(f.id),
+        };
+      });
+  }, [quickOpenOpen, handleOpenFile]);
 
   return (
     <div style={styles.root}>
@@ -401,6 +439,20 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         placeholder="Type a command..."
+      />
+
+      <CommandPalette
+        open={quickOpenOpen}
+        onClose={() => setQuickOpenOpen(false)}
+        placeholder="Search files by name..."
+        hideCommands
+        extraRows={quickOpenRows}
+      />
+
+      <WorkspaceSearchPalette
+        open={workspaceSearchOpen}
+        onClose={() => setWorkspaceSearchOpen(false)}
+        onOpenFile={handleOpenFile}
       />
     </div>
   );
