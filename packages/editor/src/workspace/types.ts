@@ -451,7 +451,17 @@ export interface PreviewViewProps {
  * Task 04 reserves the slot), NOT as a mode on the tab itself.
  */
 export type WorkspaceTab =
-  | { readonly kind: 'editor'; readonly id: string; readonly fileId: string }
+  | {
+      readonly kind: 'editor'
+      readonly id: string
+      readonly fileId: string
+      /**
+       * Preview tabs render in italic and are replaced when another file
+       * is opened in preview mode. Promoted to pinned (preview=false) on
+       * double-click or on first edit. Matches VSCode's preview-tab UX.
+       */
+      readonly preview?: boolean
+    }
   | {
       readonly kind: 'preview'
       readonly id: string

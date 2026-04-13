@@ -226,8 +226,20 @@ export interface WorkspaceShellHandle {
    * `kind: 'editor'` and matching `fileId` already exists (in any group),
    * focuses it. Otherwise creates a new editor tab in the currently active
    * group and focuses it. No-op if already focused.
+   *
+   * When `options.preview` is true, the tab is marked preview — a single
+   * preview slot per group is reused across successive preview opens,
+   * matching VSCode's single-click-to-preview behaviour. Promotion to a
+   * pinned tab happens on double-click or the first content edit.
    */
-  openOrFocusFile(fileId: string): void
+  openOrFocusFile(fileId: string, options?: { preview?: boolean }): void
+
+  /**
+   * Promote the given tab out of preview mode — it becomes pinned and
+   * stops being eligible for replacement by the next preview open. No-op
+   * if the tab doesn't exist or was already pinned.
+   */
+  promoteTab(tabId: string): void
 
   /**
    * Close every tab (editor + preview) that targets the given file id,
@@ -1529,15 +1541,35 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
           >
             {group.tabs.map((tab) => {
               const isActive = tab.id === group.activeTabId
+              const isPreview =
+                tab.kind === 'editor' && (tab as { preview?: boolean }).preview === true
               return (
                 <div
                   key={tab.id}
                   data-workspace-tab={tab.id}
                   data-tab-kind={tab.kind}
                   data-tab-active={isActive ? 'true' : 'false'}
+                  data-tab-preview={isPreview ? 'true' : 'false'}
                   draggable
                   onDragStart={(e) => handleTabDragStart(e, group.id, tab)}
                   onClick={() => handleTabClick(group.id, tab.id)}
+                  onDoubleClick={() => {
+                    // Double-click promotes a preview tab to pinned.
+                    if (isPreview) {
+                      setGroups((prev) => {
+                        const g = prev.get(group.id)
+                        if (!g) return prev
+                        const nextTabs = g.tabs.map((t) =>
+                          t.id === tab.id && t.kind === 'editor'
+                            ? { ...t, preview: false }
+                            : t,
+                        )
+                        const nx = new Map(prev)
+                        nx.set(group.id, { ...g, tabs: nextTabs })
+                        return nx
+                      })
+                    }
+                  }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -1553,6 +1585,7 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
                       ? 'var(--foreground)'
                       : 'var(--foreground-muted)',
                     fontSize: 11,
+                    fontStyle: isPreview ? 'italic' : 'normal',
                     whiteSpace: 'nowrap',
                     userSelect: 'none',
                   }}
@@ -1693,7 +1726,8 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
   useImperativeHandle(
     forwardedRef,
     () => ({
-      openOrFocusFile: (fileId: string) => {
+      openOrFocusFile: (fileId: string, options?: { preview?: boolean }) => {
+        const preview = options?.preview === true
         // Search every group for an existing editor tab with this fileId.
         let foundGroupId: string | null = null
         let foundTabId: string | null = null
@@ -1708,24 +1742,61 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
           }
         }
         if (foundGroupId && foundTabId) {
-          // Existing tab — activate it.
+          // Existing tab — activate it. A pinned-open overrides an existing
+          // preview flag by promoting the tab in the same pass.
           const targetGid = foundGroupId
           const targetTid = foundTabId
           setGroups((prev) => {
             const existing = prev.get(targetGid)
-            if (!existing || existing.activeTabId === targetTid) return prev
+            if (!existing) return prev
             const next = new Map(prev)
-            next.set(targetGid, { ...existing, activeTabId: targetTid })
+            const nextTabs = existing.tabs.map((t) => {
+              if (t.id !== targetTid) return t
+              if (t.kind !== 'editor') return t
+              if (!preview && t.preview) return { ...t, preview: false }
+              return t
+            })
+            next.set(targetGid, {
+              ...existing,
+              tabs: nextTabs,
+              activeTabId: targetTid,
+            })
             return next
           })
           setActiveGroupId(targetGid)
           return
         }
-        // No existing tab — create a new editor tab in the active group.
+        // No existing tab for this fileId. If this is a preview open and
+        // the active group already has a preview tab, REPLACE its fileId
+        // instead of appending — keeps the preview slot bounded to one.
+        if (preview) {
+          const existing = groups.get(activeGroupId)
+          const slot = existing?.tabs.find(
+            (t) => t.kind === 'editor' && (t as { preview?: boolean }).preview === true,
+          )
+          if (existing && slot) {
+            const slotId = slot.id
+            setGroups((prev) => {
+              const g = prev.get(activeGroupId)
+              if (!g) return prev
+              const nextTabs = g.tabs.map((t) =>
+                t.id === slotId && t.kind === 'editor'
+                  ? { ...t, fileId, preview: true }
+                  : t,
+              )
+              const nx = new Map(prev)
+              nx.set(activeGroupId, { ...g, tabs: nextTabs, activeTabId: slotId })
+              return nx
+            })
+            return
+          }
+        }
+        // No slot to reuse — create a fresh tab.
         const newTab: WorkspaceTab = {
           kind: 'editor',
           id: `tab-${fileId}-${Date.now()}`,
           fileId,
+          ...(preview ? { preview: true } : {}),
         }
         setGroups((prev) => {
           const existing = prev.get(activeGroupId)
@@ -1737,6 +1808,22 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
             activeTabId: newTab.id,
           })
           return next
+        })
+      },
+      promoteTab: (tabId: string) => {
+        setGroups((prev) => {
+          let changed = false
+          const next = new Map<string, typeof prev extends Map<infer K, infer V> ? V : never>()
+          for (const [gid, g] of prev) {
+            const nextTabs = g.tabs.map((t) => {
+              if (t.id !== tabId) return t
+              if (t.kind !== 'editor' || !(t as { preview?: boolean }).preview) return t
+              changed = true
+              return { ...t, preview: false }
+            })
+            next.set(gid, changed ? { ...g, tabs: nextTabs } : g)
+          }
+          return changed ? next : prev
         })
       },
       closeTabsForFile: (fileId: string) => {
