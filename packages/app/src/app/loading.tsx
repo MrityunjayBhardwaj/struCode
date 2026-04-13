@@ -3,7 +3,7 @@ export default function Loading() {
     <main
       style={{
         minHeight: "100vh",
-        background: "#090912",
+        background: "var(--bg-app)",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -15,7 +15,7 @@ export default function Loading() {
         style={{
           fontSize: 28,
           fontWeight: 700,
-          color: "#c4b5fd",
+          color: "var(--accent-strong)",
           margin: 0,
           letterSpacing: "-0.5px",
         }}
@@ -24,7 +24,7 @@ export default function Loading() {
       </h1>
       <p
         style={{
-          color: "rgba(255,255,255,0.35)",
+          color: "var(--text-secondary)",
           fontSize: 13,
           marginTop: 8,
         }}
@@ -36,8 +36,8 @@ export default function Loading() {
           marginTop: 24,
           width: 40,
           height: 40,
-          border: "3px solid rgba(196, 181, 253, 0.15)",
-          borderTop: "3px solid #c4b5fd",
+          border: "3px solid var(--border-subtle)",
+          borderTop: "3px solid var(--accent-strong)",
           borderRadius: "50%",
           animation: "spin 1s linear infinite",
         }}

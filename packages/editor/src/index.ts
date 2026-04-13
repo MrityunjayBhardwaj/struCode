@@ -127,10 +127,13 @@ export {
   bumpEditorFontSize,
   toggleEditorMinimap,
   getEditorTheme,
+  getResolvedTheme,
   setEditorTheme,
-  toggleEditorTheme,
+  cycleEditorTheme,
+  onThemeChange,
   applyPersistedTheme,
 } from './workspace/editorRegistry'
+export type { EditorTheme, ResolvedTheme } from './workspace/editorRegistry'
 export {
   saveSnapshot,
   listSnapshots,

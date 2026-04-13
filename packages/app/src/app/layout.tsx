@@ -15,6 +15,21 @@ export default function RootLayout({
   return (
     <html lang="en" style={{ height: "100%" }}>
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var t = localStorage.getItem('stave:editorTheme') || 'dark';
+                  var resolved = t === 'light' ? 'light'
+                    : t === 'system' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+                    : 'dark';
+                  document.documentElement.setAttribute('data-stave-theme', resolved);
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
         <style
           dangerouslySetInnerHTML={{
             __html: `
@@ -22,7 +37,7 @@ export default function RootLayout({
               @keyframes pulse { 0%,100% { opacity: 0.4 } 50% { opacity: 1 } }
               #stave-preloader {
                 position: fixed; inset: 0; z-index: 9999;
-                background: #090912;
+                background: var(--bg-app);
                 display: flex; flex-direction: column;
                 align-items: center; justify-content: center;
                 font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
@@ -30,25 +45,25 @@ export default function RootLayout({
               }
               #stave-preloader.hidden { opacity: 0; pointer-events: none; }
               #stave-preloader h1 {
-                font-size: 32px; font-weight: 700; color: #c4b5fd;
+                font-size: 32px; font-weight: 700; color: var(--accent-strong);
                 margin: 0; letter-spacing: -0.5px;
               }
               #stave-preloader .status {
-                color: rgba(255,255,255,0.35); font-size: 13px; margin-top: 12px;
+                color: var(--text-secondary); font-size: 13px; margin-top: 12px;
                 animation: pulse 2s ease-in-out infinite;
               }
               #stave-preloader .spinner {
                 margin-top: 24px; width: 36px; height: 36px;
-                border: 3px solid rgba(196, 181, 253, 0.12);
-                border-top-color: #c4b5fd; border-radius: 50%;
+                border: 3px solid var(--border-subtle);
+                border-top-color: var(--accent-strong); border-radius: 50%;
                 animation: spin 0.8s linear infinite;
               }
               #stave-preloader .steps {
                 margin-top: 32px; display: flex; flex-direction: column;
-                gap: 6px; color: rgba(255,255,255,0.25); font-size: 11px;
+                gap: 6px; color: var(--text-muted); font-size: 11px;
               }
-              #stave-preloader .steps .done { color: rgba(196, 181, 253, 0.5); }
-              #stave-preloader .steps .active { color: rgba(255,255,255,0.5); }
+              #stave-preloader .steps .done { color: var(--text-tertiary); }
+              #stave-preloader .steps .active { color: var(--text-secondary); }
             `,
           }}
         />
@@ -88,7 +103,7 @@ export default function RootLayout({
         />
         {/* SuperSonic loaded dynamically in SonicPiEngine — no script tag needed */}
       </head>
-      <body style={{ minHeight: "100%", display: "flex", flexDirection: "column", margin: 0, background: "#090912" }}>
+      <body style={{ minHeight: "100%", display: "flex", flexDirection: "column", margin: 0, background: "var(--bg-app)" }}>
         <div id="stave-preloader">
           <h1>Stave</h1>
           <div className="status">Warming up the editor…</div>

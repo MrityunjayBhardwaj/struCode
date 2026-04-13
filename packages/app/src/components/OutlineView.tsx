@@ -144,7 +144,7 @@ function kindStyle(kind: string): React.CSSProperties {
     viz: "#ffa0ff",
     pat: "#ffda4a",
   };
-  const bg = colours[kind] ?? "#6a6a88";
+  const bg = colours[kind] ?? "var(--text-muted)";
   return { color: bg };
 }
 
@@ -158,7 +158,7 @@ const styles: Record<string, React.CSSProperties> = {
   empty: {
     padding: 18,
     textAlign: "center",
-    color: "#6a6a88",
+    color: "var(--text-muted)",
     fontSize: 11,
   },
   row: {
@@ -168,7 +168,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "3px 12px",
     cursor: "pointer",
     fontSize: 11,
-    color: "#c8c8d4",
+    color: "var(--text-chrome)",
     fontFamily: '"JetBrains Mono", monospace',
   },
   kind: {
@@ -185,7 +185,7 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: "ellipsis",
   },
   line: {
-    color: "#6a6a88",
+    color: "var(--text-muted)",
     fontSize: 10,
   },
 };

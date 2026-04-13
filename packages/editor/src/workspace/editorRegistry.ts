@@ -129,36 +129,94 @@ export function applyPersistedEditorOptions(editor: MonacoEditor): void {
 
 // ── Theme ──────────────────────────────────────────────────────────
 
-type EditorTheme = 'dark' | 'light'
+export type EditorTheme = 'dark' | 'light' | 'system'
+export type ResolvedTheme = 'dark' | 'light'
 const THEME_STORAGE = 'stave:editorTheme'
 
 function readTheme(): EditorTheme {
   const ls = safeLocalStorage()
-  return ls?.getItem(THEME_STORAGE) === 'light' ? 'light' : 'dark'
+  const v = ls?.getItem(THEME_STORAGE)
+  return v === 'light' || v === 'system' ? v : v === 'dark' ? 'dark' : 'dark'
 }
 
 function writeTheme(t: EditorTheme): void {
   safeLocalStorage()?.setItem(THEME_STORAGE, t)
 }
 
-export function getEditorTheme(): EditorTheme { return readTheme() }
+function systemPrefersLight(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false
+  return window.matchMedia('(prefers-color-scheme: light)').matches
+}
 
-export function setEditorTheme(theme: EditorTheme): void {
-  writeTheme(theme)
-  if (monacoNs?.editor?.setTheme) {
-    monacoNs.editor.setTheme(theme === 'light' ? 'stave-light' : 'stave-dark')
-  }
-  // Also update a data attribute on <html> so callers can hang CSS on it.
-  if (typeof document !== 'undefined') {
-    document.documentElement.setAttribute('data-stave-theme', theme)
+function resolveTheme(t: EditorTheme): ResolvedTheme {
+  if (t === 'dark' || t === 'light') return t
+  return systemPrefersLight() ? 'light' : 'dark'
+}
+
+type ThemeListener = (t: ResolvedTheme) => void
+const themeListeners = new Set<ThemeListener>()
+let systemMqlWired = false
+let systemMql: MediaQueryList | null = null
+
+function notifyThemeListeners(resolved: ResolvedTheme): void {
+  for (const fn of themeListeners) {
+    try { fn(resolved) } catch { /* swallow */ }
   }
 }
 
-export function toggleEditorTheme(): void {
-  setEditorTheme(readTheme() === 'dark' ? 'light' : 'dark')
+function wireSystemMqlOnce(): void {
+  if (systemMqlWired || typeof window === 'undefined' || !window.matchMedia) return
+  systemMqlWired = true
+  systemMql = window.matchMedia('(prefers-color-scheme: light)')
+  const onChange = (): void => {
+    if (readTheme() !== 'system') return
+    applyResolvedTheme(resolveTheme('system'))
+  }
+  try {
+    systemMql.addEventListener('change', onChange)
+  } catch {
+    // Safari < 14 fallback
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(systemMql as any).addListener?.(onChange)
+  }
+}
+
+function applyResolvedTheme(resolved: ResolvedTheme): void {
+  if (monacoNs?.editor?.setTheme) {
+    monacoNs.editor.setTheme(resolved === 'light' ? 'stave-light' : 'stave-dark')
+  }
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('data-stave-theme', resolved)
+  }
+  notifyThemeListeners(resolved)
+}
+
+export function getEditorTheme(): EditorTheme { return readTheme() }
+
+export function getResolvedTheme(): ResolvedTheme { return resolveTheme(readTheme()) }
+
+export function setEditorTheme(theme: EditorTheme): void {
+  writeTheme(theme)
+  wireSystemMqlOnce()
+  applyResolvedTheme(resolveTheme(theme))
+}
+
+/** Cycle dark → light → system → dark. Used by the menu command. */
+export function cycleEditorTheme(): EditorTheme {
+  const next: EditorTheme = readTheme() === 'dark' ? 'light' : readTheme() === 'light' ? 'system' : 'dark'
+  setEditorTheme(next)
+  return next
+}
+
+/** Subscribe to resolved theme changes. Fires when mode changes or when
+ * 'system' preference flips. Returns an unsubscribe. */
+export function onThemeChange(fn: ThemeListener): () => void {
+  themeListeners.add(fn)
+  return () => { themeListeners.delete(fn) }
 }
 
 /** Seed DOM + monaco with the persisted theme. Call after mounting. */
 export function applyPersistedTheme(): void {
+  wireSystemMqlOnce()
   setEditorTheme(readTheme())
 }

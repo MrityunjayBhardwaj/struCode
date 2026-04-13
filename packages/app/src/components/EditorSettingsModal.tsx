@@ -7,7 +7,8 @@ import {
   getEditorMinimap,
   toggleEditorMinimap,
   getEditorTheme,
-  toggleEditorTheme,
+  setEditorTheme,
+  type EditorTheme,
 } from "@stave/editor";
 
 interface Props {
@@ -15,10 +16,16 @@ interface Props {
   onClose: () => void;
 }
 
+const THEME_OPTIONS: { value: EditorTheme; label: string }[] = [
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+  { value: "system", label: "System" },
+];
+
 export function EditorSettingsModal({ open, onClose }: Props) {
   const [fontSize, setFontSize] = useState(14);
   const [minimap, setMinimap] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<EditorTheme>("dark");
 
   useEffect(() => {
     if (!open) return;
@@ -66,12 +73,19 @@ export function EditorSettingsModal({ open, onClose }: Props) {
             </label>
           </Row>
           <Row label="Theme">
-            <button
-              style={s.themeBtn}
-              onClick={() => { toggleEditorTheme(); setTheme((t) => t === "dark" ? "light" : "dark"); }}
+            <select
+              style={s.select}
+              value={theme}
+              onChange={(e) => {
+                const v = e.target.value as EditorTheme;
+                setTheme(v);
+                setEditorTheme(v);
+              }}
             >
-              {theme === "dark" ? "Dark" : "Light"} — switch
-            </button>
+              {THEME_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           </Row>
         </div>
       </div>
@@ -90,37 +104,37 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 const s: Record<string, React.CSSProperties> = {
   backdrop: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+    position: "fixed", inset: 0, background: "var(--bg-overlay)",
     display: "flex", alignItems: "flex-start", justifyContent: "center",
     paddingTop: "14vh", zIndex: 20000,
     fontFamily: "system-ui, -apple-system, sans-serif",
   },
   modal: {
-    width: 460, maxWidth: "92vw", background: "#1a1a2e",
-    border: "1px solid #3a3a5a", borderRadius: 6,
-    boxShadow: "0 10px 40px rgba(0,0,0,0.6)", overflow: "hidden",
+    width: 460, maxWidth: "92vw", background: "var(--bg-elevated)",
+    border: "1px solid var(--border-strong)", borderRadius: 6,
+    boxShadow: "0 10px 40px rgba(0,0,0,0.5)", overflow: "hidden",
   },
   header: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "12px 16px", borderBottom: "1px solid #2a2a4a",
+    padding: "12px 16px", borderBottom: "1px solid var(--border-subtle)",
   },
-  title: { color: "#e8e8f0", fontSize: 14, fontWeight: 600 },
+  title: { color: "var(--text-primary)", fontSize: 14, fontWeight: 600 },
   closeBtn: {
-    background: "none", border: "none", color: "#8888aa",
+    background: "none", border: "none", color: "var(--text-icon)",
     fontSize: 22, cursor: "pointer", padding: "0 4px", lineHeight: 1,
   },
   body: { padding: "12px 16px", display: "flex", flexDirection: "column", gap: 12 },
   row: {
     display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 12,
   },
-  rowLabel: { fontSize: 12, color: "#9a9ac0" },
-  rowControl: { display: "flex", alignItems: "center", gap: 10, color: "#e8e8f0" },
-  range: { flex: 1, accentColor: "#7c7cff" },
-  value: { fontSize: 11, color: "#8888aa", minWidth: 36, textAlign: "right" as const },
+  rowLabel: { fontSize: 12, color: "var(--text-secondary)" },
+  rowControl: { display: "flex", alignItems: "center", gap: 10, color: "var(--text-primary)" },
+  range: { flex: 1, accentColor: "var(--accent-strong)" },
+  value: { fontSize: 11, color: "var(--text-tertiary)", minWidth: 36, textAlign: "right" as const },
   switchLabel: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, cursor: "pointer" },
-  themeBtn: {
-    background: "#2a2a55", border: "1px solid #3a3a5a", borderRadius: 4,
-    color: "#e8e8f0", padding: "4px 10px", fontSize: 12,
-    cursor: "pointer", fontFamily: "inherit",
+  select: {
+    background: "var(--bg-active)", border: "1px solid var(--border-strong)", borderRadius: 4,
+    color: "var(--text-primary)", padding: "4px 10px", fontSize: 12,
+    cursor: "pointer", fontFamily: "inherit", minWidth: 140,
   },
 };

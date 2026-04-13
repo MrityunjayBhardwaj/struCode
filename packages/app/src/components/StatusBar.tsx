@@ -23,7 +23,7 @@ export function StatusBar({
   canUndo,
   canRedo,
 }: StatusBarProps) {
-  const playDot = runtime?.isPlaying ? "#6bff8c" : "#6a6a88";
+  const playDot = runtime?.isPlaying ? "var(--success-fg)" : "var(--text-muted)";
   return (
     <div style={styles.bar} data-stave-statusbar>
       <div style={styles.section}>
@@ -78,14 +78,14 @@ const styles: Record<string, React.CSSProperties> = {
   bar: {
     height: 22,
     minHeight: 22,
-    background: "#111126",
-    borderTop: "1px solid #2a2a4a",
+    background: "var(--bg-chrome-2)",
+    borderTop: "1px solid var(--border-subtle)",
     display: "flex",
     alignItems: "center",
     padding: "0 10px",
     gap: 14,
     fontSize: 11,
-    color: "#8888aa",
+    color: "var(--text-tertiary)",
     fontFamily: '"JetBrains Mono", monospace',
     userSelect: "none",
   },
@@ -102,17 +102,17 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 10,
   },
   project: {
-    color: "#c8c8d4",
+    color: "var(--text-chrome)",
   },
   path: {
-    color: "#8888aa",
+    color: "var(--text-tertiary)",
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
     maxWidth: 400,
   },
   sep: {
-    color: "#4a4a66",
+    color: "var(--border-separator)",
   },
   dot: {
     width: 8,
@@ -121,11 +121,11 @@ const styles: Record<string, React.CSSProperties> = {
     display: "inline-block",
   },
   err: {
-    color: "#f87171",
+    color: "var(--danger-fg)",
   },
   hint: {
     fontSize: 13,
-    color: "#8888aa",
+    color: "var(--text-tertiary)",
     cursor: "default",
   },
 };

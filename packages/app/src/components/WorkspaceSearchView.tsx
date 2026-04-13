@@ -134,7 +134,7 @@ function highlight(line: string, query: string, caseSensitive: boolean): React.R
     const idx = hay.indexOf(needle, i);
     if (idx < 0) { parts.push(line.slice(i)); break; }
     if (idx > i) parts.push(line.slice(i, idx));
-    parts.push(<span key={idx} style={{ background: "#4a3a00", color: "#ffda4a" }}>{line.slice(idx, idx + q.length)}</span>);
+    parts.push(<span key={idx} style={{ background: "var(--highlight-bg)", color: "var(--highlight-fg)" }}>{line.slice(idx, idx + q.length)}</span>);
     i = idx + q.length;
   }
   return parts;
@@ -159,34 +159,34 @@ const styles: Record<string, React.CSSProperties> = {
   header: {
     display: "flex",
     alignItems: "stretch",
-    borderBottom: "1px solid #2a2a4a",
+    borderBottom: "1px solid var(--border-subtle)",
   },
   input: {
     flex: 1,
-    background: "#0f0f1e",
+    background: "var(--bg-input)",
     border: "none",
-    color: "#e8e8f0",
+    color: "var(--text-primary)",
     padding: "8px 12px",
     fontSize: 12,
     fontFamily: "inherit",
     outline: "none",
   },
   caseBtn: {
-    background: "#0f0f1e",
+    background: "var(--bg-input)",
     border: "none",
-    borderLeft: "1px solid #2a2a4a",
-    color: "#8888aa",
+    borderLeft: "1px solid var(--border-subtle)",
+    color: "var(--text-tertiary)",
     padding: "0 10px",
     fontSize: 11,
     fontFamily: "inherit",
     cursor: "pointer",
   },
-  caseBtnActive: { color: "#e8e8f0", background: "#2a2a55" },
+  caseBtnActive: { color: "var(--text-primary)", background: "var(--bg-active)" },
   meta: {
     padding: "4px 12px",
     fontSize: 10,
-    color: "#6a6a88",
-    borderBottom: "1px solid #2a2a4a",
+    color: "var(--text-muted)",
+    borderBottom: "1px solid var(--border-subtle)",
   },
   list: {
     overflowY: "auto",
@@ -198,10 +198,10 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "4px 12px",
     cursor: "pointer",
   },
-  rowActive: { background: "#2a2a55" },
+  rowActive: { background: "var(--bg-active)" },
   rowSnippet: {
     fontSize: 11,
-    color: "#c8c8d4",
+    color: "var(--text-chrome)",
     fontFamily: '"JetBrains Mono", monospace',
     whiteSpace: "nowrap",
     overflow: "hidden",
@@ -209,11 +209,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   rowLoc: {
     fontSize: 10,
-    color: "#6a6a88",
+    color: "var(--text-muted)",
     marginTop: 1,
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
-  rowLine: { color: "#8888aa" },
+  rowLine: { color: "var(--text-tertiary)" },
 };

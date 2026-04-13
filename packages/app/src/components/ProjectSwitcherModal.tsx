@@ -108,7 +108,7 @@ const styles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: "fixed" as const,
     inset: 0,
-    background: "rgba(0,0,0,0.7)",
+    background: "var(--bg-overlay)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -119,31 +119,31 @@ const styles: Record<string, React.CSSProperties> = {
     width: 520,
     maxWidth: "90vw",
     maxHeight: "80vh",
-    background: "#1a1a2e",
-    border: "1px solid #3a3a5a",
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border-strong)",
     borderRadius: 8,
     display: "flex",
     flexDirection: "column" as const,
-    color: "#c8c8d4",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
+    color: "var(--text-chrome)",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
   },
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     padding: "16px 20px",
-    borderBottom: "1px solid #2a2a4a",
+    borderBottom: "1px solid var(--border-subtle)",
   },
   title: {
     margin: 0,
     fontSize: 16,
     fontWeight: 600,
-    color: "#e8e8f0",
+    color: "var(--text-primary)",
   },
   closeBtn: {
     background: "none",
     border: "none",
-    color: "#8888aa",
+    color: "var(--text-icon)",
     fontSize: 24,
     cursor: "pointer",
     padding: "0 4px",
@@ -157,7 +157,7 @@ const styles: Record<string, React.CSSProperties> = {
   empty: {
     padding: "24px",
     textAlign: "center" as const,
-    color: "#6a6a88",
+    color: "var(--text-muted)",
     fontSize: 13,
   },
   row: {
@@ -169,8 +169,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: "3px solid transparent",
   },
   rowActive: {
-    background: "#22223a",
-    borderLeftColor: "#6a6ac8",
+    background: "var(--bg-panel)",
+    borderLeftColor: "var(--accent)",
   },
   rowLeft: {
     display: "flex",
@@ -179,12 +179,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   rowName: {
     fontSize: 13,
-    color: "#e8e8f0",
+    color: "var(--text-primary)",
     fontWeight: 500,
   },
   rowMeta: {
     fontSize: 11,
-    color: "#6a6a88",
+    color: "var(--text-muted)",
   },
   rowActions: {
     display: "flex",
@@ -193,7 +193,7 @@ const styles: Record<string, React.CSSProperties> = {
   actionBtn: {
     background: "none",
     border: "none",
-    color: "#8888aa",
+    color: "var(--text-icon)",
     cursor: "pointer",
     padding: "4px 8px",
     borderRadius: 3,
@@ -202,7 +202,7 @@ const styles: Record<string, React.CSSProperties> = {
   deleteBtn: {
     background: "none",
     border: "none",
-    color: "#f87171",
+    color: "var(--danger-fg)",
     cursor: "pointer",
     padding: "4px 8px",
     borderRadius: 3,

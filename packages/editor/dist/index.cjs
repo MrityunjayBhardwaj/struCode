@@ -7209,27 +7209,78 @@ function applyPersistedEditorOptions(editor) {
 var THEME_STORAGE = "stave:editorTheme";
 function readTheme() {
   const ls = safeLocalStorage();
-  return ls?.getItem(THEME_STORAGE) === "light" ? "light" : "dark";
+  const v = ls?.getItem(THEME_STORAGE);
+  return v === "light" || v === "system" ? v : v === "dark" ? "dark" : "dark";
 }
 function writeTheme(t) {
   safeLocalStorage()?.setItem(THEME_STORAGE, t);
 }
+function systemPrefersLight() {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(prefers-color-scheme: light)").matches;
+}
+function resolveTheme(t) {
+  if (t === "dark" || t === "light") return t;
+  return systemPrefersLight() ? "light" : "dark";
+}
+var themeListeners = /* @__PURE__ */ new Set();
+var systemMqlWired = false;
+var systemMql = null;
+function notifyThemeListeners(resolved) {
+  for (const fn of themeListeners) {
+    try {
+      fn(resolved);
+    } catch {
+    }
+  }
+}
+function wireSystemMqlOnce() {
+  if (systemMqlWired || typeof window === "undefined" || !window.matchMedia) return;
+  systemMqlWired = true;
+  systemMql = window.matchMedia("(prefers-color-scheme: light)");
+  const onChange = () => {
+    if (readTheme() !== "system") return;
+    applyResolvedTheme(resolveTheme("system"));
+  };
+  try {
+    systemMql.addEventListener("change", onChange);
+  } catch {
+    systemMql.addListener?.(onChange);
+  }
+}
+function applyResolvedTheme(resolved) {
+  if (monacoNs?.editor?.setTheme) {
+    monacoNs.editor.setTheme(resolved === "light" ? "stave-light" : "stave-dark");
+  }
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("data-stave-theme", resolved);
+  }
+  notifyThemeListeners(resolved);
+}
 function getEditorTheme() {
   return readTheme();
 }
+function getResolvedTheme() {
+  return resolveTheme(readTheme());
+}
 function setEditorTheme(theme) {
   writeTheme(theme);
-  if (monacoNs?.editor?.setTheme) {
-    monacoNs.editor.setTheme(theme === "light" ? "stave-light" : "stave-dark");
-  }
-  if (typeof document !== "undefined") {
-    document.documentElement.setAttribute("data-stave-theme", theme);
-  }
+  wireSystemMqlOnce();
+  applyResolvedTheme(resolveTheme(theme));
 }
-function toggleEditorTheme() {
-  setEditorTheme(readTheme() === "dark" ? "light" : "dark");
+function cycleEditorTheme() {
+  const next = readTheme() === "dark" ? "light" : readTheme() === "light" ? "system" : "dark";
+  setEditorTheme(next);
+  return next;
+}
+function onThemeChange(fn) {
+  themeListeners.add(fn);
+  return () => {
+    themeListeners.delete(fn);
+  };
 }
 function applyPersistedTheme() {
+  wireSystemMqlOnce();
   setEditorTheme(readTheme());
 }
 
@@ -19676,6 +19727,7 @@ exports.compilePreset = compilePreset;
 exports.createProject = createProject;
 exports.createVizConfig = createVizConfig;
 exports.createWorkspaceFile = createWorkspaceFile;
+exports.cycleEditorTheme = cycleEditorTheme;
 exports.deleteProject = deleteProject;
 exports.deleteSnapshot = deleteSnapshot;
 exports.deleteWorkspaceFile = deleteWorkspaceFile;
@@ -19695,6 +19747,7 @@ exports.getPresetIdForFile = getPresetIdForFile;
 exports.getPreviewProviderForExtension = getPreviewProviderForExtension;
 exports.getPreviewProviderForLanguage = getPreviewProviderForLanguage;
 exports.getProject = getProject;
+exports.getResolvedTheme = getResolvedTheme;
 exports.getRuntimeProviderForExtension = getRuntimeProviderForExtension;
 exports.getRuntimeProviderForLanguage = getRuntimeProviderForLanguage;
 exports.getSubfolderOrder = getSubfolderOrder;
@@ -19717,6 +19770,7 @@ exports.merge = merge;
 exports.normalizeStrudelHap = normalizeStrudelHap;
 exports.noteToMidi = noteToMidi;
 exports.onNamedVizChanged = onNamedVizChanged;
+exports.onThemeChange = onThemeChange;
 exports.parseMini = parseMini;
 exports.parseStrudel = parseStrudel;
 exports.patternFromJSON = patternFromJSON;
@@ -19758,7 +19812,6 @@ exports.switchProject = switchProject;
 exports.timestretch = timestretch;
 exports.toStrudel = toStrudel;
 exports.toggleEditorMinimap = toggleEditorMinimap;
-exports.toggleEditorTheme = toggleEditorTheme;
 exports.touchProject = touchProject;
 exports.transpose = transpose;
 exports.undo = undo;

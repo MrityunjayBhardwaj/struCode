@@ -165,7 +165,7 @@ export function ProjectSidebar({
           </button>
           {projects.length > 1 && (
             <button
-              style={{ ...styles.menuItem, color: "#f87171" }}
+              style={{ ...styles.menuItem, color: "var(--danger-fg)" }}
               onClick={() => {
                 onDeleteProject(contextMenu.id);
                 setContextMenu(null);
@@ -187,21 +187,21 @@ const styles: Record<string, React.CSSProperties> = {
     width: 200,
     minWidth: 200,
     height: "100%",
-    background: "#1a1a2e",
-    borderRight: "1px solid #2a2a4a",
+    background: "var(--bg-sidebar)",
+    borderRight: "1px solid var(--border-subtle)",
     display: "flex",
     flexDirection: "column",
     fontFamily: "system-ui, -apple-system, sans-serif",
     fontSize: 13,
-    color: "#c8c8d4",
+    color: "var(--text-chrome)",
     userSelect: "none",
   },
   collapsedBar: {
     width: 28,
     minWidth: 28,
     height: "100%",
-    background: "#1a1a2e",
-    borderRight: "1px solid #2a2a4a",
+    background: "var(--bg-sidebar)",
+    borderRight: "1px solid var(--border-subtle)",
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "center",
@@ -210,7 +210,7 @@ const styles: Record<string, React.CSSProperties> = {
   expandBtn: {
     background: "none",
     border: "none",
-    color: "#8888aa",
+    color: "var(--text-icon)",
     cursor: "pointer",
     fontSize: 14,
     padding: "4px 6px",
@@ -220,14 +220,14 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     padding: "8px 10px",
-    borderBottom: "1px solid #2a2a4a",
+    borderBottom: "1px solid var(--border-subtle)",
   },
   title: {
     fontWeight: 600,
     fontSize: 12,
     textTransform: "uppercase" as const,
     letterSpacing: "0.05em",
-    color: "#8888aa",
+    color: "var(--text-tertiary)",
   },
   headerActions: {
     display: "flex",
@@ -236,7 +236,7 @@ const styles: Record<string, React.CSSProperties> = {
   iconBtn: {
     background: "none",
     border: "none",
-    color: "#8888aa",
+    color: "var(--text-icon)",
     cursor: "pointer",
     fontSize: 16,
     padding: "2px 6px",
@@ -256,8 +256,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
   },
   itemActive: {
-    background: "#2a2a4a",
-    color: "#e8e8f0",
+    background: "var(--bg-hover)",
+    color: "var(--text-primary)",
   },
   itemName: {
     overflow: "hidden",
@@ -265,10 +265,10 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "nowrap" as const,
   },
   renameInput: {
-    background: "#0d0d1a",
-    border: "1px solid #4a4a6a",
+    background: "var(--bg-input)",
+    border: "1px solid var(--border-stronger)",
     borderRadius: 3,
-    color: "#e8e8f0",
+    color: "var(--text-primary)",
     fontSize: 13,
     padding: "2px 4px",
     width: "100%",
@@ -276,13 +276,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   contextMenu: {
     position: "fixed" as const,
-    background: "#1e1e38",
-    border: "1px solid #3a3a5a",
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border-strong)",
     borderRadius: 4,
     padding: "4px 0",
     zIndex: 9999,
     minWidth: 120,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.35)",
   },
   menuItem: {
     display: "block",
@@ -290,7 +290,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 12px",
     background: "none",
     border: "none",
-    color: "#c8c8d4",
+    color: "var(--text-chrome)",
     fontSize: 13,
     textAlign: "left" as const,
     cursor: "pointer",

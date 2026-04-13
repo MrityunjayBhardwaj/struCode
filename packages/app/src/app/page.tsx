@@ -6,7 +6,7 @@ export default function Home() {
       style={{
         height: "100dvh",
         width: "100%",
-        background: "#090912",
+        background: "var(--bg-app)",
         display: "flex",
         flexDirection: "column",
         fontFamily: '"JetBrains Mono", "Fira Code", monospace',

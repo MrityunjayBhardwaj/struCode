@@ -37,7 +37,7 @@ import {
   revealLineInFile,
   bumpEditorFontSize,
   toggleEditorMinimap,
-  toggleEditorTheme,
+  cycleEditorTheme,
   applyPersistedTheme,
 } from "@stave/editor";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
@@ -451,10 +451,10 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       run: () => toggleEditorMinimap(),
     }));
     unregs.push(registerCommand({
-      id: "stave.view.toggleTheme",
-      title: "Toggle Theme (Dark / Light)",
+      id: "stave.view.cycleTheme",
+      title: "Cycle Theme (Dark → Light → System)",
       category: "View",
-      run: () => toggleEditorTheme(),
+      run: () => { cycleEditorTheme(); },
     }));
     unregs.push(registerCommand({
       id: "stave.view.shortcuts",
@@ -812,9 +812,9 @@ const styles: Record<string, React.CSSProperties> = {
     width: 28,
     minWidth: 28,
     height: "100%",
-    background: "#1a1a2e",
-    borderRight: "1px solid #2a2a4a",
-    color: "#8888aa",
+    background: "var(--bg-sidebar)",
+    borderRight: "1px solid var(--border-subtle)",
+    color: "var(--text-tertiary)",
     cursor: "pointer",
     border: "none",
     borderTop: "none",
@@ -832,15 +832,15 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     height: "100%",
-    color: "#8888aa",
+    color: "var(--text-tertiary)",
     fontFamily: "system-ui, -apple-system, sans-serif",
     fontSize: 14,
   },
   panelRoot: {
     width: 240,
     height: "100%",
-    background: "#14142a",
-    borderRight: "1px solid #2a2a4a",
+    background: "var(--bg-panel)",
+    borderRight: "1px solid var(--border-subtle)",
     display: "flex",
     flexDirection: "column",
     fontFamily: "system-ui, -apple-system, sans-serif",
@@ -850,8 +850,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontWeight: 600,
     letterSpacing: 0.8,
-    color: "#9a9ac0",
-    borderBottom: "1px solid #2a2a4a",
+    color: "var(--text-secondary)",
+    borderBottom: "1px solid var(--border-subtle)",
   },
   panelBody: {
     padding: "12px 14px",
@@ -862,14 +862,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   panelHint: {
     fontSize: 11,
-    color: "#8888aa",
+    color: "var(--text-tertiary)",
     lineHeight: 1.5,
   },
   panelBtn: {
-    background: "#2a2a55",
-    border: "1px solid #3a3a5a",
+    background: "var(--bg-active)",
+    border: "1px solid var(--border-strong)",
     borderRadius: 4,
-    color: "#e8e8f0",
+    color: "var(--text-primary)",
     padding: "6px 12px",
     fontSize: 12,
     cursor: "pointer",
@@ -883,13 +883,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   tabCtxMenu: {
     position: "fixed" as const,
-    background: "#1e1e38",
-    border: "1px solid #3a3a5a",
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border-strong)",
     borderRadius: 4,
     padding: "4px 0",
     zIndex: 9999,
     minWidth: 160,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.35)",
     fontFamily: "system-ui, -apple-system, sans-serif",
   },
   menuItem: {
@@ -898,7 +898,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 14px",
     background: "none",
     border: "none",
-    color: "#c8c8d4",
+    color: "var(--text-chrome)",
     fontSize: 12,
     textAlign: "left" as const,
     cursor: "pointer",
@@ -907,6 +907,6 @@ const styles: Record<string, React.CSSProperties> = {
   menuDivider: {
     height: 1,
     margin: "4px 0",
-    background: "#2a2a4a",
+    background: "var(--border-subtle)",
   },
 };

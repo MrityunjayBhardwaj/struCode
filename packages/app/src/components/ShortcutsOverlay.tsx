@@ -134,56 +134,56 @@ export function ShortcutsOverlay({ open, onClose }: ShortcutsOverlayProps) {
 
 const styles: Record<string, React.CSSProperties> = {
   backdrop: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+    position: "fixed", inset: 0, background: "var(--bg-overlay)",
     display: "flex", alignItems: "flex-start", justifyContent: "center",
     paddingTop: "8vh", zIndex: 20000,
     fontFamily: "system-ui, -apple-system, sans-serif",
   },
   modal: {
     width: 620, maxWidth: "92vw", maxHeight: "80vh",
-    background: "#1a1a2e", border: "1px solid #3a3a5a", borderRadius: 6,
+    background: "var(--bg-elevated)", border: "1px solid var(--border-strong)", borderRadius: 6,
     display: "flex", flexDirection: "column",
-    boxShadow: "0 10px 40px rgba(0,0,0,0.6)", overflow: "hidden",
+    boxShadow: "0 10px 40px rgba(0,0,0,0.4)", overflow: "hidden",
   },
   header: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "12px 16px", borderBottom: "1px solid #2a2a4a",
+    padding: "12px 16px", borderBottom: "1px solid var(--border-subtle)",
   },
-  title: { color: "#e8e8f0", fontSize: 14, fontWeight: 600 },
+  title: { color: "var(--text-primary)", fontSize: 14, fontWeight: 600 },
   closeBtn: {
-    background: "none", border: "none", color: "#8888aa",
+    background: "none", border: "none", color: "var(--text-icon)",
     fontSize: 22, cursor: "pointer", padding: "0 4px", lineHeight: 1,
   },
   input: {
-    background: "#0f0f1e", border: "none",
-    borderBottom: "1px solid #2a2a4a",
-    color: "#e8e8f0", padding: "8px 14px", fontSize: 12,
+    background: "var(--bg-input)", border: "none",
+    borderBottom: "1px solid var(--border-subtle)",
+    color: "var(--text-primary)", padding: "8px 14px", fontSize: 12,
     fontFamily: "inherit", outline: "none",
   },
   list: { overflowY: "auto", padding: "6px 0", flex: 1 },
   section: { padding: "6px 16px" },
   sectionTitle: {
     fontSize: 10, letterSpacing: 0.8, fontWeight: 600,
-    color: "#8888aa", textTransform: "uppercase" as const, marginBottom: 4,
+    color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 4,
   },
   row: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "4px 0", fontSize: 12, color: "#c8c8d4",
+    padding: "4px 0", fontSize: 12, color: "var(--text-chrome)",
   },
   rowTitle: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  rowKey: { fontFamily: '"JetBrains Mono", monospace', color: "#9a9ac0", letterSpacing: 0.5 },
+  rowKey: { fontFamily: '"JetBrains Mono", monospace', color: "var(--text-secondary)", letterSpacing: 0.5 },
   rowKeyBtn: {
-    background: "#0f0f1e", border: "1px solid #2a2a4a", borderRadius: 3,
+    background: "var(--bg-input)", border: "1px solid var(--border-subtle)", borderRadius: 3,
     padding: "2px 8px", cursor: "pointer", fontSize: 11,
     minWidth: 90, textAlign: "center" as const,
   },
   rowKeyCapturing: {
-    background: "#4a3a00", borderColor: "#ffda4a", color: "#ffda4a",
+    background: "var(--highlight-bg)", borderColor: "var(--highlight-fg)", color: "var(--highlight-fg)",
   },
   clearBtn: {
-    background: "none", border: "none", color: "#6a6a88",
+    background: "none", border: "none", color: "var(--text-muted)",
     cursor: "pointer", padding: "2px 4px", marginLeft: 4,
     fontSize: 12,
   },
-  empty: { padding: 20, textAlign: "center" as const, color: "#6a6a88", fontSize: 12 },
+  empty: { padding: 20, textAlign: "center" as const, color: "var(--text-muted)", fontSize: 12 },
 };

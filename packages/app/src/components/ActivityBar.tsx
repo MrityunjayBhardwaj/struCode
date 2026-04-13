@@ -39,8 +39,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: 44,
     minWidth: 44,
     height: "100%",
-    background: "#0c0c18",
-    borderRight: "1px solid #1e1e36",
+    background: "var(--bg-chrome)",
+    borderRight: "1px solid var(--border-chrome)",
     display: "flex",
     flexDirection: "column",
     alignItems: "stretch",
@@ -51,7 +51,7 @@ const styles: Record<string, React.CSSProperties> = {
     position: "relative",
     background: "none",
     border: "none",
-    color: "#6a6a88",
+    color: "var(--text-icon-muted)",
     padding: "8px 0",
     cursor: "pointer",
     fontSize: 18,
@@ -62,7 +62,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "inherit",
   },
   itemActive: {
-    color: "#e8e8f0",
+    color: "var(--text-primary)",
   },
   icon: {
     width: 24,
@@ -77,6 +77,6 @@ const styles: Record<string, React.CSSProperties> = {
     top: 4,
     bottom: 4,
     width: 2,
-    background: "#7c7cff",
+    background: "var(--accent-strong)",
   },
 };

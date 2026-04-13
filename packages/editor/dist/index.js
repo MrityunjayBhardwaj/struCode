@@ -7182,27 +7182,78 @@ function applyPersistedEditorOptions(editor) {
 var THEME_STORAGE = "stave:editorTheme";
 function readTheme() {
   const ls = safeLocalStorage();
-  return ls?.getItem(THEME_STORAGE) === "light" ? "light" : "dark";
+  const v = ls?.getItem(THEME_STORAGE);
+  return v === "light" || v === "system" ? v : v === "dark" ? "dark" : "dark";
 }
 function writeTheme(t) {
   safeLocalStorage()?.setItem(THEME_STORAGE, t);
 }
+function systemPrefersLight() {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(prefers-color-scheme: light)").matches;
+}
+function resolveTheme(t) {
+  if (t === "dark" || t === "light") return t;
+  return systemPrefersLight() ? "light" : "dark";
+}
+var themeListeners = /* @__PURE__ */ new Set();
+var systemMqlWired = false;
+var systemMql = null;
+function notifyThemeListeners(resolved) {
+  for (const fn of themeListeners) {
+    try {
+      fn(resolved);
+    } catch {
+    }
+  }
+}
+function wireSystemMqlOnce() {
+  if (systemMqlWired || typeof window === "undefined" || !window.matchMedia) return;
+  systemMqlWired = true;
+  systemMql = window.matchMedia("(prefers-color-scheme: light)");
+  const onChange = () => {
+    if (readTheme() !== "system") return;
+    applyResolvedTheme(resolveTheme("system"));
+  };
+  try {
+    systemMql.addEventListener("change", onChange);
+  } catch {
+    systemMql.addListener?.(onChange);
+  }
+}
+function applyResolvedTheme(resolved) {
+  if (monacoNs?.editor?.setTheme) {
+    monacoNs.editor.setTheme(resolved === "light" ? "stave-light" : "stave-dark");
+  }
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("data-stave-theme", resolved);
+  }
+  notifyThemeListeners(resolved);
+}
 function getEditorTheme() {
   return readTheme();
 }
+function getResolvedTheme() {
+  return resolveTheme(readTheme());
+}
 function setEditorTheme(theme) {
   writeTheme(theme);
-  if (monacoNs?.editor?.setTheme) {
-    monacoNs.editor.setTheme(theme === "light" ? "stave-light" : "stave-dark");
-  }
-  if (typeof document !== "undefined") {
-    document.documentElement.setAttribute("data-stave-theme", theme);
-  }
+  wireSystemMqlOnce();
+  applyResolvedTheme(resolveTheme(theme));
 }
-function toggleEditorTheme() {
-  setEditorTheme(readTheme() === "dark" ? "light" : "dark");
+function cycleEditorTheme() {
+  const next = readTheme() === "dark" ? "light" : readTheme() === "light" ? "system" : "dark";
+  setEditorTheme(next);
+  return next;
+}
+function onThemeChange(fn) {
+  themeListeners.add(fn);
+  return () => {
+    themeListeners.delete(fn);
+  };
 }
 function applyPersistedTheme() {
+  wireSystemMqlOnce();
   setEditorTheme(readTheme());
 }
 
@@ -19595,6 +19646,6 @@ function registerPresetAsNamedViz(preset) {
   }
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedTheme, applyTheme, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getEditorFontSize, getEditorMinimap, getEditorTheme, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setEditorFontSize, setEditorTheme, setFolderOrder, setSubfolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, toggleEditorMinimap, toggleEditorTheme, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedTheme, applyTheme, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getEditorFontSize, getEditorMinimap, getEditorTheme, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, onThemeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setEditorFontSize, setEditorTheme, setFolderOrder, setSubfolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

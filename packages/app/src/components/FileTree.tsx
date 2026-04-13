@@ -1117,9 +1117,9 @@ function TreeItem(props: TreeItemProps) {
             ...(isDropTarget ? styles.dropTarget : {}),
             paddingLeft: 8 + depth * 12,
             boxShadow: showFAbove
-              ? "inset 0 2px 0 0 #7c7cff"
+              ? "inset 0 2px 0 0 var(--accent-strong)"
               : showFBelow
-              ? "inset 0 -2px 0 0 #7c7cff"
+              ? "inset 0 -2px 0 0 var(--accent-strong)"
               : undefined,
           }}
           onClick={() => props.onToggleFolder(node.path)}
@@ -1171,9 +1171,9 @@ function TreeItem(props: TreeItemProps) {
         paddingLeft: 8 + depth * 12,
         position: "relative",
         boxShadow: showAbove
-          ? "inset 0 2px 0 0 #7c7cff"
+          ? "inset 0 2px 0 0 var(--accent-strong)"
           : showBelow
-          ? "inset 0 -2px 0 0 #7c7cff"
+          ? "inset 0 -2px 0 0 var(--accent-strong)"
           : undefined,
       }}
       onClick={(e) => {
@@ -1260,8 +1260,8 @@ function ensureCtxMenuStyle() {
   const el = document.createElement("style");
   el.setAttribute("data-stave-style", "context-menu");
   el.textContent =
-    '[data-stave-ctx-item]:hover{background:#2a2a55;}' +
-    '[data-stave-ctx-item][data-danger="true"]:hover{background:#4a1f28;}';
+    '[data-stave-ctx-item]:hover{background:var(--bg-active);}' +
+    '[data-stave-ctx-item][data-danger="true"]:hover{background:var(--danger-hover);}';
   document.head.appendChild(el);
   ctxMenuStyleInjected = true;
 }
@@ -1394,13 +1394,13 @@ const styles: Record<string, React.CSSProperties> = {
   sidebar: {
     // width + minWidth overridden dynamically by the resize hook
     height: "100%",
-    background: "#1a1a2e",
-    borderRight: "1px solid #2a2a4a",
+    background: "var(--bg-sidebar)",
+    borderRight: "1px solid var(--border-subtle)",
     display: "flex",
     flexDirection: "column" as const,
     fontFamily: "system-ui, -apple-system, sans-serif",
     fontSize: 13,
-    color: "#c8c8d4",
+    color: "var(--text-chrome)",
     userSelect: "none" as const,
     position: "relative" as const,
   },
@@ -1416,14 +1416,14 @@ const styles: Record<string, React.CSSProperties> = {
     transition: "background 0.1s",
   },
   resizeHandleActive: {
-    background: "#6a6ac8",
+    background: "var(--accent)",
   },
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     padding: "8px 10px",
-    borderBottom: "1px solid #2a2a4a",
+    borderBottom: "1px solid var(--border-subtle)",
     gap: 4,
   },
   title: {
@@ -1431,7 +1431,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     textTransform: "uppercase" as const,
     letterSpacing: "0.05em",
-    color: "#8888aa",
+    color: "var(--text-tertiary)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap" as const,
@@ -1444,7 +1444,7 @@ const styles: Record<string, React.CSSProperties> = {
   iconBtn: {
     background: "none",
     border: "none",
-    color: "#8888aa",
+    color: "var(--text-icon)",
     cursor: "pointer",
     fontSize: 14,
     padding: "2px 6px",
@@ -1458,13 +1458,13 @@ const styles: Record<string, React.CSSProperties> = {
   empty: {
     padding: "20px 12px",
     textAlign: "center" as const,
-    color: "#6a6a88",
+    color: "var(--text-muted)",
     fontSize: 12,
   },
   emptyHint: {
     marginTop: 4,
     fontSize: 11,
-    color: "#4a4a66",
+    color: "var(--border-separator)",
   },
   item: {
     padding: "4px 8px",
@@ -1475,25 +1475,25 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
   itemActive: {
-    background: "#2a2a4a",
-    color: "#e8e8f0",
-    borderLeft: "2px solid #6a6ac8",
+    background: "var(--bg-hover)",
+    color: "var(--text-primary)",
+    borderLeft: "2px solid var(--accent)",
     paddingLeft: 6, // compensate for the border
   },
   dropTarget: {
-    background: "#3a3a5a",
-    outline: "1px dashed #6a6ac8",
+    background: "var(--bg-active-strong)",
+    outline: "1px dashed var(--accent)",
     outlineOffset: "-1px",
   },
   listDropActive: {
-    background: "#22223a",
-    outline: "1px dashed #6a6ac8",
+    background: "var(--bg-drag-zone)",
+    outline: "1px dashed var(--accent)",
     outlineOffset: "-2px",
   },
   chevron: {
     fontSize: 10,
     width: 10,
-    color: "#6a6a88",
+    color: "var(--text-muted)",
   },
   folderIcon: {
     fontSize: 12,
@@ -1509,10 +1509,10 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
   },
   renameInput: {
-    background: "#0d0d1a",
-    border: "1px solid #4a4a6a",
+    background: "var(--bg-input)",
+    border: "1px solid var(--border-stronger)",
     borderRadius: 3,
-    color: "#e8e8f0",
+    color: "var(--text-primary)",
     fontSize: 13,
     padding: "1px 4px",
     flex: 1,
@@ -1521,13 +1521,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   contextMenu: {
     position: "fixed" as const,
-    background: "#1e1e38",
-    border: "1px solid #3a3a5a",
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border-strong)",
     borderRadius: 4,
     padding: "4px 0",
     zIndex: 9999,
     minWidth: 120,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.35)",
   },
   menuItem: {
     display: "block",
@@ -1535,7 +1535,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 14px",
     background: "none",
     border: "none",
-    color: "#c8c8d4",
+    color: "var(--text-chrome)",
     fontSize: 12,
     lineHeight: 1.5,
     textAlign: "left" as const,
@@ -1543,11 +1543,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "inherit",
   },
   menuItemDanger: {
-    color: "#f87171",
+    color: "var(--danger-fg)",
   },
   menuDivider: {
     height: 1,
     margin: "4px 0",
-    background: "#2a2a4a",
+    background: "var(--border-subtle)",
   },
 };
