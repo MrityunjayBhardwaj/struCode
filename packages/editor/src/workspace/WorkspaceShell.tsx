@@ -121,7 +121,7 @@ import { PreviewView } from './PreviewView'
 import { useKeyboardCommands } from './commands/useKeyboardCommands'
 import { executeCommand } from './commands/CommandRegistry'
 import { getPreviewProviderForLanguage } from './preview/registry'
-import { getFile } from './WorkspaceFile'
+import { getFile, subscribe as subscribeToWorkspaceFile } from './WorkspaceFile'
 import type { WorkspaceShellActions } from './commands/CommandRegistry'
 import type {
   WorkspaceGroupState,
@@ -1719,6 +1719,50 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
     () => allGroupIds(layout).length,
     [layout],
   )
+
+  // Auto-promote preview tabs on first edit to the backing file. We
+  // subscribe to every preview tab's workspace file; the subscription
+  // fires only on real Y.Text changes (initial read state doesn't fire
+  // synchronously), so the first fire is the user's first edit. We
+  // promote the tab and tear down the subscription in one pass.
+  const previewTabIds = useMemo(() => {
+    const out: Array<{ tabId: string; fileId: string }> = []
+    for (const g of groups.values()) {
+      for (const t of g.tabs) {
+        if (
+          t.kind === 'editor' &&
+          (t as { preview?: boolean }).preview === true
+        ) {
+          out.push({ tabId: t.id, fileId: t.fileId })
+        }
+      }
+    }
+    return out
+  }, [groups])
+
+  useEffect(() => {
+    const unsubs = previewTabIds.map(({ tabId, fileId }) =>
+      subscribeToWorkspaceFile(fileId, () => {
+        setGroups((prev) => {
+          let changed = false
+          const next = new Map(prev)
+          for (const [gid, g] of prev) {
+            const nextTabs = g.tabs.map((t) => {
+              if (t.id !== tabId) return t
+              if (t.kind !== 'editor' || !(t as { preview?: boolean }).preview) return t
+              changed = true
+              return { ...t, preview: false }
+            })
+            if (changed) next.set(gid, { ...g, tabs: nextTabs })
+          }
+          return changed ? next : prev
+        })
+      }),
+    )
+    return () => {
+      for (const u of unsubs) u()
+    }
+  }, [previewTabIds])
 
   // Expose imperative handle — lets parent call openOrFocusFile(fileId)
   // to programmatically open/focus a file's editor tab. Used by the file
