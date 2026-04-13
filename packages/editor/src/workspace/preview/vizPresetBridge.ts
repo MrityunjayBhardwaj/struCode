@@ -193,6 +193,7 @@ export async function flushToPreset(
     file.language === 'hydra' ? 'hydra' : 'p5'
 
   const preset: VizPreset = {
+    ...existing,               // preserve cropRegion + any future fields
     id: presetId,
     name: existing?.name ?? file.path.replace(/\.[^.]+$/, ''),
     renderer: existing?.renderer ?? renderer,

@@ -129,6 +129,8 @@ export default function StrudelEditorClient({
   }, [seedState.p5PresetId, seedState.hydraPresetId]);
 
   // Persist bundled presets to IndexedDB (non-blocking, fire-and-forget).
+  // IMPORTANT: merge with existing presets to preserve user-set fields
+  // like cropRegion that aren't part of the bundled code template.
   useEffect(() => {
     async function seedPresets() {
       const LEGACY_IDS = ["pianoroll-p5-custom", "pianoroll-hydra-custom"];
@@ -137,13 +139,19 @@ export default function StrudelEditorClient({
         if (stale) await VizPresetStore.delete(legacy);
       }
       const now = Date.now();
+      const existingP5 = await VizPresetStore.get(seedState.p5PresetId);
       await VizPresetStore.put({
+        ...existingP5,
         id: seedState.p5PresetId, name: "Piano Roll", renderer: "p5",
-        code: PIANOROLL_P5_CODE, requires: ["streaming"], createdAt: now, updatedAt: now,
+        code: PIANOROLL_P5_CODE, requires: ["streaming"],
+        createdAt: existingP5?.createdAt ?? now, updatedAt: now,
       });
+      const existingHydra = await VizPresetStore.get(seedState.hydraPresetId);
       await VizPresetStore.put({
+        ...existingHydra,
         id: seedState.hydraPresetId, name: "Piano Roll (Hydra)", renderer: "hydra",
-        code: PIANOROLL_HYDRA_CODE, requires: ["audio"], createdAt: now, updatedAt: now,
+        code: PIANOROLL_HYDRA_CODE, requires: ["audio"],
+        createdAt: existingHydra?.createdAt ?? now, updatedAt: now,
       });
     }
     seedPresets();

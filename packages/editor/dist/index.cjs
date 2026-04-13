@@ -18750,6 +18750,8 @@ async function flushToPreset(fileId, presetId) {
   const now = Date.now();
   const renderer = file.language === "hydra" ? "hydra" : "p5";
   const preset = {
+    ...existing,
+    // preserve cropRegion + any future fields
     id: presetId,
     name: existing?.name ?? file.path.replace(/\.[^.]+$/, ""),
     renderer: existing?.renderer ?? renderer,
