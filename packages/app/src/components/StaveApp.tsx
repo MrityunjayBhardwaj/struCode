@@ -31,6 +31,9 @@ import { FileTree } from "./FileTree";
 import { TemplateModal } from "./TemplateModal";
 import { ProjectSwitcherModal } from "./ProjectSwitcherModal";
 import { SnapshotModal } from "./SnapshotModal";
+import { CommandPalette } from "./CommandPalette";
+import { registerCommand } from "../commands/registry";
+import { installKeybindingDispatcher } from "../commands/keybindings";
 import StrudelEditorClient from "./StrudelEditorClient";
 
 interface StaveAppProps {
@@ -64,6 +67,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // Subscribe to the structural undo manager so Edit menu items can
   // enable/disable reactively.
@@ -97,40 +101,10 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     resetFileStore();
   }, []);
 
-  // Global keyboard shortcuts — Cmd/Ctrl+N for new project, Cmd/Ctrl+O
-  // for open project. Registered at window level but deferred to the
-  // editor if focus is inside a contenteditable / input so the user's
-  // typing isn't hijacked.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      const target = e.target as HTMLElement | null;
-      if (target) {
-        const tag = target.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) {
-          // Monaco + our rename input both own these keys.
-          return;
-        }
-      }
-      const k = e.key.toLowerCase();
-      if (k === "n" && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        setTemplateModalOpen(true);
-      } else if (k === "o" && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        setSwitcherModalOpen(true);
-      } else if (k === "z" && !e.altKey) {
-        // Cmd+Z = undo, Cmd+Shift+Z = redo. Monaco/inputs are exempted
-        // above, so this only fires for structural ops.
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // Global keybinding dispatcher — matches chords against registered
+  // commands. Commands register in a later effect once all handlers
+  // exist (some handlers close over state defined below this point).
+  useEffect(() => installKeybindingDispatcher(), []);
 
   // Auto-snapshot: debounce doc updates; after IDLE_MS of inactivity,
   // capture an auto-labelled snapshot. The snapshotStore prunes older
@@ -267,6 +241,82 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     shellRef.current?.openOrFocusFile(fileId);
   }, []);
 
+  // Register every app-level action as a command. Commands are the
+  // single source of truth for menu items, palette entries, and
+  // keybindings. Re-registers when dependencies change so closures
+  // capture fresh handlers.
+  useEffect(() => {
+    const unregs: Array<() => void> = [];
+    unregs.push(registerCommand({
+      id: "stave.palette.open",
+      title: "Show All Commands",
+      category: "View",
+      keybinding: "mod+shift+p",
+      run: () => setPaletteOpen(true),
+    }));
+    unregs.push(registerCommand({
+      id: "stave.project.new",
+      title: "New Project...",
+      category: "File",
+      keybinding: "mod+n",
+      run: () => setTemplateModalOpen(true),
+    }));
+    unregs.push(registerCommand({
+      id: "stave.project.open",
+      title: "Open Project...",
+      category: "File",
+      keybinding: "mod+o",
+      run: () => setSwitcherModalOpen(true),
+    }));
+    unregs.push(registerCommand({
+      id: "stave.project.rename",
+      title: "Rename Project...",
+      category: "File",
+      run: () => handleRenameActiveProject(),
+    }));
+    unregs.push(registerCommand({
+      id: "stave.project.export",
+      title: "Export Project as .zip",
+      category: "File",
+      run: () => {
+        exportProjectAsZip(activeProject).catch((err) => {
+          console.error("[stave] export failed:", err);
+          alert("Export failed — see console for details.");
+        });
+      },
+    }));
+    unregs.push(registerCommand({
+      id: "stave.project.versionHistory",
+      title: "Version History...",
+      category: "File",
+      run: () => { openSnapshotModal(); },
+    }));
+    unregs.push(registerCommand({
+      id: "stave.edit.undo",
+      title: "Undo",
+      category: "Edit",
+      keybinding: "mod+z",
+      when: () => canUndo(),
+      run: () => { undo(); },
+    }));
+    unregs.push(registerCommand({
+      id: "stave.edit.redo",
+      title: "Redo",
+      category: "Edit",
+      keybinding: "mod+shift+z",
+      when: () => canRedo(),
+      run: () => { redo(); },
+    }));
+    unregs.push(registerCommand({
+      id: "stave.view.toggleSidebar",
+      title: "Toggle Sidebar",
+      category: "View",
+      keybinding: "mod+b",
+      run: () => setSidebarCollapsed((c) => !c),
+    }));
+    return () => { for (const u of unregs) u(); };
+  }, [activeProject, handleRenameActiveProject, openSnapshotModal]);
+
   return (
     <div style={styles.root}>
       <MenuBar
@@ -345,6 +395,12 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         onSaveNew={handleSaveSnapshot}
         onRestore={handleRestoreSnapshot}
         onDelete={handleDeleteSnapshot}
+      />
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        placeholder="Type a command..."
       />
     </div>
   );
