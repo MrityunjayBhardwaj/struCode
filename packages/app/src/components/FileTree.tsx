@@ -17,7 +17,7 @@ import {
 
 interface FileTreeProps {
   projectName: string;
-  onOpenFile: (fileId: string) => void;
+  onOpenFile: (fileId: string, intent?: { preview?: boolean }) => void;
   activeFileId: string | null;
   onToggleCollapse: () => void;
 }
@@ -895,7 +895,7 @@ interface TreeItemProps {
   depth: number;
   collapsedFolders: Set<string>;
   onToggleFolder: (path: string) => void;
-  onOpenFile: (fileId: string) => void;
+  onOpenFile: (fileId: string, intent?: { preview?: boolean }) => void;
   activeFileId: string | null;
   editingFileId: string | null;
   editValue: string;
@@ -1009,7 +1009,7 @@ function TreeItem(props: TreeItemProps) {
           : undefined,
       }}
       onClick={() => {
-        if (!isEditing) props.onOpenFile(file.id);
+        if (!isEditing) props.onOpenFile(file.id, { preview: true });
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -1018,6 +1018,8 @@ function TreeItem(props: TreeItemProps) {
       }}
       onDoubleClick={(e) => {
         e.stopPropagation();
+        // Double-click promotes the preview open to a pinned tab.
+        if (!isEditing) props.onOpenFile(file.id, { preview: false });
       }}
     >
       <span style={styles.fileIcon}>{fileIconFor(node.name)}</span>
@@ -1051,7 +1053,7 @@ type ContextMenuState =
 interface ContextMenuProps {
   state: ContextMenuState;
   onClose: () => void;
-  onOpenFile: (fileId: string) => void;
+  onOpenFile: (fileId: string, intent?: { preview?: boolean }) => void;
   onRenameFile: (fileId: string) => void;
   onDeleteFile: (fileId: string) => void;
   onNewFile: (folderPath?: string) => void;

@@ -254,9 +254,12 @@ export function StaveApp({ initialProject }: StaveAppProps) {
 
   // ── Tab ↔ Tree sync ─────────────────────────────────────────────────
 
-  const handleOpenFile = useCallback((fileId: string) => {
-    // Ask the shell to open or focus the editor tab for this file.
-    shellRef.current?.openOrFocusFile(fileId);
+  const handleOpenFile = useCallback((fileId: string, intent?: { preview?: boolean }) => {
+    // Ask the shell to open or focus the editor tab for this file. Tree
+    // single-click passes preview: true so the tab is a transient preview
+    // slot; double-click promotes it. Command-palette Quick Open defaults
+    // to preview off (pinned) since the user explicitly picked the file.
+    shellRef.current?.openOrFocusFile(fileId, intent);
   }, []);
 
   // Register every app-level action as a command. Commands are the
