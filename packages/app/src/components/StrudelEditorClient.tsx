@@ -3,7 +3,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   WorkspaceShell,
+  getResolvedTheme,
+  onThemeChange,
   type WorkspaceShellHandle,
+  type ResolvedTheme,
   getFile,
   subscribeToWorkspaceFile,
   listWorkspaceFiles,
@@ -73,6 +76,14 @@ export default function StrudelEditorClient({
 }: StrudelEditorClientProps = {}) {
   // Register providers once
   ensureProviders();
+
+  // Mirror the resolved editor theme so the WorkspaceShell + Monaco
+  // re-render when the user flips Dark / Light / System. Initial state
+  // pulls from localStorage via getResolvedTheme.
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
+    typeof window === "undefined" ? "dark" : getResolvedTheme(),
+  );
+  useEffect(() => onThemeChange(setResolvedTheme), []);
 
   // Bundled preset IDs (used for the preset-seeding effect + named-viz
   // registration). Files themselves are seeded by templates.ts at
@@ -386,7 +397,7 @@ export default function StrudelEditorClient({
     <WorkspaceShell
       ref={shellRef}
       initialTabs={initialTabs}
-      theme="dark"
+      theme={resolvedTheme}
       height="100%"
       chromeForTab={chromeForTab}
       editorExtrasForTab={editorExtrasForTab}
