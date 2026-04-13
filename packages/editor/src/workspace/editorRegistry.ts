@@ -12,8 +12,18 @@
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MonacoEditor = any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MonacoNs = any
 
 const editors = new Map<string, MonacoEditor>()
+// One monaco namespace per process (all editors share it). Captured on
+// first mount so global operations (setTheme) can run without holding
+// onto a specific editor ref.
+let monacoNs: MonacoNs | null = null
+
+export function registerMonacoNamespace(monaco: MonacoNs): void {
+  if (!monacoNs) monacoNs = monaco
+}
 
 export function registerEditor(fileId: string, editor: MonacoEditor): void {
   editors.set(fileId, editor)
@@ -115,4 +125,40 @@ export function toggleEditorMinimap(): void {
 /** Called by EditorView on mount to seed the editor with saved options. */
 export function applyPersistedEditorOptions(editor: MonacoEditor): void {
   applyOptionsToEditor(editor)
+}
+
+// ── Theme ──────────────────────────────────────────────────────────
+
+type EditorTheme = 'dark' | 'light'
+const THEME_STORAGE = 'stave:editorTheme'
+
+function readTheme(): EditorTheme {
+  const ls = safeLocalStorage()
+  return ls?.getItem(THEME_STORAGE) === 'light' ? 'light' : 'dark'
+}
+
+function writeTheme(t: EditorTheme): void {
+  safeLocalStorage()?.setItem(THEME_STORAGE, t)
+}
+
+export function getEditorTheme(): EditorTheme { return readTheme() }
+
+export function setEditorTheme(theme: EditorTheme): void {
+  writeTheme(theme)
+  if (monacoNs?.editor?.setTheme) {
+    monacoNs.editor.setTheme(theme === 'light' ? 'stave-light' : 'stave-dark')
+  }
+  // Also update a data attribute on <html> so callers can hang CSS on it.
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('data-stave-theme', theme)
+  }
+}
+
+export function toggleEditorTheme(): void {
+  setEditorTheme(readTheme() === 'dark' ? 'light' : 'dark')
+}
+
+/** Seed DOM + monaco with the persisted theme. Call after mounting. */
+export function applyPersistedTheme(): void {
+  setEditorTheme(readTheme())
 }

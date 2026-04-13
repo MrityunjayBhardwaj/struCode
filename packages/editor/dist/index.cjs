@@ -7129,6 +7129,10 @@ function useHighlighting(editor, hapStream) {
 
 // src/workspace/editorRegistry.ts
 var editors = /* @__PURE__ */ new Map();
+var monacoNs = null;
+function registerMonacoNamespace(monaco) {
+  if (!monacoNs) monacoNs = monaco;
+}
 function registerEditor(fileId, editor) {
   editors.set(fileId, editor);
 }
@@ -7201,6 +7205,32 @@ function toggleEditorMinimap() {
 }
 function applyPersistedEditorOptions(editor) {
   applyOptionsToEditor(editor);
+}
+var THEME_STORAGE = "stave:editorTheme";
+function readTheme() {
+  const ls = safeLocalStorage();
+  return ls?.getItem(THEME_STORAGE) === "light" ? "light" : "dark";
+}
+function writeTheme(t) {
+  safeLocalStorage()?.setItem(THEME_STORAGE, t);
+}
+function getEditorTheme() {
+  return readTheme();
+}
+function setEditorTheme(theme) {
+  writeTheme(theme);
+  if (monacoNs?.editor?.setTheme) {
+    monacoNs.editor.setTheme(theme === "light" ? "stave-light" : "stave-dark");
+  }
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("data-stave-theme", theme);
+  }
+}
+function toggleEditorTheme() {
+  setEditorTheme(readTheme() === "dark" ? "light" : "dark");
+}
+function applyPersistedTheme() {
+  setEditorTheme(readTheme());
 }
 
 // src/monaco/diagnostics.ts
@@ -7564,6 +7594,7 @@ function EditorView({
     editorRef.current = editor;
     monacoRef.current = monaco;
     registerEditor(fileId, editor);
+    registerMonacoNamespace(monaco);
     applyPersistedEditorOptions(editor);
     ensureWorkspaceLanguages(monaco);
     if (monaco.editor?.defineTheme && monaco.editor?.setTheme) {
@@ -19634,6 +19665,7 @@ exports.VizPicker = VizPicker;
 exports.VizPresetStore = VizPresetStore;
 exports.WavEncoder = WavEncoder;
 exports.WorkspaceShell = WorkspaceShell;
+exports.applyPersistedTheme = applyPersistedTheme;
 exports.applyTheme = applyTheme;
 exports.bumpEditorFontSize = bumpEditorFontSize;
 exports.bundledPresetId = bundledPresetId;
@@ -19654,6 +19686,7 @@ exports.generateUniquePresetId = generateUniquePresetId;
 exports.getActiveProjectId = getActiveProjectId;
 exports.getEditorFontSize = getEditorFontSize;
 exports.getEditorMinimap = getEditorMinimap;
+exports.getEditorTheme = getEditorTheme;
 exports.getFile = getFile;
 exports.getFolderOrder = getFolderOrder;
 exports.getLastOpenedProject = getLastOpenedProject;
@@ -19710,6 +19743,7 @@ exports.seedFromPresetId = seedFromPresetId;
 exports.seedWorkspaceFile = seedWorkspaceFile;
 exports.setContent = setContent;
 exports.setEditorFontSize = setEditorFontSize;
+exports.setEditorTheme = setEditorTheme;
 exports.setFolderOrder = setFolderOrder;
 exports.setSubfolderOrder = setSubfolderOrder;
 exports.setVizConfig = setVizConfig;
@@ -19724,6 +19758,7 @@ exports.switchProject = switchProject;
 exports.timestretch = timestretch;
 exports.toStrudel = toStrudel;
 exports.toggleEditorMinimap = toggleEditorMinimap;
+exports.toggleEditorTheme = toggleEditorTheme;
 exports.touchProject = touchProject;
 exports.transpose = transpose;
 exports.undo = undo;

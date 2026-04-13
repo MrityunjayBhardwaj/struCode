@@ -126,6 +126,10 @@ export {
   setEditorFontSize,
   bumpEditorFontSize,
   toggleEditorMinimap,
+  getEditorTheme,
+  setEditorTheme,
+  toggleEditorTheme,
+  applyPersistedTheme,
 } from './workspace/editorRegistry'
 export {
   saveSnapshot,

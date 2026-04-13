@@ -37,7 +37,10 @@ import {
   revealLineInFile,
   bumpEditorFontSize,
   toggleEditorMinimap,
+  toggleEditorTheme,
+  applyPersistedTheme,
 } from "@stave/editor";
+import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { DialogHost } from "./DialogHost";
 import { showPrompt, showToast } from "../dialogs/host";
 import { CommandPalette, type PaletteRow } from "./CommandPalette";
@@ -93,6 +96,11 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  // Apply persisted theme on first mount so the user's choice survives
+  // reloads. Runs once — later theme changes go through toggleEditorTheme.
+  useEffect(() => { applyPersistedTheme(); }, []);
   const [zenMode, setZenMode] = useState(false);
   const searchViewRef = useRef<WorkspaceSearchViewHandle | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -441,6 +449,20 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       run: () => toggleEditorMinimap(),
     }));
     unregs.push(registerCommand({
+      id: "stave.view.toggleTheme",
+      title: "Toggle Theme (Dark / Light)",
+      category: "View",
+      run: () => toggleEditorTheme(),
+    }));
+    unregs.push(registerCommand({
+      id: "stave.view.shortcuts",
+      title: "Keyboard Shortcuts",
+      category: "View",
+      description: "List every command that has a shortcut.",
+      keybinding: "mod+/",
+      run: () => setShortcutsOpen(true),
+    }));
+    unregs.push(registerCommand({
       id: "stave.quickOpen",
       title: "Quick Open File",
       category: "Go",
@@ -718,6 +740,11 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           </div>
         </>
       )}
+
+      <ShortcutsOverlay
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
 
       <DialogHost />
 
