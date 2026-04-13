@@ -30,9 +30,10 @@ import { MenuBar } from "./MenuBar";
 import { FileTree } from "./FileTree";
 import { TemplateModal } from "./TemplateModal";
 import { ProjectSwitcherModal } from "./ProjectSwitcherModal";
-import { SnapshotModal } from "./SnapshotModal";
+import { SnapshotView } from "./SnapshotView";
+import { OutlineView } from "./OutlineView";
 import { CommandPalette, type PaletteRow } from "./CommandPalette";
-import { WorkspaceSearchPalette } from "./WorkspaceSearchPalette";
+import { WorkspaceSearchView, type WorkspaceSearchViewHandle } from "./WorkspaceSearchView";
 import { ActivityBar } from "./ActivityBar";
 import { StatusBar, type StatusBarRuntimeState } from "./StatusBar";
 import { registerCommand } from "../commands/registry";
@@ -79,12 +80,26 @@ export function StaveApp({ initialProject }: StaveAppProps) {
 
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [switcherModalOpen, setSwitcherModalOpen] = useState(false);
-  const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
-  const [workspaceSearchOpen, setWorkspaceSearchOpen] = useState(false);
+  const [zenMode, setZenMode] = useState(false);
+  const searchViewRef = useRef<WorkspaceSearchViewHandle | null>(null);
+
+  // Esc exits zen mode. Registered at window level because there's no
+  // chrome to click when zen is on; the only way out is the keyboard.
+  useEffect(() => {
+    if (!zenMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setZenMode(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zenMode]);
 
   // Subscribe to the structural undo manager so Edit menu items can
   // enable/disable reactively.
@@ -98,10 +113,19 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     setSnapshots(await listSnapshots(projectId));
   }, []);
 
-  const openSnapshotModal = useCallback(async () => {
+  const openSnapshotPanel = useCallback(async () => {
+    setActivePanelId("snapshots");
     await refreshSnapshots(activeProject.id);
-    setSnapshotModalOpen(true);
   }, [activeProject.id, refreshSnapshots]);
+
+  // Refresh the snapshot list whenever the Version History panel
+  // becomes visible — auto-snapshots could have been added by the
+  // 60s idle debouncer while the user was elsewhere.
+  useEffect(() => {
+    if (activePanelId === "snapshots") {
+      refreshSnapshots(activeProject.id);
+    }
+  }, [activePanelId, activeProject.id, refreshSnapshots]);
 
   const handleSaveSnapshot = useCallback(async (label: string) => {
     await saveSnapshot(activeProject.id, label);
@@ -308,9 +332,9 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     }));
     unregs.push(registerCommand({
       id: "stave.project.versionHistory",
-      title: "Version History...",
+      title: "Version History",
       category: "File",
-      run: () => { openSnapshotModal(); },
+      run: () => { openSnapshotPanel(); },
     }));
     unregs.push(registerCommand({
       id: "stave.edit.undo",
@@ -336,6 +360,14 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       run: () => setSidebarCollapsed((c) => !c),
     }));
     unregs.push(registerCommand({
+      id: "stave.view.zen",
+      title: "Toggle Zen / Perform Mode",
+      category: "View",
+      description: "Hide menu bar, activity bar, and status bar. Esc to exit.",
+      keybinding: "mod+alt+z",
+      run: () => setZenMode((z) => !z),
+    }));
+    unregs.push(registerCommand({
       id: "stave.quickOpen",
       title: "Quick Open File",
       category: "Go",
@@ -347,7 +379,11 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       title: "Search in Files",
       category: "Find",
       keybinding: "mod+shift+f",
-      run: () => setWorkspaceSearchOpen(true),
+      run: () => {
+        setActivePanelId("search");
+        // Defer focus until after the panel mounts / remounts.
+        setTimeout(() => searchViewRef.current?.focus(), 50);
+      },
     }));
     // Activity-bar panel registry — the panel body itself is rendered
     // by StaveApp via activePanelId; registering here just gives the
@@ -375,8 +411,15 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       order: 30,
       render: () => null,
     }));
+    unregs.push(registerPanel({
+      id: "outline",
+      title: "Outline",
+      icon: "≡",
+      order: 40,
+      render: () => null,
+    }));
     return () => { for (const u of unregs) u(); };
-  }, [activeProject, handleRenameActiveProject, openSnapshotModal]);
+  }, [activeProject, handleRenameActiveProject, openSnapshotPanel]);
 
   // Build file rows for QuickOpen — memoised so mount of the palette
   // has a stable array. Rebuilt when the file list changes.
@@ -400,32 +443,36 @@ export function StaveApp({ initialProject }: StaveAppProps) {
 
   return (
     <div style={styles.root}>
-      <MenuBar
-        projectName={activeProject.name}
-        onNewProject={() => setTemplateModalOpen(true)}
-        onOpenProject={() => setSwitcherModalOpen(true)}
-        onRenameProject={handleRenameActiveProject}
-        onExportProject={() => {
-          exportProjectAsZip(activeProject).catch((err) => {
-            console.error("[stave] export failed:", err);
-            alert("Export failed — see console for details.");
-          });
-        }}
-        onVersionHistory={openSnapshotModal}
-        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-        sidebarCollapsed={sidebarCollapsed}
-        onUndo={() => { undo(); }}
-        onRedo={() => { redo(); }}
-        canUndo={undoState.canUndo}
-        canRedo={undoState.canRedo}
-      />
+      {!zenMode && (
+        <MenuBar
+          projectName={activeProject.name}
+          onNewProject={() => setTemplateModalOpen(true)}
+          onOpenProject={() => setSwitcherModalOpen(true)}
+          onRenameProject={handleRenameActiveProject}
+          onExportProject={() => {
+            exportProjectAsZip(activeProject).catch((err) => {
+              console.error("[stave] export failed:", err);
+              alert("Export failed — see console for details.");
+            });
+          }}
+          onVersionHistory={openSnapshotPanel}
+          onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+          sidebarCollapsed={sidebarCollapsed}
+          onUndo={() => { undo(); }}
+          onRedo={() => { redo(); }}
+          canUndo={undoState.canUndo}
+          canRedo={undoState.canRedo}
+        />
+      )}
 
       <div style={styles.main}>
-        <ActivityBar
-          activePanelId={activePanelId}
-          onSelect={setActivePanelId}
-        />
-        {activePanelId === "explorer" && (
+        {!zenMode && (
+          <ActivityBar
+            activePanelId={activePanelId}
+            onSelect={setActivePanelId}
+          />
+        )}
+        {!zenMode && activePanelId === "explorer" && (
           <FileTree
             projectName={activeProject.name}
             onOpenFile={handleOpenFile}
@@ -433,34 +480,34 @@ export function StaveApp({ initialProject }: StaveAppProps) {
             onToggleCollapse={() => setActivePanelId(null)}
           />
         )}
-        {activePanelId === "search" && (
+        {!zenMode && activePanelId === "search" && (
           <div style={styles.panelRoot}>
             <div style={styles.panelHeader}>SEARCH</div>
-            <div style={styles.panelBody}>
-              <div style={styles.panelHint}>Press ⌘⇧F to open full-screen search</div>
-              <button
-                style={styles.panelBtn}
-                onClick={() => setWorkspaceSearchOpen(true)}
-              >
-                Search in Files…
-              </button>
-            </div>
+            <WorkspaceSearchView
+              ref={searchViewRef}
+              compact
+              onOpenFile={(id) => handleOpenFile(id, { preview: true })}
+            />
           </div>
         )}
-        {activePanelId === "snapshots" && (
+        {!zenMode && activePanelId === "snapshots" && (
           <div style={styles.panelRoot}>
             <div style={styles.panelHeader}>VERSION HISTORY</div>
-            <div style={styles.panelBody}>
-              <div style={styles.panelHint}>
-                Auto-saves every 60s.
-              </div>
-              <button
-                style={styles.panelBtn}
-                onClick={openSnapshotModal}
-              >
-                Manage Snapshots…
-              </button>
-            </div>
+            <SnapshotView
+              snapshots={snapshots}
+              onSaveNew={handleSaveSnapshot}
+              onRestore={handleRestoreSnapshot}
+              onDelete={handleDeleteSnapshot}
+            />
+          </div>
+        )}
+        {!zenMode && activePanelId === "outline" && (
+          <div style={styles.panelRoot}>
+            <div style={styles.panelHeader}>OUTLINE</div>
+            <OutlineView
+              activeFileId={activeFileId}
+              onJump={(fileId) => handleOpenFile(fileId, { preview: false })}
+            />
           </div>
         )}
 
@@ -496,17 +543,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         onDelete={handleDeleteProjectFromSwitcher}
       />
 
-      <SnapshotModal
-        open={snapshotModalOpen}
-        projectName={activeProject.name}
-        snapshots={snapshots}
-        onClose={() => setSnapshotModalOpen(false)}
-        onSaveNew={handleSaveSnapshot}
-        onRestore={handleRestoreSnapshot}
-        onDelete={handleDeleteSnapshot}
-      />
-
-      <StatusBar
+      {!zenMode && <StatusBar
         projectName={activeProject.name}
         activeFilePath={
           activeFileId
@@ -516,7 +553,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         runtime={activeRuntime}
         canUndo={undoState.canUndo}
         canRedo={undoState.canRedo}
-      />
+      />}
 
       <CommandPalette
         open={paletteOpen}
@@ -532,11 +569,6 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         extraRows={quickOpenRows}
       />
 
-      <WorkspaceSearchPalette
-        open={workspaceSearchOpen}
-        onClose={() => setWorkspaceSearchOpen(false)}
-        onOpenFile={handleOpenFile}
-      />
     </div>
   );
 }
