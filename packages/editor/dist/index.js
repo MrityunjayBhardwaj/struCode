@@ -6833,6 +6833,27 @@ function useHighlighting(editor, hapStream) {
   return { clearAll };
 }
 
+// src/workspace/editorRegistry.ts
+var editors = /* @__PURE__ */ new Map();
+function registerEditor(fileId, editor) {
+  editors.set(fileId, editor);
+}
+function unregisterEditor(fileId, editor) {
+  if (editors.get(fileId) === editor) editors.delete(fileId);
+}
+function revealLineInFile(fileId, line2) {
+  const editor = editors.get(fileId);
+  if (!editor) return false;
+  try {
+    editor.revealLineInCenter?.(line2);
+    editor.setPosition?.({ lineNumber: line2, column: 1 });
+    editor.focus?.();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/monaco/diagnostics.ts
 var MARKER_OWNER = "stave";
 function parseErrorLocation(error) {
@@ -7170,6 +7191,11 @@ function EditorView({
   }, [fileId]);
   useHighlighting(editorRef.current, hapStream);
   useEffect(() => {
+    return () => {
+      if (editorRef.current) unregisterEditor(fileId, editorRef.current);
+    };
+  }, [fileId]);
+  useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
@@ -7188,6 +7214,7 @@ function EditorView({
   const handleMonacoMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    registerEditor(fileId, editor);
     ensureWorkspaceLanguages(monaco);
     if (monaco.editor?.defineTheme && monaco.editor?.setTheme) {
       defineStrudelMonacoTheme(monaco);
@@ -8364,7 +8391,8 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
   previewProviderFor,
   chromeForTab,
   editorExtrasForTab,
-  onSaveFile
+  onSaveFile,
+  onTabContextMenu
 }, forwardedRef) {
   const shellRootRef = useRef(null);
   const initialState = useRef(createInitialGroupState(initialTabs));
@@ -9172,6 +9200,12 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
                         draggable: true,
                         onDragStart: (e) => handleTabDragStart(e, group.id, tab),
                         onClick: () => handleTabClick(group.id, tab.id),
+                        onContextMenu: (e) => {
+                          if (!onTabContextMenu) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onTabContextMenu(tab, e.clientX, e.clientY);
+                        },
                         onDoubleClick: () => {
                           if (isPreview) {
                             setGroups((prev) => {
@@ -9476,6 +9510,30 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
           }
         }
         for (const tid of targets) closeTabById(tid);
+      },
+      closeOtherTabs: (tabId) => {
+        let ownerGroup = null;
+        for (const g of groups.values()) {
+          if (g.tabs.some((t) => t.id === tabId)) {
+            ownerGroup = g;
+            break;
+          }
+        }
+        if (!ownerGroup) return;
+        const victims = ownerGroup.tabs.filter((t) => t.id !== tabId).map((t) => t.id);
+        for (const tid of victims) closeTabById(tid);
+      },
+      closeAllTabsInGroup: (tabId) => {
+        let ownerGroup = null;
+        for (const g of groups.values()) {
+          if (g.tabs.some((t) => t.id === tabId)) {
+            ownerGroup = g;
+            break;
+          }
+        }
+        if (!ownerGroup) return;
+        const victims = ownerGroup.tabs.map((t) => t.id);
+        for (const tid of victims) closeTabById(tid);
       }
     }),
     [groups, activeGroupId, closeTabById]
@@ -19183,6 +19241,6 @@ function registerPresetAsNamedViz(preset) {
   }
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyTheme, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setFolderOrder, setSubfolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyTheme, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, normalizeStrudelHap, noteToMidi, onNamedVizChanged, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setContent, setFolderOrder, setSubfolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

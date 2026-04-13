@@ -248,6 +248,15 @@ export interface WorkspaceShellHandle {
    * reference the file.
    */
   closeTabsForFile(fileId: string): void
+
+  /**
+   * Close every tab in the tab's group EXCEPT the given tab. No-op if
+   * the tab doesn't exist.
+   */
+  closeOtherTabs(tabId: string): void
+
+  /** Close every tab in the tab's group. */
+  closeAllTabsInGroup(tabId: string): void
 }
 
 export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellProps>(function WorkspaceShell({
@@ -260,6 +269,7 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
   chromeForTab,
   editorExtrasForTab,
   onSaveFile,
+  onTabContextMenu,
 }, forwardedRef) {
   const shellRootRef = useRef<HTMLDivElement>(null)
 
@@ -1553,6 +1563,12 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
                   draggable
                   onDragStart={(e) => handleTabDragStart(e, group.id, tab)}
                   onClick={() => handleTabClick(group.id, tab.id)}
+                  onContextMenu={(e) => {
+                    if (!onTabContextMenu) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onTabContextMenu(tab, e.clientX, e.clientY)
+                  }}
                   onDoubleClick={() => {
                     // Double-click promotes a preview tab to pinned.
                     if (isPreview) {
@@ -1883,6 +1899,24 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
           }
         }
         for (const tid of targets) closeTabById(tid)
+      },
+      closeOtherTabs: (tabId: string) => {
+        let ownerGroup: WorkspaceGroupState | null = null
+        for (const g of groups.values()) {
+          if (g.tabs.some((t) => t.id === tabId)) { ownerGroup = g; break }
+        }
+        if (!ownerGroup) return
+        const victims = ownerGroup.tabs.filter((t) => t.id !== tabId).map((t) => t.id)
+        for (const tid of victims) closeTabById(tid)
+      },
+      closeAllTabsInGroup: (tabId: string) => {
+        let ownerGroup: WorkspaceGroupState | null = null
+        for (const g of groups.values()) {
+          if (g.tabs.some((t) => t.id === tabId)) { ownerGroup = g; break }
+        }
+        if (!ownerGroup) return
+        const victims = ownerGroup.tabs.map((t) => t.id)
+        for (const tid of victims) closeTabById(tid)
       },
     }),
     [groups, activeGroupId, closeTabById],

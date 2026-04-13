@@ -862,4 +862,17 @@ export interface WorkspaceShellProps {
    * if the active tab is a preview tab or no tab is active.
    */
   readonly onSaveFile?: (tab: WorkspaceTab & { kind: 'editor' }) => void
+
+  /**
+   * Fires when the user right-clicks on a tab's chrome. Receives the
+   * tab, viewport coords of the click, and a minimal set of handles
+   * the listener can call back to close tabs or reveal them in the
+   * host app's sidebar. Host apps typically render a context menu
+   * positioned at (x, y) and call the handles.
+   */
+  readonly onTabContextMenu?: (
+    tab: WorkspaceTab,
+    x: number,
+    y: number,
+  ) => void
 }

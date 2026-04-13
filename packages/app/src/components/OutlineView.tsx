@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   getFile,
   subscribeToWorkspaceFile,
+  revealLineInFile,
   type WorkspaceFile,
 } from "@stave/editor";
 
@@ -11,6 +12,10 @@ interface OutlineViewProps {
   activeFileId: string | null;
   onJump: (fileId: string, line: number) => void;
 }
+
+// Re-export so StaveApp can pass a single handler that both opens the
+// file (if it's not already the active tab) and reveals the line.
+export { revealLineInFile };
 
 interface Symbol {
   name: string;

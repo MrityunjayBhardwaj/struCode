@@ -62,12 +62,14 @@ interface StrudelEditorClientProps {
     bpm?: number;
     error: string | null;
   } | null) => void;
+  onTabContextMenu?: (tab: WorkspaceTab, x: number, y: number) => void;
 }
 
 export default function StrudelEditorClient({
   shellRef,
   onActiveFileChange,
   onActiveRuntimeStateChange,
+  onTabContextMenu,
 }: StrudelEditorClientProps = {}) {
   // Register providers once
   ensureProviders();
@@ -391,6 +393,7 @@ export default function StrudelEditorClient({
       previewProviderFor={previewProviderFor}
       onTabClose={handleTabClose}
       onSaveFile={handleSaveFile}
+      onTabContextMenu={onTabContextMenu}
       onActiveTabChange={(tab) => {
         const fid =
           tab && (tab.kind === "editor" || tab.kind === "preview")

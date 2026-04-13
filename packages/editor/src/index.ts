@@ -119,6 +119,7 @@ export {
   resetUndoManager,
   withStructBatch,
 } from './workspace/undoManager'
+export { revealLineInFile } from './workspace/editorRegistry'
 export {
   saveSnapshot,
   listSnapshots,

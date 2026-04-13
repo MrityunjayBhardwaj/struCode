@@ -6860,6 +6860,27 @@ function useHighlighting(editor, hapStream) {
   return { clearAll };
 }
 
+// src/workspace/editorRegistry.ts
+var editors = /* @__PURE__ */ new Map();
+function registerEditor(fileId, editor) {
+  editors.set(fileId, editor);
+}
+function unregisterEditor(fileId, editor) {
+  if (editors.get(fileId) === editor) editors.delete(fileId);
+}
+function revealLineInFile(fileId, line2) {
+  const editor = editors.get(fileId);
+  if (!editor) return false;
+  try {
+    editor.revealLineInCenter?.(line2);
+    editor.setPosition?.({ lineNumber: line2, column: 1 });
+    editor.focus?.();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/monaco/diagnostics.ts
 var MARKER_OWNER = "stave";
 function parseErrorLocation(error) {
@@ -7197,6 +7218,11 @@ function EditorView({
   }, [fileId]);
   useHighlighting(editorRef.current, hapStream);
   React.useEffect(() => {
+    return () => {
+      if (editorRef.current) unregisterEditor(fileId, editorRef.current);
+    };
+  }, [fileId]);
+  React.useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
@@ -7215,6 +7241,7 @@ function EditorView({
   const handleMonacoMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    registerEditor(fileId, editor);
     ensureWorkspaceLanguages(monaco);
     if (monaco.editor?.defineTheme && monaco.editor?.setTheme) {
       defineStrudelMonacoTheme(monaco);
@@ -8391,7 +8418,8 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
   previewProviderFor,
   chromeForTab,
   editorExtrasForTab,
-  onSaveFile
+  onSaveFile,
+  onTabContextMenu
 }, forwardedRef) {
   const shellRootRef = React.useRef(null);
   const initialState = React.useRef(createInitialGroupState(initialTabs));
@@ -9199,6 +9227,12 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
                         draggable: true,
                         onDragStart: (e) => handleTabDragStart(e, group.id, tab),
                         onClick: () => handleTabClick(group.id, tab.id),
+                        onContextMenu: (e) => {
+                          if (!onTabContextMenu) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onTabContextMenu(tab, e.clientX, e.clientY);
+                        },
                         onDoubleClick: () => {
                           if (isPreview) {
                             setGroups((prev) => {
@@ -9503,6 +9537,30 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
           }
         }
         for (const tid of targets) closeTabById(tid);
+      },
+      closeOtherTabs: (tabId) => {
+        let ownerGroup = null;
+        for (const g of groups.values()) {
+          if (g.tabs.some((t) => t.id === tabId)) {
+            ownerGroup = g;
+            break;
+          }
+        }
+        if (!ownerGroup) return;
+        const victims = ownerGroup.tabs.filter((t) => t.id !== tabId).map((t) => t.id);
+        for (const tid of victims) closeTabById(tid);
+      },
+      closeAllTabsInGroup: (tabId) => {
+        let ownerGroup = null;
+        for (const g of groups.values()) {
+          if (g.tabs.some((t) => t.id === tabId)) {
+            ownerGroup = g;
+            break;
+          }
+        }
+        if (!ownerGroup) return;
+        const victims = ownerGroup.tabs.map((t) => t.id);
+        for (const tid of victims) closeTabById(tid);
       }
     }),
     [groups, activeGroupId, closeTabById]
@@ -19317,6 +19375,7 @@ exports.resetFileStore = resetFileStore;
 exports.resetUndoManager = resetUndoManager;
 exports.resolveDescriptor = resolveDescriptor;
 exports.restoreSnapshot = restoreSnapshot;
+exports.revealLineInFile = revealLineInFile;
 exports.sanitizePresetName = sanitizePresetName;
 exports.saveSnapshot = saveSnapshot;
 exports.scaleGain = scaleGain;

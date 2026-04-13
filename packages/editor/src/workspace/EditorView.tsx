@@ -38,6 +38,7 @@ import { useWorkspaceFile } from './useWorkspaceFile'
 import { ensureWorkspaceLanguages, toMonacoLanguage } from './languages'
 import { workspaceAudioBus } from './WorkspaceAudioBus'
 import { useHighlighting } from '../monaco/useHighlighting'
+import { registerEditor, unregisterEditor } from './editorRegistry'
 import { setEvalError, clearEvalErrors } from '../monaco/diagnostics'
 import { addInlineViewZones } from '../visualizers/viewZones'
 import { DEFAULT_VIZ_DESCRIPTORS } from '../visualizers/defaultDescriptors'
@@ -188,6 +189,14 @@ export function EditorView({
   // Active highlighting (S5) — driven by hapStream from bus subscription.
   useHighlighting(editorRef.current, hapStream)
 
+  // Unregister from the cross-file editor registry on unmount so
+  // revealLineInFile doesn't reference a dead editor instance.
+  useEffect(() => {
+    return () => {
+      if (editorRef.current) unregisterEditor(fileId, editorRef.current)
+    }
+  }, [fileId])
+
   // ----------------------------------------------------------------
   // Error diagnostics (S7) — driven by the `error` prop.
   // ----------------------------------------------------------------
@@ -221,6 +230,7 @@ export function EditorView({
   const handleMonacoMount = (editor: any, monaco: any): void => {
     editorRef.current = editor
     monacoRef.current = monaco
+    registerEditor(fileId, editor)
     ensureWorkspaceLanguages(monaco)
 
     // Register the Stave Monaco theme (syntax rules + editor colors)

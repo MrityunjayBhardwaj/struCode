@@ -28,17 +28,19 @@ import { seedProjectFromTemplate } from "../templates";
 import { exportProjectAsZip } from "../exportProject";
 import { importProjectFromZip } from "../importProject";
 import { MenuBar } from "./MenuBar";
-import { FileTree } from "./FileTree";
+import { FileTree, type FileTreeHandle } from "./FileTree";
 import { TemplateModal } from "./TemplateModal";
 import { ProjectSwitcherModal } from "./ProjectSwitcherModal";
 import { SnapshotView } from "./SnapshotView";
 import { OutlineView } from "./OutlineView";
+import { revealLineInFile } from "@stave/editor";
 import { DialogHost } from "./DialogHost";
 import { showPrompt, showToast } from "../dialogs/host";
 import { CommandPalette, type PaletteRow } from "./CommandPalette";
 import { WorkspaceSearchView, type WorkspaceSearchViewHandle } from "./WorkspaceSearchView";
 import { ActivityBar } from "./ActivityBar";
 import { StatusBar, type StatusBarRuntimeState } from "./StatusBar";
+import { Breadcrumbs } from "./Breadcrumbs";
 import { registerCommand } from "../commands/registry";
 import { installKeybindingDispatcher } from "../commands/keybindings";
 import { registerPanel } from "../panels/registry";
@@ -90,6 +92,13 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [zenMode, setZenMode] = useState(false);
   const searchViewRef = useRef<WorkspaceSearchViewHandle | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const fileTreeRef = useRef<FileTreeHandle | null>(null);
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    tabId: string;
+    fileId: string | null;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const handleImportZip = useCallback(async (file: File) => {
     try {
@@ -515,6 +524,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         )}
         {!zenMode && activePanelId === "explorer" && (
           <FileTree
+            ref={fileTreeRef}
             projectName={activeProject.name}
             onOpenFile={handleOpenFile}
             activeFileId={activeFileId}
@@ -547,24 +557,52 @@ export function StaveApp({ initialProject }: StaveAppProps) {
             <div style={styles.panelHeader}>OUTLINE</div>
             <OutlineView
               activeFileId={activeFileId}
-              onJump={(fileId) => handleOpenFile(fileId, { preview: false })}
+              onJump={(fileId, line) => {
+                handleOpenFile(fileId, { preview: false });
+                // The tab may need a tick to mount its Monaco instance;
+                // retry up to a few times until the editor is registered.
+                let tries = 0;
+                const tick = () => {
+                  if (revealLineInFile(fileId, line)) return;
+                  if (++tries < 10) setTimeout(tick, 40);
+                };
+                setTimeout(tick, 50);
+              }}
             />
           </div>
         )}
 
         <div style={styles.editorArea}>
-          {switching ? (
-            <div style={styles.switchingOverlay}>Loading project...</div>
-          ) : (
-            <StrudelEditorClient
-              key={activeProject.id}
-              shellRef={shellRef}
-              onActiveFileChange={setActiveFileId}
-              onActiveRuntimeStateChange={(s) =>
-                setActiveRuntime(s ? { isPlaying: s.isPlaying, bpm: s.bpm, error: s.error } : null)
+          {!zenMode && (
+            <Breadcrumbs
+              path={
+                activeFileId
+                  ? listWorkspaceFiles().find((f) => f.id === activeFileId)?.path ?? null
+                  : null
               }
             />
           )}
+          <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+            {switching ? (
+              <div style={styles.switchingOverlay}>Loading project...</div>
+            ) : (
+              <StrudelEditorClient
+                key={activeProject.id}
+                shellRef={shellRef}
+                onActiveFileChange={setActiveFileId}
+                onActiveRuntimeStateChange={(s) =>
+                  setActiveRuntime(s ? { isPlaying: s.isPlaying, bpm: s.bpm, error: s.error } : null)
+                }
+                onTabContextMenu={(tab, x, y) => {
+                  const fileId =
+                    tab.kind === "editor" || tab.kind === "preview"
+                      ? tab.fileId
+                      : null;
+                  setTabContextMenu({ tabId: tab.id, fileId, x, y });
+                }}
+              />
+            )}
+          </div>
         </div>
       </div>
 
@@ -595,6 +633,67 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           if (file) await handleImportZip(file);
         }}
       />
+
+      {tabContextMenu && (
+        <>
+          <div
+            style={styles.tabCtxBackdrop}
+            onClick={() => setTabContextMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setTabContextMenu(null); }}
+          />
+          <div
+            style={{
+              ...styles.tabCtxMenu,
+              left: tabContextMenu.x,
+              top: tabContextMenu.y,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              data-stave-ctx-item
+              style={styles.menuItem}
+              onClick={() => {
+                shellRef.current?.closeTabsForFile(
+                  tabContextMenu.fileId ?? tabContextMenu.tabId,
+                );
+                setTabContextMenu(null);
+              }}
+            >Close</button>
+            <button
+              data-stave-ctx-item
+              style={styles.menuItem}
+              onClick={() => {
+                shellRef.current?.closeOtherTabs(tabContextMenu.tabId);
+                setTabContextMenu(null);
+              }}
+            >Close Others</button>
+            <button
+              data-stave-ctx-item
+              style={styles.menuItem}
+              onClick={() => {
+                shellRef.current?.closeAllTabsInGroup(tabContextMenu.tabId);
+                setTabContextMenu(null);
+              }}
+            >Close All</button>
+            {tabContextMenu.fileId && (
+              <>
+                <div style={styles.menuDivider} />
+                <button
+                  data-stave-ctx-item
+                  style={styles.menuItem}
+                  onClick={() => {
+                    const fid = tabContextMenu.fileId!;
+                    setActivePanelId("explorer");
+                    setTabContextMenu(null);
+                    // Wait for explorer panel to mount, then reveal.
+                    setTimeout(() => fileTreeRef.current?.revealFile(fid), 50);
+                  }}
+                >Reveal in Sidebar</button>
+              </>
+            )}
+          </div>
+        </>
+      )}
 
       <DialogHost />
 
@@ -646,6 +745,8 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     height: "100%",
     position: "relative",
+    display: "flex",
+    flexDirection: "column" as const,
   },
   collapsedStrip: {
     width: 28,
@@ -714,5 +815,38 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontFamily: "inherit",
     alignSelf: "flex-start",
+  },
+  tabCtxBackdrop: {
+    position: "fixed" as const,
+    inset: 0,
+    zIndex: 9998,
+  },
+  tabCtxMenu: {
+    position: "fixed" as const,
+    background: "#1e1e38",
+    border: "1px solid #3a3a5a",
+    borderRadius: 4,
+    padding: "4px 0",
+    zIndex: 9999,
+    minWidth: 160,
+    boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+    fontFamily: "system-ui, -apple-system, sans-serif",
+  },
+  menuItem: {
+    display: "block",
+    width: "100%",
+    padding: "6px 14px",
+    background: "none",
+    border: "none",
+    color: "#c8c8d4",
+    fontSize: 12,
+    textAlign: "left" as const,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  menuDivider: {
+    height: 1,
+    margin: "4px 0",
+    background: "#2a2a4a",
   },
 };

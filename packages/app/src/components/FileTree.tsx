@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   listWorkspaceFiles,
   subscribeToFileList,
@@ -22,6 +22,12 @@ interface FileTreeProps {
   onOpenFile: (fileId: string, intent?: { preview?: boolean }) => void;
   activeFileId: string | null;
   onToggleCollapse: () => void;
+}
+
+export interface FileTreeHandle {
+  /** Expand all ancestor folders of the given file and scroll its row
+   *  into view. No-op if the file isn't in the current project. */
+  revealFile: (fileId: string) => void;
 }
 
 interface TreeNode {
@@ -143,9 +149,9 @@ function applyFolderOrder(
 
 // ── Main component ──────────────────────────────────────────────────
 
-export function FileTree({
+export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function FileTree({
   projectName, onOpenFile, activeFileId, onToggleCollapse,
-}: FileTreeProps) {
+}, forwardedRef) {
   // Subscribe to file list changes — re-list whenever a file is added,
   // removed, or renamed. `fileListRev` is the dep that forces the memo
   // to recompute (empty dep array would compute once and never again).
@@ -266,6 +272,12 @@ export function FileTree({
     | { kind: "root"; x: number; y: number };
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
+  // Multi-select state. Cmd/Ctrl-click toggles a file into the set; a
+  // plain click clears the set. Selected rows render with the active
+  // highlight. Context menu on a multi-selected file shows a bulk
+  // "Delete N files" option.
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Close context menu on click outside
@@ -290,6 +302,33 @@ export function FileTree({
       }
     }
   }, [editingFileId]);
+
+  // Reveal: expand every ancestor folder + scroll the row into view.
+  useImperativeHandle(forwardedRef, () => ({
+    revealFile: (fileId: string) => {
+      const file = files.find((f) => f.id === fileId);
+      if (!file) return;
+      setCollapsedFolders((prev) => {
+        const next = new Set(prev);
+        const segments = file.path.split("/");
+        let acc = "";
+        for (let i = 0; i < segments.length - 1; i++) {
+          acc = acc ? `${acc}/${segments[i]}` : segments[i];
+          next.delete(acc);
+        }
+        return next;
+      });
+      // Scroll the row into view after the tree has re-rendered.
+      queueMicrotask(() => {
+        requestAnimationFrame(() => {
+          const el = document.querySelector<HTMLElement>(
+            `[data-file-tree-item="${CSS.escape(fileId)}"]`,
+          );
+          el?.scrollIntoView({ block: "nearest" });
+        });
+      });
+    },
+  }), [files]);
 
   const toggleFolder = useCallback((path: string) => {
     setCollapsedFolders((prev) => {
@@ -324,6 +363,32 @@ export function FileTree({
     setEditingFileId(null);
   }, [editingFileId, editValue, files]);
 
+  const handleDuplicate = useCallback((fileId: string) => {
+    const file = files.find((f) => f.id === fileId);
+    if (!file) return;
+    setContextMenu(null);
+    const dot = file.path.lastIndexOf(".");
+    const slash = file.path.lastIndexOf("/");
+    // "foo/bar.strudel" → "foo/bar copy.strudel"; "bar" → "bar copy"
+    const newPath = dot > slash
+      ? `${file.path.slice(0, dot)} copy${file.path.slice(dot)}`
+      : `${file.path} copy`;
+    const id = `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    createWorkspaceFile(id, newPath, file.content, file.language, file.meta as Record<string, unknown> | undefined);
+  }, [files]);
+
+  const handleCopyPath = useCallback(async (fileId: string) => {
+    const file = files.find((f) => f.id === fileId);
+    setContextMenu(null);
+    if (!file) return;
+    try {
+      await navigator.clipboard.writeText(file.path);
+      showToast(`Copied path: ${file.path}`);
+    } catch {
+      showToast("Failed to copy — clipboard blocked by browser", "error");
+    }
+  }, [files]);
+
   const handleDelete = useCallback(async (fileId: string) => {
     const file = files.find((f) => f.id === fileId);
     if (!file) return;
@@ -336,6 +401,23 @@ export function FileTree({
     });
     if (ok) deleteWorkspaceFile(fileId);
   }, [files]);
+
+  const handleBulkDelete = useCallback(async () => {
+    const ids = Array.from(selectedFileIds);
+    setContextMenu(null);
+    if (ids.length === 0) return;
+    const ok = await showConfirm({
+      title: `Delete ${ids.length} files?`,
+      description: "The selected files will be removed from this project.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    withStructBatch(() => {
+      for (const id of ids) deleteWorkspaceFile(id);
+    });
+    setSelectedFileIds(new Set());
+  }, [selectedFileIds]);
 
   // Folder rename — cascade-rename every file whose path starts with
   // `oldPath + "/"` (plus the .keep placeholder), swapping the prefix.
@@ -910,6 +992,13 @@ export function FileTree({
             dropTarget={dropTarget}
             betweenTarget={betweenTarget}
             betweenFolderTarget={betweenFolderTarget}
+            selectedFileIds={selectedFileIds}
+            onToggleSelect={(id) => setSelectedFileIds((prev) => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id); else next.add(id);
+              return next;
+            })}
+            onClearSelection={() => setSelectedFileIds(new Set())}
             onDragStart={handleDragStart}
             onDragOverFolder={handleDragOverFolder}
             onDropOnFolder={handleDrop}
@@ -929,6 +1018,10 @@ export function FileTree({
             if (f) startRename(f);
           }}
           onDeleteFile={handleDelete}
+          onDuplicateFile={handleDuplicate}
+          onCopyPath={handleCopyPath}
+          onBulkDelete={handleBulkDelete}
+          selectedFileIds={selectedFileIds}
           onNewFile={handleNewFile}
           onNewFolder={handleNewFolder}
           onToggleFolder={toggleFolder}
@@ -955,7 +1048,7 @@ export function FileTree({
       />
     </div>
   );
-}
+});
 
 // ── Recursive TreeItem ──────────────────────────────────────────────
 
@@ -976,6 +1069,10 @@ interface TreeItemProps {
   inputRef: React.RefObject<HTMLInputElement | null>;
   onNewFile: (folderPath?: string) => void;
   onNewFolder: (parentPath?: string) => void;
+  // Multi-select
+  selectedFileIds: Set<string>;
+  onToggleSelect: (fileId: string) => void;
+  onClearSelection: () => void;
   // Drag-drop
   dropTarget: string | "__root__" | null;
   betweenTarget: { fileId: string; position: "above" | "below" } | null;
@@ -1054,11 +1151,13 @@ function TreeItem(props: TreeItemProps) {
   const between = props.betweenTarget;
   const showAbove = between?.fileId === file.id && between.position === "above";
   const showBelow = between?.fileId === file.id && between.position === "below";
+  const isSelected = props.selectedFileIds.has(file.id);
 
   return (
     <div
       data-file-tree-item={file.id}
       data-active-file={isActive ? "true" : "false"}
+      data-selected={isSelected ? "true" : "false"}
       draggable={!isEditing}
       onDragStart={(e) => {
         e.stopPropagation();
@@ -1068,7 +1167,7 @@ function TreeItem(props: TreeItemProps) {
       onDrop={(e) => props.onDropOnFile(e, file.id)}
       style={{
         ...styles.item,
-        ...(isActive ? styles.itemActive : {}),
+        ...(isActive || isSelected ? styles.itemActive : {}),
         paddingLeft: 8 + depth * 12,
         position: "relative",
         boxShadow: showAbove
@@ -1077,8 +1176,15 @@ function TreeItem(props: TreeItemProps) {
           ? "inset 0 -2px 0 0 #7c7cff"
           : undefined,
       }}
-      onClick={() => {
-        if (!isEditing) props.onOpenFile(file.id, { preview: true });
+      onClick={(e) => {
+        if (isEditing) return;
+        if (e.metaKey || e.ctrlKey) {
+          e.stopPropagation();
+          props.onToggleSelect(file.id);
+          return;
+        }
+        props.onClearSelection();
+        props.onOpenFile(file.id, { preview: true });
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -1087,8 +1193,10 @@ function TreeItem(props: TreeItemProps) {
       }}
       onDoubleClick={(e) => {
         e.stopPropagation();
-        // Double-click promotes the preview open to a pinned tab.
-        if (!isEditing) props.onOpenFile(file.id, { preview: false });
+        if (!isEditing) {
+          props.onClearSelection();
+          props.onOpenFile(file.id, { preview: false });
+        }
       }}
     >
       <span style={styles.fileIcon}>{fileIconFor(node.name)}</span>
@@ -1125,6 +1233,10 @@ interface ContextMenuProps {
   onOpenFile: (fileId: string, intent?: { preview?: boolean }) => void;
   onRenameFile: (fileId: string) => void;
   onDeleteFile: (fileId: string) => void;
+  onDuplicateFile: (fileId: string) => void;
+  onCopyPath: (fileId: string) => void;
+  onBulkDelete: () => void;
+  selectedFileIds: Set<string>;
   onNewFile: (folderPath?: string) => void;
   onNewFolder: (parentPath?: string) => void;
   onToggleFolder: (folderPath: string) => void;
@@ -1179,12 +1291,28 @@ function ContextMenu(props: ContextMenuProps) {
 
   const entries: MenuEntry[] =
     props.state.kind === "file"
-      ? [
-          { label: "Open", onClick: () => { props.onOpenFile((props.state as {fileId: string}).fileId); props.onClose(); } },
-          null,
-          { label: "Rename...", onClick: () => { props.onRenameFile((props.state as {fileId: string}).fileId); props.onClose(); } },
-          { label: "Delete", danger: true, onClick: () => props.onDeleteFile((props.state as {fileId: string}).fileId) },
-        ]
+      ? (() => {
+          const fileId = (props.state as { fileId: string }).fileId;
+          // Bulk mode kicks in when the right-clicked file is part of a
+          // multi-selection of >1 items. Surfaces a single 'Delete N'
+          // action instead of the per-file menu.
+          const isBulk = props.selectedFileIds.size > 1 && props.selectedFileIds.has(fileId);
+          if (isBulk) {
+            return [
+              { label: `Delete ${props.selectedFileIds.size} files`, danger: true,
+                onClick: () => props.onBulkDelete() },
+            ];
+          }
+          return [
+            { label: "Open", onClick: () => { props.onOpenFile(fileId); props.onClose(); } },
+            null,
+            { label: "Duplicate", onClick: () => props.onDuplicateFile(fileId) },
+            { label: "Copy Path", onClick: () => props.onCopyPath(fileId) },
+            null,
+            { label: "Rename...", onClick: () => { props.onRenameFile(fileId); props.onClose(); } },
+            { label: "Delete", danger: true, onClick: () => props.onDeleteFile(fileId) },
+          ];
+        })()
       : props.state.kind === "folder"
       ? (() => {
           const fp = (props.state as { folderPath: string }).folderPath;
