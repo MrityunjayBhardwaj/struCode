@@ -26,6 +26,7 @@ import {
 } from "@stave/editor";
 import { seedProjectFromTemplate } from "../templates";
 import { exportProjectAsZip } from "../exportProject";
+import { importProjectFromZip } from "../importProject";
 import { MenuBar } from "./MenuBar";
 import { FileTree } from "./FileTree";
 import { TemplateModal } from "./TemplateModal";
@@ -88,6 +89,27 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [zenMode, setZenMode] = useState(false);
   const searchViewRef = useRef<WorkspaceSearchViewHandle | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleImportZip = useCallback(async (file: File) => {
+    try {
+      const meta = await importProjectFromZip(file);
+      const list = await listProjects();
+      setProjects(list);
+      setActiveProject(meta);
+      showToast(`Imported ${meta.name}`, "info");
+    } catch (err) {
+      console.error("[stave] import failed:", err);
+      showToast(
+        `Import failed — ${(err as Error).message ?? "see console"}`,
+        "error",
+      );
+    }
+  }, []);
+
+  const triggerImportPicker = useCallback(() => {
+    importInputRef.current?.click();
+  }, []);
 
   // Esc exits zen mode. Registered at window level because there's no
   // chrome to click when zen is on; the only way out is the keyboard.
@@ -343,6 +365,12 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       },
     }));
     unregs.push(registerCommand({
+      id: "stave.project.import",
+      title: "Import Project from .zip...",
+      category: "File",
+      run: () => triggerImportPicker(),
+    }));
+    unregs.push(registerCommand({
       id: "stave.project.versionHistory",
       title: "Version History",
       category: "File",
@@ -467,6 +495,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
               showToast("Export failed — see console for details.", "error");
             });
           }}
+          onImportProject={triggerImportPicker}
           onVersionHistory={openSnapshotPanel}
           onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
           sidebarCollapsed={sidebarCollapsed}
@@ -553,6 +582,18 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         onSelect={doSwitchProject}
         onRename={handleRenameProjectFromSwitcher}
         onDelete={handleDeleteProjectFromSwitcher}
+      />
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".zip,application/zip"
+        style={{ display: "none" }}
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.currentTarget.value = "";
+          if (file) await handleImportZip(file);
+        }}
       />
 
       <DialogHost />

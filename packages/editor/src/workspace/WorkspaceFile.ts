@@ -118,11 +118,19 @@ function ensureFolderOrderObserver(): void {
 
 // ── Y.Map observer (structural: file added/removed) ─────────────────
 
-let filesMapObserverWired = false
+// Track the CURRENT wired filesMap reference (not just a boolean). If
+// the active doc swaps to a new one, getFilesMap returns a different
+// reference — we detect that and re-wire. A bare boolean flag was
+// vulnerable to a stale-wire race: resetFileStore fires notifyFileList
+// synchronously, which triggers a React re-render that calls
+// listWorkspaceFiles → ensureFilesMapObserver BEFORE the awaited
+// switchProject has swapped the active doc. That would leave the
+// observer bound to the soon-to-be-destroyed OLD filesMap.
+let wiredFilesMap: Y.Map<Y.Map<unknown>> | null = null
 
 function ensureFilesMapObserver(): void {
-  if (filesMapObserverWired) return
   const filesMap = getFilesMap()
+  if (wiredFilesMap === filesMap) return
   // observeDeep so nested changes (inner fileMap's path/meta keys
   // mutating — e.g. after an undo that reverts a rename) also trigger
   // snapshot rebuild + notify. Without deep observation, Y.Doc state
@@ -167,7 +175,7 @@ function ensureFilesMapObserver(): void {
     }
     if (anyStructuralChange) notifyFileList()
   })
-  filesMapObserverWired = true
+  wiredFilesMap = filesMap
 }
 
 // ── Public API (unchanged signatures) ────────────────────────────────
@@ -476,7 +484,7 @@ export function resetFileStore(): void {
   textObservers.clear()
   cachedSnapshots.clear()
   subscribersByFile.clear()
-  filesMapObserverWired = false
+  wiredFilesMap = null
   folderOrderObserverWired = false
   // Undo manager was bound to the previous Y.Doc — drop it so the next
   // access rebuilds against the new doc.
@@ -502,7 +510,7 @@ export function __resetWorkspaceFilesForTests(): void {
   subscribersByFile.clear()
   fileListSubscribers.clear()
   folderOrderSubscribers.clear()
-  filesMapObserverWired = false
+  wiredFilesMap = null
   folderOrderObserverWired = false
   destroyProjectDoc()
 }

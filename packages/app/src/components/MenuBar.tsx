@@ -8,6 +8,7 @@ interface MenuBarProps {
   onOpenProject: () => void;
   onRenameProject: () => void;
   onExportProject: () => void;
+  onImportProject: () => void;
   onVersionHistory: () => void;
   onToggleSidebar: () => void;
   sidebarCollapsed: boolean;
@@ -25,6 +26,7 @@ export function MenuBar({
   onOpenProject,
   onRenameProject,
   onExportProject,
+  onImportProject,
   onVersionHistory,
   onToggleSidebar,
   sidebarCollapsed,
@@ -69,6 +71,7 @@ export function MenuBar({
         <MenuItem label="Rename Project..." onClick={() => clickItem(onRenameProject)} />
         <MenuItem label="Version History..." onClick={() => clickItem(onVersionHistory)} />
         <MenuDivider />
+        <MenuItem label="Import from .zip..." onClick={() => clickItem(onImportProject)} />
         <MenuItem label="Export as .zip" onClick={() => clickItem(onExportProject)} />
       </MenuButton>
 

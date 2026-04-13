@@ -538,11 +538,19 @@ export function FileTree({
 
   const handleDragOverFolder = useCallback(
     (e: React.DragEvent, folderPath: string) => {
-      // Accept only if the drag contains our MIME type.
-      if (!e.dataTransfer.types.includes("application/stave-tree-item")) return;
+      // Accept tree drags OR native OS files.
+      const isTree = e.dataTransfer.types.includes("application/stave-tree-item");
+      const isFiles = e.dataTransfer.types.includes("Files");
+      if (!isTree && !isFiles) return;
       e.preventDefault();
       e.stopPropagation();
-      e.dataTransfer.dropEffect = "move";
+      e.dataTransfer.dropEffect = isFiles ? "copy" : "move";
+      // Native file drops always go INTO the folder (no reorder zones).
+      if (isFiles) {
+        setBetweenFolderTarget(null);
+        setDropTarget(folderPath);
+        return;
+      }
       const isFolderDrag = e.dataTransfer.types.includes(
         "application/stave-folder-drag",
       );
@@ -573,10 +581,31 @@ export function FileTree({
   );
 
   const handleDragOverRoot = useCallback((e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes("application/stave-tree-item")) return;
+    const isTree = e.dataTransfer.types.includes("application/stave-tree-item");
+    const isFiles = e.dataTransfer.types.includes("Files");
+    if (!isTree && !isFiles) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+    e.dataTransfer.dropEffect = isFiles ? "copy" : "move";
     setDropTarget("__root__");
+  }, []);
+
+  // Import native OS files dropped onto the tree. Each file's text
+  // content is read, language inferred from extension; unknown
+  // extensions are rejected with a toast per file. Creates workspace
+  // files under `targetFolderPath` (use "" for root).
+  const importNativeFiles = useCallback(async (files: FileList, targetFolderPath: string) => {
+    for (const f of Array.from(files)) {
+      const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
+      const language = extensionToLanguage(ext);
+      if (!language) {
+        showToast(`Skipped "${f.name}" — unsupported extension ".${ext}"`, "error");
+        continue;
+      }
+      const text = await f.text();
+      const path = targetFolderPath ? `${targetFolderPath}/${f.name}` : f.name;
+      const id = `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      createWorkspaceFile(id, path, text, language);
+    }
   }, []);
 
   const handleDragLeaveTree = useCallback(() => {
@@ -754,6 +783,13 @@ export function FileTree({
     (e: React.DragEvent, targetFolderPath: string) => {
       e.preventDefault();
       e.stopPropagation();
+      // Native OS file drop — import and return.
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        setDropTarget(null);
+        setBetweenFolderTarget(null);
+        void importNativeFiles(e.dataTransfer.files, targetFolderPath);
+        return;
+      }
       const raw = e.dataTransfer.getData("application/stave-tree-item");
       const pendingBetween = betweenFolderTarget;
       setBetweenFolderTarget(null);
@@ -786,7 +822,7 @@ export function FileTree({
       }
       setDropTarget(null);
     },
-    [moveFileToFolder, moveFolderToFolder, betweenFolderTarget, reorderFolderWithin],
+    [moveFileToFolder, moveFolderToFolder, betweenFolderTarget, reorderFolderWithin, importNativeFiles],
   );
 
   return (

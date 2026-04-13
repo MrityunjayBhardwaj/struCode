@@ -5938,10 +5938,10 @@ function ensureFolderOrderObserver() {
   submap.observeDeep(() => notifyFolderOrder());
   folderOrderObserverWired = true;
 }
-var filesMapObserverWired = false;
+var wiredFilesMap = null;
 function ensureFilesMapObserver() {
-  if (filesMapObserverWired) return;
   const filesMap = getFilesMap();
+  if (wiredFilesMap === filesMap) return;
   filesMap.observeDeep((events) => {
     let anyStructuralChange = false;
     for (const event of events) {
@@ -5976,7 +5976,7 @@ function ensureFilesMapObserver() {
     }
     if (anyStructuralChange) notifyFileList();
   });
-  filesMapObserverWired = true;
+  wiredFilesMap = filesMap;
 }
 function createWorkspaceFile(id, path, content, language, meta) {
   ensureDoc();
@@ -6151,7 +6151,7 @@ function resetFileStore() {
   textObservers.clear();
   cachedSnapshots.clear();
   subscribersByFile.clear();
-  filesMapObserverWired = false;
+  wiredFilesMap = null;
   folderOrderObserverWired = false;
   resetUndoManager();
   notifyFileList();
