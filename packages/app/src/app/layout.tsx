@@ -13,8 +13,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" style={{ height: "100%" }}>
+    <html lang="en" style={{ height: "100%" }} suppressHydrationWarning>
       <head>
+        {/* Set data-stave-theme before first paint so CSS vars resolve
+            immediately — prevents a dark flash when the user chose light. */}
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -35,6 +37,11 @@ export default function RootLayout({
             __html: `
               @keyframes spin { to { transform: rotate(360deg) } }
               @keyframes pulse { 0%,100% { opacity: 0.4 } 50% { opacity: 1 } }
+              @keyframes step-reveal {
+                0% { opacity: 0.35; }
+                20% { opacity: 1; color: var(--text-secondary); }
+                100% { opacity: 0.6; color: var(--text-tertiary); }
+              }
               #stave-preloader {
                 position: fixed; inset: 0; z-index: 9999;
                 background: var(--bg-app);
@@ -62,42 +69,14 @@ export default function RootLayout({
                 margin-top: 32px; display: flex; flex-direction: column;
                 gap: 6px; color: var(--text-muted); font-size: 11px;
               }
-              #stave-preloader .steps .done { color: var(--text-tertiary); }
-              #stave-preloader .steps .active { color: var(--text-secondary); }
-            `,
-          }}
-        />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                var steps = ['Connecting to dev server', 'Compiling modules', 'Loading Monaco editor', 'Initializing audio engine'];
-                var el, stepEls;
-                var currentStep = 0;
-                function init() {
-                  el = document.getElementById('stave-preloader');
-                  stepEls = el ? el.querySelectorAll('.step') : [];
-                  if (stepEls.length) advanceStep();
-                }
-                function advanceStep() {
-                  if (currentStep >= stepEls.length) return;
-                  stepEls[currentStep].classList.add('active');
-                  if (currentStep > 0) {
-                    stepEls[currentStep - 1].classList.remove('active');
-                    stepEls[currentStep - 1].classList.add('done');
-                    stepEls[currentStep - 1].textContent = '✓ ' + steps[currentStep - 1];
-                  }
-                  currentStep++;
-                  if (currentStep < stepEls.length) setTimeout(advanceStep, 1500 + Math.random() * 1000);
-                  else setTimeout(function() {
-                    stepEls[stepEls.length - 1].classList.remove('active');
-                    stepEls[stepEls.length - 1].classList.add('done');
-                    stepEls[stepEls.length - 1].textContent = '✓ ' + steps[steps.length - 1];
-                  }, 2000);
-                }
-                if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-                else init();
-              })();
+              #stave-preloader .steps .step {
+                opacity: 0.35;
+                animation: step-reveal 6s ease-out forwards;
+              }
+              #stave-preloader .steps .step:nth-child(1) { animation-delay: 0s; }
+              #stave-preloader .steps .step:nth-child(2) { animation-delay: 1.5s; }
+              #stave-preloader .steps .step:nth-child(3) { animation-delay: 3s; }
+              #stave-preloader .steps .step:nth-child(4) { animation-delay: 4.5s; }
             `,
           }}
         />
@@ -109,10 +88,10 @@ export default function RootLayout({
           <div className="status">Warming up the editor…</div>
           <div className="spinner" />
           <div className="steps">
-            <div className="step">○ Connecting to dev server</div>
-            <div className="step">○ Compiling modules</div>
-            <div className="step">○ Loading Monaco editor</div>
-            <div className="step">○ Initializing audio engine</div>
+            <div className="step">Connecting to dev server</div>
+            <div className="step">Compiling modules</div>
+            <div className="step">Loading Monaco editor</div>
+            <div className="step">Initializing audio engine</div>
           </div>
         </div>
         {children}
