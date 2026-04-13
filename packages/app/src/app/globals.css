@@ -129,6 +129,12 @@ body {
   color: var(--text-body);
 }
 
+/* Inline viz action icons — show on hover */
+[data-viz-zone]:hover [data-viz-actions] {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
 /* Shared hover for all dropdown / context menu items.
    !important overrides inline style={{ background: "none" }}. */
 [data-stave-menu-item]:hover:not(:disabled) {

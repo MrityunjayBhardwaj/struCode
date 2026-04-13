@@ -7554,58 +7554,54 @@ function applyCropRegion(container, crop, zoneHeight, contentWidth) {
   }
   const cropWrapper = document.createElement("div");
   cropWrapper.setAttribute("data-viz-crop-wrapper", "");
-  cropWrapper.style.cssText = `
-    position: absolute; inset: 0; overflow: hidden;
-    transform-origin: 0 0;
-  `;
+  cropWrapper.style.cssText = `position:absolute;inset:0;overflow:hidden;transform-origin:0 0;`;
   const scaleX = 1 / crop.w;
   const scaleY = 1 / crop.h;
   const tx3 = -crop.x * contentWidth * scaleX;
   const ty = -crop.y * zoneHeight * scaleY;
   cropWrapper.style.transform = `translate(${tx3}px, ${ty}px) scale(${scaleX}, ${scaleY})`;
-  while (container.firstChild) {
-    cropWrapper.appendChild(container.firstChild);
-  }
+  while (container.firstChild) cropWrapper.appendChild(container.firstChild);
   container.style.position = "relative";
   container.appendChild(cropWrapper);
 }
 function createActionBar(vizId, presetId, actions) {
   const bar = document.createElement("div");
+  bar.setAttribute("data-viz-actions", "");
   bar.style.cssText = `
-    position: absolute; top: 4px; right: 8px; z-index: 10;
-    display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s;
-    pointer-events: none;
+    position:absolute;top:4px;right:8px;z-index:10;
+    display:flex;gap:4px;opacity:0;transition:opacity 0.15s;
+    pointer-events:none;
   `;
-  const btnStyle2 = `
-    background: var(--bg-elevated, #1e1e38);
-    border: 1px solid var(--border-strong, #3a3a5a);
-    border-radius: 3px; padding: 2px 6px;
-    color: var(--text-primary, #e8e8f0);
-    font-size: 11px; cursor: pointer;
-    font-family: system-ui, sans-serif;
-    pointer-events: auto;
+  const btnCss = `
+    background:var(--bg-elevated,#1e1e38);
+    border:1px solid var(--border-strong,#3a3a5a);
+    border-radius:3px;padding:2px 6px;
+    color:var(--text-primary,#e8e8f0);
+    font-size:11px;cursor:pointer;
+    font-family:system-ui,sans-serif;
+    pointer-events:auto;
   `;
   if (actions.onEdit) {
-    const editBtn = document.createElement("button");
-    editBtn.textContent = "\u270E";
-    editBtn.title = "Edit viz file";
-    editBtn.style.cssText = btnStyle2;
-    editBtn.onclick = (e) => {
+    const btn = document.createElement("button");
+    btn.textContent = "\u270E";
+    btn.title = "Edit viz file";
+    btn.style.cssText = btnCss;
+    btn.onclick = (e) => {
       e.stopPropagation();
       actions.onEdit(vizId);
     };
-    bar.appendChild(editBtn);
+    bar.appendChild(btn);
   }
   if (actions.onCrop) {
-    const cropBtn = document.createElement("button");
-    cropBtn.textContent = "\u2702";
-    cropBtn.title = "Crop inline region";
-    cropBtn.style.cssText = btnStyle2;
-    cropBtn.onclick = (e) => {
+    const btn = document.createElement("button");
+    btn.textContent = "\u2702";
+    btn.title = "Crop inline region";
+    btn.style.cssText = btnCss;
+    btn.onclick = (e) => {
       e.stopPropagation();
       actions.onCrop(vizId, presetId);
     };
-    bar.appendChild(cropBtn);
+    bar.appendChild(btn);
   }
   return bar;
 }
@@ -7621,6 +7617,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
   const renderers = [];
   const disconnects = [];
   const bufferedSchedulers = [];
+  const zoneEntries = [];
   const contentWidth = editor.getLayoutInfo().contentWidth;
   const audioCtx = components.audio?.audioCtx;
   const zoneHeight = getVizConfig().inlineZoneHeight;
@@ -7650,7 +7647,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
         }
       };
       const container = document.createElement("div");
-      container.style.cssText = `overflow:hidden;height:${zoneHeight}px;position:relative;`;
+      container.setAttribute("data-viz-zone", "");
+      container.style.cssText = `overflow:hidden;height:${zoneHeight}px;position:relative;width:${contentWidth || 400}px;`;
       const zoneId = accessor.addZone({
         afterLineNumber: afterLine,
         heightInPx: zoneHeight,
@@ -7667,42 +7665,66 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
       );
       renderers.push(renderer);
       disconnects.push(disconnect);
-      getNamedViz(vizId);
-      const presetName = vizId;
+      zoneEntries.push({ afterLine, container });
       void (async () => {
         try {
           const presets = await VizPresetStore.getAll();
-          const preset = presets.find((p) => p.name === presetName);
+          const preset = presets.find((p) => p.name === vizId);
           if (preset?.cropRegion) {
             applyCropRegion(container, preset.cropRegion, zoneHeight, contentWidth || 400);
           }
           if (actions && (actions.onEdit || actions.onCrop)) {
-            const bar = createActionBar(vizId, preset?.id ?? null, actions);
-            container.appendChild(bar);
-            container.addEventListener("mouseenter", () => {
-              bar.style.opacity = "1";
-            });
-            container.addEventListener("mouseleave", () => {
-              bar.style.opacity = "0";
-            });
+            container.appendChild(createActionBar(vizId, preset?.id ?? null, actions));
           }
         } catch {
           if (actions && (actions.onEdit || actions.onCrop)) {
-            const bar = createActionBar(vizId, null, actions);
-            container.appendChild(bar);
-            container.addEventListener("mouseenter", () => {
-              bar.style.opacity = "1";
-            });
-            container.addEventListener("mouseleave", () => {
-              bar.style.opacity = "0";
-            });
+            container.appendChild(createActionBar(vizId, null, actions));
           }
         }
       })();
     }
   });
+  let activeBar = null;
+  const mouseMoveDisposable = editor.onMouseMove?.((e) => {
+    const mouseY = e.event.posy;
+    const mouseX = e.event.posx;
+    let found = false;
+    for (const { container } of zoneEntries) {
+      const rect = container.getBoundingClientRect();
+      if (mouseY >= rect.top && mouseY <= rect.bottom && mouseX >= rect.left && mouseX <= rect.right) {
+        const bar = container.querySelector("[data-viz-actions]");
+        if (bar && bar !== activeBar) {
+          if (activeBar) {
+            activeBar.style.opacity = "0";
+            activeBar.style.pointerEvents = "none";
+          }
+          bar.style.opacity = "1";
+          bar.style.pointerEvents = "auto";
+          activeBar = bar;
+        }
+        found = true;
+        break;
+      }
+    }
+    if (!found && activeBar) {
+      activeBar.style.opacity = "0";
+      activeBar.style.pointerEvents = "none";
+      activeBar = null;
+    }
+  });
+  const mouseLeaveHandler = () => {
+    if (activeBar) {
+      activeBar.style.opacity = "0";
+      activeBar.style.pointerEvents = "none";
+      activeBar = null;
+    }
+  };
+  const editorDom = editor.getDomNode?.();
+  editorDom?.addEventListener("mouseleave", mouseLeaveHandler);
   return {
     cleanup() {
+      mouseMoveDisposable?.dispose?.();
+      editorDom?.removeEventListener("mouseleave", mouseLeaveHandler);
       disconnects.forEach((fn) => fn());
       renderers.forEach((r) => r.destroy());
       bufferedSchedulers.forEach((s) => s.dispose());
