@@ -104,6 +104,26 @@ export default function StrudelEditorClient({
     hydraPresetId: bundledPresetId("Piano Roll Hydra", "hydra"),
   }));
 
+  // Register ALL .p5/.hydra workspace files as named viz presets so
+  // `.viz("name")` works for user-created files, not just bundled ones.
+  useEffect(() => {
+    async function registerAllVizFiles() {
+      const allFiles = listWorkspaceFiles();
+      for (const f of allFiles) {
+        if (f.language !== "p5js" && f.language !== "hydra") continue;
+        let presetId = getPresetIdForFile(f);
+        if (!presetId) {
+          const baseName = f.path.replace(/\.[^.]+$/, "");
+          presetId = `user_${baseName.replace(/[^a-zA-Z0-9]/g, "_")}`;
+        }
+        await flushToPreset(f.id, presetId);
+        const preset = await VizPresetStore.get(presetId);
+        if (preset) registerPresetAsNamedViz(preset);
+      }
+    }
+    registerAllVizFiles();
+  }, []);
+
   // Register bundled presets as named viz (for `.viz("Piano Roll")` lookup).
   useEffect(() => {
     const p5Preset: VizPreset = {
@@ -296,13 +316,22 @@ export default function StrudelEditorClient({
     (tab: WorkspaceTab & { kind: "editor" }) => {
       const file = getFile(tab.fileId);
       if (!file) return;
-      const presetId = getPresetIdForFile(file);
-      if (!presetId) return; // Not a viz file backed by a preset — nothing to save.
+
+      // Only viz files (.p5 / .hydra) get flushed to a preset.
+      const isVizFile = file.language === "p5js" || file.language === "hydra";
+      if (!isVizFile) return;
+
+      // Use existing presetId, or auto-generate one for manually created
+      // viz files so they become available to `.viz("name")`.
+      let presetId = getPresetIdForFile(file);
+      if (!presetId) {
+        const baseName = file.path.replace(/\.[^.]+$/, "");
+        presetId = `user_${baseName.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      }
+
       flushToPreset(file.id, presetId)
         .then(() => VizPresetStore.get(presetId))
         .then((preset) => {
-          // Re-register under the (possibly unchanged) name so inline
-          // `.viz("<name>")` resolves to the fresh compiled code.
           if (preset) registerPresetAsNamedViz(preset);
         })
         .catch((err) => {

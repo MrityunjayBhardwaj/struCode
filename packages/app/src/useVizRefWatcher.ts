@@ -41,13 +41,19 @@ function extractVizRefs(content: string): string[] {
 }
 
 function resolveVizFile(vizName: string): { fileId: string; presetId: string } | null {
+  const norm = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, "");
+  const target = norm(vizName);
   const allFiles = listWorkspaceFiles();
   for (const f of allFiles) {
     const baseName = f.path.replace(/\.[^.]+$/, "");
     const lastSeg = baseName.split("/").pop() ?? "";
-    if (lastSeg === vizName || baseName === vizName) {
-      const presetId = getPresetIdForFile(f);
-      if (presetId) return { fileId: f.id, presetId };
+    if (norm(lastSeg) === target || norm(baseName) === target) {
+      let presetId = getPresetIdForFile(f);
+      // Auto-generate presetId for manually created viz files
+      if (!presetId) {
+        presetId = `user_${baseName.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      }
+      return { fileId: f.id, presetId };
     }
   }
   return null;
