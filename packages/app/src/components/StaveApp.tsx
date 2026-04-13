@@ -41,6 +41,7 @@ import {
   applyPersistedTheme,
 } from "@stave/editor";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
+import { EditorSettingsModal } from "./EditorSettingsModal";
 import { DialogHost } from "./DialogHost";
 import { showPrompt, showToast } from "../dialogs/host";
 import { CommandPalette, type PaletteRow } from "./CommandPalette";
@@ -97,6 +98,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [editorSettingsOpen, setEditorSettingsOpen] = useState(false);
 
   // Apply persisted theme on first mount so the user's choice survives
   // reloads. Runs once — later theme changes go through toggleEditorTheme.
@@ -541,6 +543,8 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       {!zenMode && (
         <MenuBar
           projectName={activeProject.name}
+          onOpenEditorSettings={() => setEditorSettingsOpen(true)}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
           onNewProject={() => setTemplateModalOpen(true)}
           onOpenProject={() => setSwitcherModalOpen(true)}
           onRenameProject={handleRenameActiveProject}
@@ -744,6 +748,11 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       <ShortcutsOverlay
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
+      />
+
+      <EditorSettingsModal
+        open={editorSettingsOpen}
+        onClose={() => setEditorSettingsOpen(false)}
       />
 
       <DialogHost />

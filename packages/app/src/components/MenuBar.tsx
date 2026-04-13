@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 interface MenuBarProps {
   projectName: string;
+  onOpenEditorSettings: () => void;
+  onOpenShortcuts: () => void;
   onNewProject: () => void;
   onOpenProject: () => void;
   onRenameProject: () => void;
@@ -18,10 +20,12 @@ interface MenuBarProps {
   canRedo: boolean;
 }
 
-type MenuId = "file" | "edit" | "view" | "help" | null;
+type MenuId = "file" | "edit" | "view" | "help" | "settings" | null;
 
 export function MenuBar({
-  projectName,
+  projectName: _projectName,
+  onOpenEditorSettings,
+  onOpenShortcuts,
   onNewProject,
   onOpenProject,
   onRenameProject,
@@ -96,7 +100,20 @@ export function MenuBar({
       </MenuButton>
 
       <div style={styles.spacer} />
-      <div style={styles.projectName}>{projectName}</div>
+      <div style={styles.menuButtonWrap}>
+        <button
+          style={{ ...styles.gearBtn, ...(openMenu === "settings" ? styles.menuButtonOpen : {}) }}
+          onClick={() => setOpenMenu(openMenu === "settings" ? null : "settings")}
+          title="Settings"
+          aria-label="Settings"
+        >⚙</button>
+        {openMenu === "settings" && (
+          <div style={{ ...styles.dropdown, right: 0, left: "auto" }}>
+            <MenuItem label="Editor Settings..." onClick={() => clickItem(onOpenEditorSettings)} />
+            <MenuItem label="Keyboard Shortcuts..." onClick={() => clickItem(onOpenShortcuts)} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -220,10 +237,15 @@ const styles: Record<string, React.CSSProperties> = {
   spacer: {
     flex: 1,
   },
-  projectName: {
+  gearBtn: {
+    background: "none",
+    border: "none",
     color: "#8888aa",
-    fontSize: 11,
-    paddingRight: 12,
-    fontStyle: "italic",
+    cursor: "pointer",
+    fontSize: 16,
+    padding: "0 12px",
+    height: "100%",
+    lineHeight: 1,
+    fontFamily: "inherit",
   },
 };

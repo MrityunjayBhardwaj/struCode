@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { listCommands, subscribeToCommands, type Command } from "../commands/registry";
-import { formatKeybinding, getKeybindingFor } from "../commands/keybindings";
+import { formatKeybinding, getKeybindingFor, setKeybindingOverride } from "../commands/keybindings";
 
 interface ShortcutsOverlayProps {
   open: boolean;
@@ -12,23 +12,47 @@ interface ShortcutsOverlayProps {
 export function ShortcutsOverlay({ open, onClose }: ShortcutsOverlayProps) {
   const [tick, setTick] = useState(0);
   const [query, setQuery] = useState("");
+  // The command id whose binding the user is currently re-capturing.
+  // When non-null, the next keydown (except modifier-only) becomes the
+  // new binding; Escape cancels the capture without closing the modal.
+  const [capturingId, setCapturingId] = useState<string | null>(null);
 
   useEffect(() => subscribeToCommands(() => setTick((t) => t + 1)), []);
   useEffect(() => {
     if (!open) return;
     setQuery("");
+    setCapturingId(null);
     const onKey = (e: KeyboardEvent) => {
+      if (capturingId) {
+        // Don't close the overlay while capturing — Escape cancels.
+        e.preventDefault(); e.stopPropagation();
+        if (e.key === "Escape") { setCapturingId(null); return; }
+        // Ignore modifier-only keys; require at least one non-modifier.
+        const modOnly = ["Control", "Meta", "Shift", "Alt"].includes(e.key);
+        if (modOnly) return;
+        const parts: string[] = [];
+        if (e.metaKey || e.ctrlKey) parts.push("mod");
+        if (e.shiftKey) parts.push("shift");
+        if (e.altKey) parts.push("alt");
+        const k = e.key.toLowerCase();
+        parts.push(k.length === 1 ? k : k);
+        setKeybindingOverride(capturingId, parts.join("+"));
+        setCapturingId(null);
+        setTick((t) => t + 1);
+        return;
+      }
       if (e.key === "Escape") { e.preventDefault(); onClose(); }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose, capturingId]);
 
   const rows = useMemo(() => {
     const cmds = listCommands();
+    // Show EVERY command so users can bind to ones that don't have a
+    // default shortcut. Empty binding is allowed.
     const withBindings = cmds
-      .map((c) => ({ cmd: c, binding: getKeybindingFor(c) }))
-      .filter((r) => r.binding);
+      .map((c) => ({ cmd: c, binding: getKeybindingFor(c) ?? "" }));
     const q = query.trim().toLowerCase();
     const filtered = q
       ? withBindings.filter((r) =>
@@ -70,12 +94,36 @@ export function ShortcutsOverlay({ open, onClose }: ShortcutsOverlayProps) {
           {rows.map(([category, items]) => (
             <div key={category} style={styles.section}>
               <div style={styles.sectionTitle}>{category}</div>
-              {items.map(({ cmd, binding }) => (
-                <div key={cmd.id} style={styles.row}>
-                  <div style={styles.rowTitle}>{cmd.title}</div>
-                  <div style={styles.rowKey}>{formatKeybinding(binding)}</div>
-                </div>
-              ))}
+              {items.map(({ cmd, binding }) => {
+                const capturing = capturingId === cmd.id;
+                return (
+                  <div key={cmd.id} style={styles.row}>
+                    <div style={styles.rowTitle}>{cmd.title}</div>
+                    <button
+                      style={{ ...styles.rowKey, ...styles.rowKeyBtn, ...(capturing ? styles.rowKeyCapturing : {}) }}
+                      onClick={() => setCapturingId(cmd.id)}
+                      title={binding ? "Click to rebind" : "Click to bind"}
+                    >
+                      {capturing ? "Press a key combo..." : (binding ? formatKeybinding(binding) : "—")}
+                    </button>
+                    {binding && (
+                      <button
+                        style={styles.clearBtn}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setKeybindingOverride(cmd.id, null);
+                          // If the cleared binding was a user override, it
+                          // falls back to the command's declared default.
+                          // We also need to override-to-empty to reflect
+                          // a removal fully — but MVP stops here.
+                          setTick((t) => t + 1);
+                        }}
+                        title="Reset to default"
+                      >↺</button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -124,5 +172,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   rowTitle: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   rowKey: { fontFamily: '"JetBrains Mono", monospace', color: "#9a9ac0", letterSpacing: 0.5 },
+  rowKeyBtn: {
+    background: "#0f0f1e", border: "1px solid #2a2a4a", borderRadius: 3,
+    padding: "2px 8px", cursor: "pointer", fontSize: 11,
+    minWidth: 90, textAlign: "center" as const,
+  },
+  rowKeyCapturing: {
+    background: "#4a3a00", borderColor: "#ffda4a", color: "#ffda4a",
+  },
+  clearBtn: {
+    background: "none", border: "none", color: "#6a6a88",
+    cursor: "pointer", padding: "2px 4px", marginLeft: 4,
+    fontSize: 12,
+  },
   empty: { padding: 20, textAlign: "center" as const, color: "#6a6a88", fontSize: 12 },
 };
