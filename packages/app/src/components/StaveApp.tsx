@@ -774,11 +774,16 @@ export function StaveApp({ initialProject }: StaveAppProps) {
                     showToast(`No preset found for "${vizId}" — save it first`, "error");
                     return;
                   }
-                  if (!activeFileId) {
+                  // Fall back to the first opened editor tab if activeFileId
+                  // isn't tracked yet (e.g. initial load before any tab
+                  // selection event fires). The floating bar only shows for
+                  // an editor that's mounted, so an editor tab exists.
+                  const fileId = activeFileId ?? listWorkspaceFiles().find(f => f.language === 'strudel' || f.language === 'sonicpi')?.id ?? null;
+                  if (!fileId) {
                     showToast("Open an editor file before cropping", "error");
                     return;
                   }
-                  setCropTarget({ vizId, presetId, fileId: activeFileId, trackKey });
+                  setCropTarget({ vizId, presetId, fileId, trackKey });
                 }}
               />
             )}
