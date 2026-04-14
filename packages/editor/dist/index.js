@@ -7846,12 +7846,13 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       const container = document.createElement("div");
       container.setAttribute("data-viz-zone", "");
       container.style.cssText = `overflow:hidden;height:${layout.zoneH}px;position:relative;`;
-      const zoneId = accessor.addZone({
+      const zoneDesc = {
         afterLineNumber: afterLine,
         heightInPx: layout.zoneH,
         domNode: container,
         suppressMouseDown: true
-      });
+      };
+      const zoneId = accessor.addZone(zoneDesc);
       const renderer = typeof descriptor.factory === "function" ? descriptor.factory() : descriptor.factory;
       try {
         renderer.mount(container, zoneComponents, { w: native.w, h: native.h }, console.error);
@@ -7866,6 +7867,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       });
       const entry = {
         zoneId,
+        zoneDesc,
         afterLine,
         container,
         canvas,
@@ -7886,6 +7888,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
           const contentW2 = editor.getLayoutInfo().contentWidth || 400;
           const refined = computeLayout(contentW2, entry.native, entry.crop);
           editor.changeViewZones((acc) => {
+            entry.zoneDesc.heightInPx = refined.zoneH;
             entry.container.style.height = `${refined.zoneH}px`;
             acc.layoutZone(entry.zoneId);
           });
@@ -7921,6 +7924,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
           entry.crop = override ?? preset?.cropRegion ?? FULL_CROP;
           const contentW = editor.getLayoutInfo().contentWidth || 400;
           const layout = computeLayout(contentW, entry.native, entry.crop);
+          entry.zoneDesc.heightInPx = layout.zoneH;
           entry.container.style.height = `${layout.zoneH}px`;
           accessor.layoutZone(entry.zoneId);
           applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
@@ -7929,6 +7933,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400;
         const layout = computeLayout(contentW, entry.native, entry.crop);
+        entry.zoneDesc.heightInPx = layout.zoneH;
         entry.container.style.height = `${layout.zoneH}px`;
         applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
       }
@@ -7940,6 +7945,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400;
         const layout = computeLayout(contentW, entry.native, entry.crop);
+        entry.zoneDesc.heightInPx = layout.zoneH;
         entry.container.style.height = `${layout.zoneH}px`;
         accessor.layoutZone(entry.zoneId);
         applyLayout(entry.container, entry.container.querySelector("canvas"), layout);

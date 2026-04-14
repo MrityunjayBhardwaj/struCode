@@ -174,6 +174,9 @@ function createFloatingActionBar(editorDom: HTMLElement): HTMLElement {
 
 interface ZoneEntry {
   zoneId: string
+  /** The zone descriptor object passed to addZone — kept so we can mutate
+   *  heightInPx and have Monaco pick up the new value on layoutZone. */
+  zoneDesc: { afterLineNumber: number; heightInPx: number; domNode: HTMLElement; suppressMouseDown: boolean }
   afterLine: number
   container: HTMLElement
   canvas: HTMLCanvasElement | null
@@ -257,12 +260,13 @@ export function addInlineViewZones(
       container.setAttribute('data-viz-zone', '')
       container.style.cssText = `overflow:hidden;height:${layout.zoneH}px;position:relative;`
 
-      const zoneId = accessor.addZone({
+      const zoneDesc = {
         afterLineNumber: afterLine,
         heightInPx: layout.zoneH,
         domNode: container,
         suppressMouseDown: true,
-      })
+      }
+      const zoneId = accessor.addZone(zoneDesc)
 
       // Mount the renderer at native size. Canvas is created by the
       // renderer as a direct child of container.
@@ -286,7 +290,7 @@ export function addInlineViewZones(
       })
 
       const entry: ZoneEntry = {
-        zoneId, afterLine, container, canvas, trackKey, vizId, presetId: null, native, crop,
+        zoneId, zoneDesc, afterLine, container, canvas, trackKey, vizId, presetId: null, native, crop,
       }
       zoneEntries.push(entry)
 
@@ -305,6 +309,7 @@ export function addInlineViewZones(
           const contentW = editor.getLayoutInfo().contentWidth || 400
           const refined = computeLayout(contentW, entry.native, entry.crop)
           editor.changeViewZones((acc) => {
+            entry.zoneDesc.heightInPx = refined.zoneH
             entry.container.style.height = `${refined.zoneH}px`
             acc.layoutZone(entry.zoneId)
           })
@@ -356,6 +361,7 @@ export function addInlineViewZones(
           entry.crop = override ?? preset?.cropRegion ?? FULL_CROP
           const contentW = editor.getLayoutInfo().contentWidth || 400
           const layout = computeLayout(contentW, entry.native, entry.crop)
+          entry.zoneDesc.heightInPx = layout.zoneH
           entry.container.style.height = `${layout.zoneH}px`
           accessor.layoutZone(entry.zoneId)
           applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
@@ -366,6 +372,7 @@ export function addInlineViewZones(
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400
         const layout = computeLayout(contentW, entry.native, entry.crop)
+        entry.zoneDesc.heightInPx = layout.zoneH
         entry.container.style.height = `${layout.zoneH}px`
         applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
       }
@@ -381,6 +388,7 @@ export function addInlineViewZones(
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400
         const layout = computeLayout(contentW, entry.native, entry.crop)
+        entry.zoneDesc.heightInPx = layout.zoneH
         entry.container.style.height = `${layout.zoneH}px`
         accessor.layoutZone(entry.zoneId)
         applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
