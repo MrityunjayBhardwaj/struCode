@@ -10796,6 +10796,7 @@ var LiveCodingRuntime = class {
     this.isPlayingState = false;
     this.errorListeners = /* @__PURE__ */ new Set();
     this.playingChangedListeners = /* @__PURE__ */ new Set();
+    this.evaluateSuccessListeners = /* @__PURE__ */ new Set();
     /**
      * Unregister callback from the playback coordinator. Called in
      * `dispose()` to remove this runtime from the registry so its
@@ -10919,6 +10920,7 @@ var LiveCodingRuntime = class {
     this.firePlayingChanged(true);
     notifyPlaybackStarted(this.fileId);
     this.reconcileAutoRefresh();
+    this.fireEvaluateSuccess();
     return { error: null };
   }
   stop() {
@@ -10954,6 +10956,7 @@ var LiveCodingRuntime = class {
     this.isDisposed = true;
     this.errorListeners.clear();
     this.playingChangedListeners.clear();
+    this.evaluateSuccessListeners.clear();
     this.autoRefreshChangedListeners.clear();
     try {
       this.unregisterFromPlaybackCoordinator();
@@ -11081,6 +11084,15 @@ var LiveCodingRuntime = class {
       this.playingChangedListeners.delete(cb);
     };
   }
+  onEvaluateSuccess(cb) {
+    this.evaluateSuccessListeners.add(cb);
+    let unsubscribed = false;
+    return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      this.evaluateSuccessListeners.delete(cb);
+    };
+  }
   getBpm() {
     return this.currentBpm;
   }
@@ -11104,6 +11116,16 @@ var LiveCodingRuntime = class {
     for (const cb of snapshot) {
       try {
         cb(playing);
+      } catch {
+      }
+    }
+  }
+  fireEvaluateSuccess() {
+    if (this.evaluateSuccessListeners.size === 0) return;
+    const snapshot = Array.from(this.evaluateSuccessListeners);
+    for (const cb of snapshot) {
+      try {
+        cb();
       } catch {
       }
     }

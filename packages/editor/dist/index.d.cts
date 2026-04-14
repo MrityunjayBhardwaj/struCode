@@ -3402,6 +3402,7 @@ declare class LiveCodingRuntime implements LiveCodingRuntime$1 {
     private isPlayingState;
     private readonly errorListeners;
     private readonly playingChangedListeners;
+    private readonly evaluateSuccessListeners;
     /**
      * Unregister callback from the playback coordinator. Called in
      * `dispose()` to remove this runtime from the registry so its
@@ -3475,9 +3476,11 @@ declare class LiveCodingRuntime implements LiveCodingRuntime$1 {
     private fireAutoRefreshChanged;
     onError(cb: (err: Error) => void): () => void;
     onPlayingChanged(cb: (playing: boolean) => void): () => void;
+    onEvaluateSuccess(cb: () => void): () => void;
     getBpm(): number | undefined;
     private fireOnError;
     private firePlayingChanged;
+    private fireEvaluateSuccess;
 }
 
 /**
