@@ -107,7 +107,10 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [editorSettingsOpen, setEditorSettingsOpen] = useState(false);
-  const [cropTarget, setCropTarget] = useState<{ vizId: string; presetId: string } | null>(null);
+  const [cropTarget, setCropTarget] = useState<
+    | { vizId: string; presetId: string; fileId: string; trackKey: string }
+    | null
+  >(null);
 
   // Apply persisted theme on first mount so the user's choice survives
   // reloads. Runs once — later theme changes go through toggleEditorTheme.
@@ -766,12 +769,21 @@ export function StaveApp({ initialProject }: StaveAppProps) {
                   }
                   showToast(`Viz file "${vizId}" not found in workspace`, "error");
                 }}
-                onCropViz={(vizId, presetId) => {
-                  if (presetId) {
-                    setCropTarget({ vizId, presetId });
-                  } else {
+                onCropViz={(vizId, presetId, trackKey) => {
+                  if (!presetId) {
                     showToast(`No preset found for "${vizId}" — save it first`, "error");
+                    return;
                   }
+                  // Fall back to the first opened editor tab if activeFileId
+                  // isn't tracked yet (e.g. initial load before any tab
+                  // selection event fires). The floating bar only shows for
+                  // an editor that's mounted, so an editor tab exists.
+                  const fileId = activeFileId ?? listWorkspaceFiles().find(f => f.language === 'strudel' || f.language === 'sonicpi')?.id ?? null;
+                  if (!fileId) {
+                    showToast("Open an editor file before cropping", "error");
+                    return;
+                  }
+                  setCropTarget({ vizId, presetId, fileId, trackKey });
                 }}
               />
             )}
@@ -885,6 +897,8 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         <CropPopup
           vizId={cropTarget.vizId}
           presetId={cropTarget.presetId}
+          fileId={cropTarget.fileId}
+          trackKey={cropTarget.trackKey}
           onClose={() => setCropTarget(null)}
         />
       )}

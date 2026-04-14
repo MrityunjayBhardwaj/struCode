@@ -42,6 +42,7 @@ import { registerEditor, unregisterEditor, applyPersistedEditorOptions, register
 import { setEvalError, clearEvalErrors } from '../monaco/diagnostics'
 import { addInlineViewZones } from '../visualizers/viewZones'
 import { onNamedVizChanged } from '../visualizers/namedVizRegistry'
+import { subscribeToZoneOverrides } from './WorkspaceFile'
 import { DEFAULT_VIZ_DESCRIPTORS } from '../visualizers/defaultDescriptors'
 import type { EditorViewProps } from './types'
 import type { AudioPayload } from './types'
@@ -178,6 +179,7 @@ export function EditorView({
             payload.engineComponents ?? payload as any,
             DEFAULT_VIZ_DESCRIPTORS,
             { onEdit: onEditViz, onCrop: onCropViz },
+            fileId,
           )
           viewZoneHandleRef.current?.resume()
         } else if (payload === null) {
@@ -204,7 +206,7 @@ export function EditorView({
   // ----------------------------------------------------------------
   useEffect(() => {
     if (!fileId) return
-    const unsub = onNamedVizChanged(() => {
+    const remount = () => {
       const payload = lastPayloadRef.current
       if (
         !payload?.inlineViz?.vizRequests?.size ||
@@ -216,10 +218,18 @@ export function EditorView({
         payload.engineComponents ?? payload,
         DEFAULT_VIZ_DESCRIPTORS,
         { onEdit: onEditViz, onCrop: onCropViz },
+        fileId,
       )
       viewZoneHandleRef.current?.resume()
-    })
-    return unsub
+    }
+    const unsubViz = onNamedVizChanged(remount)
+    // Per-zone crop overrides live on the file's Y.Map — remount when any
+    // override for this file changes so the zone picks up the new crop.
+    const unsubOverrides = subscribeToZoneOverrides(fileId, remount)
+    return () => {
+      unsubViz()
+      unsubOverrides()
+    }
   }, [fileId])
 
   // Active highlighting (S5) — driven by hapStream from bus subscription.

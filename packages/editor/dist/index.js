@@ -2,7 +2,7 @@ import React, { forwardRef, useRef, useState, useEffect, useMemo, useCallback, u
 import p5 from 'p5';
 import { jsx, jsxs, Fragment } from 'react/jsx-runtime';
 import MonacoEditorRaw from '@monaco-editor/react';
-import * as Y4 from 'yjs';
+import * as Y3 from 'yjs';
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -4175,6 +4175,12 @@ var StrudelEngine = class {
     // Reference to superdough audio controller (set during init)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.audioController = null;
+    // Per-track AnalyserNodes keyed by captureId, side-tapped off the
+    // superdough Orbit each captured pattern plays through.
+    this.trackAnalysers = /* @__PURE__ */ new Map();
+    // The orbit each tracked analyser is tapped from — lets re-evaluate reuse
+    // existing analysers when the captureId/orbit pair hasn't changed.
+    this.trackOrbit = /* @__PURE__ */ new Map();
     // Code from the last successful evaluate() — used by buildVizRequestsWithLines
     this.lastEvaluatedCode = "";
     // Pattern IR from the last successful evaluate() — derived by propagation
@@ -4238,6 +4244,21 @@ var StrudelEngine = class {
     const capturedPatterns = /* @__PURE__ */ new Map();
     const capturedVizRequests = /* @__PURE__ */ new Map();
     let anonIndex = 0;
+    let autoOrbitNext = 100;
+    const probeExplicitOrbit = (pat) => {
+      try {
+        const haps = pat.queryArc(0, 1);
+        for (const h of haps) {
+          if (h?.value?.orbit !== void 0) return true;
+        }
+        const more = pat.queryArc(0, 4);
+        for (const h of more) {
+          if (h?.value?.orbit !== void 0) return true;
+        }
+      } catch {
+      }
+      return false;
+    };
     const { Pattern } = await import('@strudel/core');
     const savedDescriptor = Object.getOwnPropertyDescriptor(Pattern.prototype, "p");
     const savedVizDescriptor = Object.getOwnPropertyDescriptor(Pattern.prototype, "viz");
@@ -4284,11 +4305,22 @@ var StrudelEngine = class {
                 captureId = `$${anonIndex}`;
                 anonIndex++;
               }
-              capturedPatterns.set(captureId, this);
+              let vizName = "";
               if (this._pendingViz && typeof this._pendingViz === "string") {
-                capturedVizRequests.set(captureId, this._pendingViz);
+                vizName = this._pendingViz;
+                capturedVizRequests.set(captureId, vizName);
                 delete this._pendingViz;
               }
+              let effectivePattern = this;
+              if (vizName && typeof this.orbit === "function" && !probeExplicitOrbit(this)) {
+                const autoOrbit = autoOrbitNext++;
+                try {
+                  effectivePattern = this.orbit(autoOrbit);
+                } catch {
+                }
+              }
+              capturedPatterns.set(captureId, effectivePattern);
+              return strudelFn.call(effectivePattern, id);
             }
             return strudelFn.call(this, id);
           }
@@ -4322,6 +4354,7 @@ var StrudelEngine = class {
           });
         }
         this.vizRequests = capturedVizRequests;
+        this.rebuildTrackAnalysers(capturedPatterns);
         const irBag = propagate(
           { strudelCode: code },
           [StrudelParseSystem, IREventCollectSystem]
@@ -4358,7 +4391,11 @@ var StrudelEngine = class {
       streaming: { hapStream: this.hapStream }
     };
     if (this.analyserNode && this.audioCtx) {
-      bag.audio = { analyser: this.analyserNode, audioCtx: this.audioCtx };
+      bag.audio = {
+        analyser: this.analyserNode,
+        audioCtx: this.audioCtx,
+        trackAnalysers: this.trackAnalysers.size > 0 ? this.trackAnalysers : void 0
+      };
     }
     bag.queryable = {
       scheduler: this.getPatternScheduler(),
@@ -4499,8 +4536,97 @@ var StrudelEngine = class {
     this.repl?.scheduler?.stop();
     this.hapStream.dispose();
     this.analyserNode?.disconnect();
+    for (const analyser of this.trackAnalysers.values()) {
+      try {
+        analyser.disconnect();
+      } catch {
+      }
+    }
+    this.trackAnalysers.clear();
+    this.trackOrbit.clear();
     this.initialized = false;
     this.repl = null;
+  }
+  /**
+   * Query a pattern for its first non-silent hap within [0, lookahead) cycles
+   * and return the orbit it uses. Default orbit is 1 (superdough's default).
+   * Returns 1 for silent patterns — falls back to orbit 1 just like superdough.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  resolveOrbit(pattern) {
+    const tryArc = (begin, end) => {
+      try {
+        const haps = pattern.queryArc(begin, end);
+        for (const h of haps) {
+          const o = h?.value?.orbit;
+          if (typeof o === "number") return o;
+        }
+      } catch {
+      }
+      return null;
+    };
+    return tryArc(0, 1) ?? tryArc(0, 4) ?? 1;
+  }
+  /**
+   * Reconcile trackAnalysers against capturedPatterns.
+   * - Creates analysers for new captureIds, tapped off their orbit's GainNode.
+   * - Reuses analysers when (captureId, orbit) is unchanged.
+   * - Rewires when a captureId's orbit changed (disconnect old, tap new).
+   * - Removes+disconnects analysers for captureIds no longer present.
+   *
+   * Safe to call repeatedly. No-op if audioController isn't available yet.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rebuildTrackAnalysers(capturedPatterns) {
+    if (!this.audioController || !this.audioCtx) return;
+    const seen = /* @__PURE__ */ new Set();
+    for (const [captureId, pattern] of capturedPatterns) {
+      seen.add(captureId);
+      const orbit = this.resolveOrbit(pattern);
+      const existingOrbit = this.trackOrbit.get(captureId);
+      const existingAnalyser = this.trackAnalysers.get(captureId);
+      if (existingAnalyser && existingOrbit === orbit) continue;
+      let orbitNode = null;
+      try {
+        orbitNode = this.audioController.getOrbit(orbit, [0, 1]);
+      } catch (err2) {
+        console.warn(`[stave] Could not resolve superdough orbit ${orbit} for "${captureId}":`, err2);
+      }
+      const orbitOutput = orbitNode?.output;
+      if (!orbitOutput) {
+        continue;
+      }
+      const analyser = existingAnalyser ?? this.audioCtx.createAnalyser();
+      if (!existingAnalyser) {
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.8;
+      } else {
+        try {
+          analyser.disconnect();
+        } catch {
+        }
+      }
+      try {
+        orbitOutput.connect(analyser);
+      } catch (err2) {
+        console.warn(`[stave] Could not tap orbit ${orbit} for "${captureId}":`, err2);
+        continue;
+      }
+      this.trackAnalysers.set(captureId, analyser);
+      this.trackOrbit.set(captureId, orbit);
+    }
+    for (const captureId of [...this.trackAnalysers.keys()]) {
+      if (seen.has(captureId)) continue;
+      const a = this.trackAnalysers.get(captureId);
+      if (a) {
+        try {
+          a.disconnect();
+        } catch {
+        }
+      }
+      this.trackAnalysers.delete(captureId);
+      this.trackOrbit.delete(captureId);
+    }
   }
 };
 var P5VizRenderer = class {
@@ -5699,7 +5825,7 @@ async function initProjectDoc(projectId) {
   if (activeDoc) {
     activeDoc.destroy();
   }
-  activeDoc = new Y4.Doc();
+  activeDoc = new Y3.Doc();
   docReady = false;
   const { IndexeddbPersistence } = await import('y-indexeddb');
   activeProvider = new IndexeddbPersistence(`stave-${projectId}`, activeDoc);
@@ -5715,7 +5841,7 @@ function initProjectDocSync() {
   if (activeDoc) {
     activeDoc.destroy();
   }
-  activeDoc = new Y4.Doc();
+  activeDoc = new Y3.Doc();
   docReady = true;
 }
 function ensureDoc() {
@@ -5767,18 +5893,18 @@ function ensureUndoManager() {
   const files = doc.getMap("files");
   const fileOrder = doc.getMap("fileOrder");
   const subfolderOrder = doc.getMap("subfolderOrder");
-  const um = new Y4.UndoManager([files, fileOrder, subfolderOrder], {
+  const um = new Y3.UndoManager([files, fileOrder, subfolderOrder], {
     trackedOrigins: /* @__PURE__ */ new Set([STRUCT_ORIGIN]),
     captureTimeout: 300
   });
   for (const inner of files.values()) {
-    if (inner instanceof Y4.Map) um.addToScope(inner);
+    if (inner instanceof Y3.Map) um.addToScope(inner);
   }
   const filesObserver = (event) => {
     for (const [key, change] of event.changes.keys) {
       if (change.action === "add" || change.action === "update") {
         const val = files.get(key);
-        if (val instanceof Y4.Map) um.addToScope(val);
+        if (val instanceof Y3.Map) um.addToScope(val);
       }
     }
   };
@@ -5926,7 +6052,7 @@ function ensureFilesMapObserver() {
         }
         continue;
       }
-      if (event.target instanceof Y4.Text) continue;
+      if (event.target instanceof Y3.Text) continue;
       const path = event.path;
       const ownerId = path.length > 0 ? String(path[0]) : null;
       if (!ownerId) continue;
@@ -5946,12 +6072,12 @@ function createWorkspaceFile(id, path, content, language, meta) {
   const filesMap = getFilesMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const fileMap = new Y4.Map();
+    const fileMap = new Y3.Map();
     fileMap.set("id", id);
     fileMap.set("path", path);
     fileMap.set("language", language);
     if (meta !== void 0) fileMap.set("meta", meta);
-    const ytext = new Y4.Text();
+    const ytext = new Y3.Text();
     ytext.insert(0, content);
     fileMap.set("content", ytext);
     filesMap.set(id, fileMap);
@@ -6070,7 +6196,7 @@ function setFolderOrder(folderPath, orderedIds) {
   const map = getFolderOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y4.Array();
+    const next = new Y3.Array();
     next.push(orderedIds);
     map.set(folderPath, next);
   }, STRUCT_ORIGIN);
@@ -6095,7 +6221,7 @@ function setSubfolderOrder(parentPath, orderedNames) {
   const map = getSubfolderOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y4.Array();
+    const next = new Y3.Array();
     next.push(orderedNames);
     map.set(parentPath, next);
   }, STRUCT_ORIGIN);
@@ -6113,7 +6239,7 @@ function setChildOrder(parentPath, entries) {
   const map = getChildOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y4.Array();
+    const next = new Y3.Array();
     next.push(entries);
     map.set(parentPath, next);
   }, STRUCT_ORIGIN);
@@ -6124,6 +6250,80 @@ function notify(id) {
   const snapshot = Array.from(set);
   for (const cb of snapshot) cb();
 }
+var zoneOverrideSubscribers = /* @__PURE__ */ new Map();
+var wiredZoneObservers = /* @__PURE__ */ new Set();
+function ensureZoneOverridesMap(fileId) {
+  const filesMap = getFilesMap();
+  const fileMap = filesMap.get(fileId);
+  if (!fileMap) return null;
+  let overrides = fileMap.get("zoneOverrides");
+  if (!overrides) {
+    overrides = new Y3.Map();
+    fileMap.set("zoneOverrides", overrides);
+  }
+  if (!wiredZoneObservers.has(fileId)) {
+    overrides.observeDeep(() => {
+      const subs = zoneOverrideSubscribers.get(fileId);
+      if (subs) for (const cb of subs) cb();
+    });
+    wiredZoneObservers.add(fileId);
+  }
+  return overrides;
+}
+function getZoneCropOverride(fileId, trackKey) {
+  ensureDoc();
+  const overrides = ensureZoneOverridesMap(fileId);
+  if (!overrides) return void 0;
+  const entry = overrides.get(trackKey);
+  return entry?.cropRegion;
+}
+function setZoneCropOverride(fileId, trackKey, cropRegion, vizId) {
+  ensureDoc();
+  const overrides = ensureZoneOverridesMap(fileId);
+  if (!overrides) return;
+  const doc = ensureDoc();
+  doc.transact(() => {
+    if (cropRegion === null) {
+      overrides.delete(trackKey);
+    } else {
+      overrides.set(trackKey, { cropRegion, vizId });
+    }
+  }, STRUCT_ORIGIN);
+}
+function pruneZoneOverrides(fileId, currentViz) {
+  ensureDoc();
+  const overrides = ensureZoneOverridesMap(fileId);
+  if (!overrides) return;
+  const doc = ensureDoc();
+  const stale = [];
+  for (const [trackKey, value] of overrides.entries()) {
+    const entry = value;
+    const currentVizId = currentViz.get(trackKey);
+    if (!currentVizId) {
+      stale.push(trackKey);
+    } else if (entry.vizId && entry.vizId !== currentVizId) {
+      stale.push(trackKey);
+    }
+  }
+  if (stale.length === 0) return;
+  doc.transact(() => {
+    for (const key of stale) overrides.delete(key);
+  }, STRUCT_ORIGIN);
+}
+function subscribeToZoneOverrides(fileId, cb) {
+  ensureDoc();
+  ensureZoneOverridesMap(fileId);
+  let set = zoneOverrideSubscribers.get(fileId);
+  if (!set) {
+    set = /* @__PURE__ */ new Set();
+    zoneOverrideSubscribers.set(fileId, set);
+  }
+  set.add(cb);
+  return () => {
+    set.delete(cb);
+    if (set.size === 0) zoneOverrideSubscribers.delete(fileId);
+  };
+}
 function resetFileStore() {
   for (const [id] of textObservers) {
     unwireTextObserver(id);
@@ -6133,6 +6333,8 @@ function resetFileStore() {
   subscribersByFile.clear();
   wiredFilesMap = null;
   folderOrderObserverWired = false;
+  zoneOverrideSubscribers.clear();
+  wiredZoneObservers.clear();
   resetUndoManager();
   notifyFileList();
   notifyFolderOrder();
@@ -7523,8 +7725,18 @@ function computeLayout(contentW, native, crop) {
     ty: -crop.y * native.h * scale2
   };
 }
+function readCanvasNative(container) {
+  const canvas = container.querySelector("canvas");
+  if (!canvas) return null;
+  const w = canvas.offsetWidth | 0;
+  const h = canvas.offsetHeight | 0;
+  if (w <= 0 || h <= 0) return null;
+  return { w, h };
+}
 function applyLayout(container, canvas, layout) {
-  container.style.height = `${layout.zoneH ?? container.style.height}`;
+  if (typeof layout.zoneH === "number") {
+    container.style.height = `${layout.zoneH}px`;
+  }
   let wrapper = container.querySelector("[data-viz-canvas-wrap]");
   if (!wrapper && canvas) {
     wrapper = document.createElement("div");
@@ -7590,7 +7802,7 @@ function createFloatingActionBar(editorDom) {
   return bar;
 }
 var FULL_CROP = { x: 0, y: 0, w: 1, h: 1 };
-function addInlineViewZones(editor, components, vizDescriptors, actions) {
+function addInlineViewZones(editor, components, vizDescriptors, actions, fileId) {
   const vizRequests = components.inlineViz?.vizRequests;
   if (!vizRequests || vizRequests.size === 0) {
     return { cleanup: () => {
@@ -7617,7 +7829,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
         trackScheduler = buffered;
       }
       const trackAnalyser = components.audio?.trackAnalysers?.get(trackKey);
-      const zoneAudio = trackAnalyser && audioCtx ? { analyser: trackAnalyser, audioCtx, trackAnalysers: components.audio?.trackAnalysers } : trackStream ? void 0 : components.audio;
+      const zoneAudio = trackAnalyser && audioCtx ? { analyser: trackAnalyser, audioCtx, trackAnalysers: components.audio?.trackAnalysers } : components.audio;
       const zoneComponents = {
         ...components,
         ...trackStream ? { streaming: { hapStream: trackStream } } : {},
@@ -7634,12 +7846,13 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
       const container = document.createElement("div");
       container.setAttribute("data-viz-zone", "");
       container.style.cssText = `overflow:hidden;height:${layout.zoneH}px;position:relative;`;
-      const zoneId = accessor.addZone({
+      const zoneDesc = {
         afterLineNumber: afterLine,
         heightInPx: layout.zoneH,
         domNode: container,
         suppressMouseDown: true
-      });
+      };
+      const zoneId = accessor.addZone(zoneDesc);
       const renderer = typeof descriptor.factory === "function" ? descriptor.factory() : descriptor.factory;
       try {
         renderer.mount(container, zoneComponents, { w: native.w, h: native.h }, console.error);
@@ -7652,32 +7865,66 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
       requestAnimationFrame(() => {
         applyLayout(container, container.querySelector("canvas"), layout);
       });
-      zoneEntries.push({
+      const entry = {
         zoneId,
+        zoneDesc,
         afterLine,
         container,
         canvas,
+        trackKey,
         vizId,
         presetId: null,
         native,
         crop
-      });
+      };
+      zoneEntries.push(entry);
+      let refineAttempts = 0;
+      const tryRefine = () => {
+        refineAttempts++;
+        const actual = readCanvasNative(entry.container);
+        if (actual && (actual.w !== entry.native.w || actual.h !== entry.native.h)) {
+          entry.native = actual;
+          entry.canvas = entry.container.querySelector("canvas");
+          const contentW2 = editor.getLayoutInfo().contentWidth || 400;
+          const refined = computeLayout(contentW2, entry.native, entry.crop);
+          editor.changeViewZones((acc) => {
+            entry.zoneDesc.heightInPx = refined.zoneH;
+            entry.container.style.height = `${refined.zoneH}px`;
+            acc.layoutZone(entry.zoneId);
+          });
+          applyLayout(entry.container, entry.container.querySelector("canvas"), refined);
+          return;
+        }
+        if (refineAttempts < 10) requestAnimationFrame(tryRefine);
+      };
+      requestAnimationFrame(tryRefine);
     }
   });
+  if (fileId) {
+    const currentViz = /* @__PURE__ */ new Map();
+    for (const [trackKey, { vizId }] of vizRequests) {
+      currentViz.set(trackKey, vizId);
+    }
+    pruneZoneOverrides(fileId, currentViz);
+  }
   const normalize = (s) => s.toLowerCase().replace(/[\s\-_]/g, "");
   void (async () => {
     try {
       const presets = await VizPresetStore.getAll();
       editor.changeViewZones((accessor) => {
         for (const entry of zoneEntries) {
+          const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : void 0;
           const normViz = normalize(entry.vizId);
           const preset = presets.find((p) => normalize(p.name) === normViz) ?? null;
-          if (!preset) continue;
-          entry.presetId = preset.id;
-          entry.native = nativeSizeFor(preset);
-          entry.crop = preset.cropRegion ?? FULL_CROP;
+          if (preset) {
+            entry.presetId = preset.id;
+          }
+          const actual = readCanvasNative(entry.container);
+          entry.native = actual ?? (preset ? nativeSizeFor(preset) : entry.native);
+          entry.crop = override ?? preset?.cropRegion ?? FULL_CROP;
           const contentW = editor.getLayoutInfo().contentWidth || 400;
           const layout = computeLayout(contentW, entry.native, entry.crop);
+          entry.zoneDesc.heightInPx = layout.zoneH;
           entry.container.style.height = `${layout.zoneH}px`;
           accessor.layoutZone(entry.zoneId);
           applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
@@ -7686,26 +7933,31 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400;
         const layout = computeLayout(contentW, entry.native, entry.crop);
+        entry.zoneDesc.heightInPx = layout.zoneH;
         entry.container.style.height = `${layout.zoneH}px`;
         applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
       }
     } catch {
     }
   })();
-  const layoutChangeDisposable = editor.onDidLayoutChange?.(() => {
+  const recomputeAllZones = () => {
     editor.changeViewZones((accessor) => {
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400;
         const layout = computeLayout(contentW, entry.native, entry.crop);
+        entry.zoneDesc.heightInPx = layout.zoneH;
         entry.container.style.height = `${layout.zoneH}px`;
         accessor.layoutZone(entry.zoneId);
         applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
       }
     });
-  });
+  };
+  const layoutChangeDisposable = editor.onDidLayoutChange?.(recomputeAllZones);
+  const scrollDisposable = editor.onDidScrollChange?.(recomputeAllZones);
   const editorDom = editor.getDomNode?.();
   let floatingBar = null;
   let mouseMoveDisposable = null;
+  let scrollHitTestDisposable = null;
   if (editorDom && actions && (actions.onEdit || actions.onCrop)) {
     floatingBar = createFloatingActionBar(editorDom);
     const editBtn = floatingBar.children[0];
@@ -7719,20 +7971,22 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
       e.stopPropagation();
       const vizId = floatingBar?.getAttribute("data-viz-id");
       const presetId = floatingBar?.getAttribute("data-preset-id") || null;
-      if (vizId && actions.onCrop) actions.onCrop(vizId, presetId);
+      const trackKey = floatingBar?.getAttribute("data-track-key") || "";
+      if (vizId && trackKey && actions.onCrop) actions.onCrop(vizId, presetId, trackKey);
     };
-    mouseMoveDisposable = editor.onMouseMove?.((ev) => {
-      const mouseY = ev.event.posy;
-      const mouseX = ev.event.posx;
+    let lastMouseX = -1;
+    let lastMouseY = -1;
+    const hitTestAndUpdateBar = () => {
+      if (!floatingBar || lastMouseX < 0) return;
       let found = null;
       for (const entry of zoneEntries) {
         const rect = entry.container.getBoundingClientRect();
-        if (mouseY >= rect.top && mouseY <= rect.bottom && mouseX >= rect.left && mouseX <= rect.right) {
+        if (lastMouseY >= rect.top && lastMouseY <= rect.bottom && lastMouseX >= rect.left && lastMouseX <= rect.right) {
           found = entry;
           break;
         }
       }
-      if (found && floatingBar) {
+      if (found) {
         const rect = found.container.getBoundingClientRect();
         const guardRect = (editorDom.querySelector(".overflow-guard") || editorDom).getBoundingClientRect();
         floatingBar.style.top = `${rect.top - guardRect.top + 4}px`;
@@ -7741,11 +7995,18 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
         floatingBar.style.pointerEvents = "auto";
         floatingBar.setAttribute("data-viz-id", found.vizId);
         floatingBar.setAttribute("data-preset-id", found.presetId || "");
-      } else if (floatingBar) {
+        floatingBar.setAttribute("data-track-key", found.trackKey);
+      } else {
         floatingBar.style.opacity = "0";
         floatingBar.style.pointerEvents = "none";
       }
+    };
+    mouseMoveDisposable = editor.onMouseMove?.((ev) => {
+      lastMouseX = ev.event.posx;
+      lastMouseY = ev.event.posy;
+      hitTestAndUpdateBar();
     }) ?? null;
+    scrollHitTestDisposable = editor.onDidScrollChange?.(hitTestAndUpdateBar) ?? null;
   }
   const mouseLeaveHandler = () => {
     if (floatingBar) {
@@ -7757,7 +8018,9 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
   return {
     cleanup() {
       mouseMoveDisposable?.dispose?.();
+      scrollHitTestDisposable?.dispose?.();
       layoutChangeDisposable?.dispose?.();
+      scrollDisposable?.dispose?.();
       editorDom?.removeEventListener("mouseleave", mouseLeaveHandler);
       floatingBar?.remove();
       renderers.forEach((r) => r.destroy());
@@ -7840,7 +8103,8 @@ function EditorView({
             editorRef.current,
             payload.engineComponents ?? payload,
             DEFAULT_VIZ_DESCRIPTORS,
-            { onEdit: onEditViz, onCrop: onCropViz }
+            { onEdit: onEditViz, onCrop: onCropViz },
+            fileId
           );
           viewZoneHandleRef.current?.resume();
         } else if (payload === null) {
@@ -7857,7 +8121,7 @@ function EditorView({
   }, [fileId]);
   useEffect(() => {
     if (!fileId) return;
-    const unsub = onNamedVizChanged(() => {
+    const remount = () => {
       const payload = lastPayloadRef.current;
       if (!payload?.inlineViz?.vizRequests?.size || !editorRef.current) return;
       viewZoneHandleRef.current?.cleanup();
@@ -7865,11 +8129,17 @@ function EditorView({
         editorRef.current,
         payload.engineComponents ?? payload,
         DEFAULT_VIZ_DESCRIPTORS,
-        { onEdit: onEditViz, onCrop: onCropViz }
+        { onEdit: onEditViz, onCrop: onCropViz },
+        fileId
       );
       viewZoneHandleRef.current?.resume();
-    });
-    return unsub;
+    };
+    const unsubViz = onNamedVizChanged(remount);
+    const unsubOverrides = subscribeToZoneOverrides(fileId, remount);
+    return () => {
+      unsubViz();
+      unsubOverrides();
+    };
   }, [fileId]);
   useHighlighting(editorRef.current, hapStream);
   useEffect(() => {
@@ -13700,6 +13970,154 @@ function encodeBundle(ntpTime, messages) {
   return new Uint8Array(MULTI_BUF, 0, off);
 }
 
+// ../../../sonicPiWeb/src/engine/buildTrackMonitorSynthDef.ts
+var RATE_CONTROL = 1;
+var RATE_AUDIO = 2;
+var BINOP_MULTIPLY = 2;
+function writePstring(view, offset, s) {
+  view.setUint8(offset, s.length);
+  offset += 1;
+  for (let i2 = 0; i2 < s.length; i2++) {
+    view.setUint8(offset + i2, s.charCodeAt(i2));
+  }
+  return offset + s.length;
+}
+function writeUGen(view, offset, name2, rate, inputs, numOutputs, outputRate, special = 0) {
+  offset = writePstring(view, offset, name2);
+  view.setInt8(offset, rate);
+  offset += 1;
+  view.setInt16(offset, inputs.length, false);
+  offset += 2;
+  view.setInt16(offset, numOutputs, false);
+  offset += 2;
+  view.setInt16(offset, special, false);
+  offset += 2;
+  for (const [ugenIdx, outIdx] of inputs) {
+    view.setInt16(offset, ugenIdx, false);
+    offset += 2;
+    view.setInt16(offset, outIdx, false);
+    offset += 2;
+  }
+  for (let i2 = 0; i2 < numOutputs; i2++) {
+    view.setInt8(offset, outputRate);
+    offset += 1;
+  }
+  return offset;
+}
+function writeParamName(view, offset, name2, index) {
+  offset = writePstring(view, offset, name2);
+  view.setInt16(offset, index, false);
+  return offset + 2;
+}
+function buildTrackMonitorSynthDef() {
+  const buf = new ArrayBuffer(246);
+  const view = new DataView(buf);
+  let o = 0;
+  view.setUint8(o, 83);
+  o += 1;
+  view.setUint8(o, 67);
+  o += 1;
+  view.setUint8(o, 103);
+  o += 1;
+  view.setUint8(o, 102);
+  o += 1;
+  view.setInt32(o, 1, false);
+  o += 4;
+  view.setInt16(o, 1, false);
+  o += 2;
+  o = writePstring(view, o, "sonic_pi_track_monitor");
+  view.setInt16(o, 0, false);
+  o += 2;
+  view.setInt16(o, 4, false);
+  o += 2;
+  view.setFloat32(o, 0, false);
+  o += 4;
+  view.setFloat32(o, 0, false);
+  o += 4;
+  view.setFloat32(o, 0, false);
+  o += 4;
+  view.setFloat32(o, 1, false);
+  o += 4;
+  view.setInt16(o, 4, false);
+  o += 2;
+  o = writeParamName(view, o, "in_bus", 0);
+  o = writeParamName(view, o, "out_bus_master", 1);
+  o = writeParamName(view, o, "out_bus_track", 2);
+  o = writeParamName(view, o, "amp", 3);
+  view.setInt16(o, 6, false);
+  o += 2;
+  o = writeUGen(
+    view,
+    o,
+    "Control",
+    RATE_CONTROL,
+    [],
+    // no inputs
+    4,
+    RATE_CONTROL
+  );
+  o = writeUGen(
+    view,
+    o,
+    "In",
+    RATE_AUDIO,
+    [[0, 0]],
+    // input: Control.in_bus
+    2,
+    RATE_AUDIO
+  );
+  o = writeUGen(
+    view,
+    o,
+    "BinaryOpUGen",
+    RATE_AUDIO,
+    [[1, 0], [0, 3]],
+    // In.L, Control.amp
+    1,
+    RATE_AUDIO,
+    BINOP_MULTIPLY
+  );
+  o = writeUGen(
+    view,
+    o,
+    "BinaryOpUGen",
+    RATE_AUDIO,
+    [[1, 1], [0, 3]],
+    // In.R, Control.amp
+    1,
+    RATE_AUDIO,
+    BINOP_MULTIPLY
+  );
+  o = writeUGen(
+    view,
+    o,
+    "Out",
+    RATE_AUDIO,
+    [[0, 1], [2, 0], [3, 0]],
+    // Control.out_bus_master, scaled_L, scaled_R
+    0,
+    RATE_AUDIO
+  );
+  o = writeUGen(
+    view,
+    o,
+    "Out",
+    RATE_AUDIO,
+    [[0, 2], [2, 0], [3, 0]],
+    // Control.out_bus_track, scaled_L, scaled_R
+    0,
+    RATE_AUDIO
+  );
+  view.setInt16(o, 0, false);
+  o += 2;
+  if (o !== 246) {
+    throw new Error(
+      `SynthDef binary size mismatch: wrote ${o} bytes, expected 246. This is a bug in buildTrackMonitorSynthDef().`
+    );
+  }
+  return new Uint8Array(buf);
+}
+
 // ../../../sonicPiWeb/src/engine/SuperSonicBridge.ts
 function formatOscTrace(address, args2, audioTime) {
   if (address === "/s_new" && args2.length >= 4) {
@@ -13779,6 +14197,10 @@ var _SuperSonicBridge = class _SuperSonicBridge {
     this.splitter = null;
     this.masterMerger = null;
     this.masterGainNode = null;
+    /** Per-loop monitor state: loopBus (internal routing) + monitorNodeId (scsynth node) */
+    this.loopMonitors = /* @__PURE__ */ new Map();
+    /** Whether the track-monitor SynthDef has been loaded via /d_recv */
+    this.monitorSynthDefLoaded = false;
     /** scsynth mixer node ID — for controlling master volume via /n_set */
     this.mixerNodeId = 0;
     /** Optional callback for OSC trace logging — receives formatted trace strings like desktop Sonic Pi. */
@@ -13825,8 +14247,11 @@ var _SuperSonicBridge = class _SuperSonicBridge {
     }
     const mixerGroupId = this.sonic.nextNodeId();
     this.sonic.send("/g_new", mixerGroupId, 0, 0);
-    this.sonic.send("/g_new", 101, 2, mixerGroupId);
+    this.sonic.send("/g_new", 102, 2, mixerGroupId);
+    this.sonic.send("/g_new", 101, 2, 102);
     this.sonic.send("/g_new", 100, 2, 101);
+    this.sonic.send("/d_recv", buildTrackMonitorSynthDef());
+    this.monitorSynthDefLoaded = true;
     await this.sonic.loadSynthDef("sonic-pi-mixer");
     const mixerBus = this.allocateBus();
     this.mixerNodeId = this.sonic.nextNodeId();
@@ -14266,6 +14691,82 @@ var _SuperSonicBridge = class _SuperSonicBridge {
   getAllTrackAnalysers() {
     return this.trackAnalysers;
   }
+  // ── Per-loop audio isolation (monitor synths) ────────────────
+  //
+  // Each live_loop gets:
+  //   1. A loopBus (internal scsynth bus, from the 128-bus pool)
+  //   2. A monitor synth in group 102 (reads loopBus, writes to
+  //      bus 0 for the mixer AND to a trackBus output channel
+  //      for the per-track AnalyserNode)
+  //
+  // task.outBus is set to loopBus so all synths + FX in that loop
+  // write there. The monitor fans out post-FX.
+  //
+  // Bare code (no live_loop) keeps outBus = 0, no monitor.
+  /**
+   * Create a per-loop monitor synth. Returns the loopBus number that
+   * the loop's synths should write to (via task.outBus).
+   *
+   * If a monitor already exists for this name (hot-swap), reuses it.
+   * The monitor persists across loop iterations (SP11 pattern — same
+   * lifecycle as persistentFx).
+   */
+  createLoopMonitor(name2) {
+    const existing = this.loopMonitors.get(name2);
+    if (existing) return existing.loopBus;
+    if (!this.sonic || !this.monitorSynthDefLoaded) return 0;
+    const loopBus = this.allocateBus();
+    const trackBus = this.allocateTrackBus(name2);
+    const monitorNodeId = this.sonic.nextNodeId();
+    this.sonic.send(
+      "/s_new",
+      "sonic_pi_track_monitor",
+      monitorNodeId,
+      1,
+      102,
+      "in_bus",
+      loopBus,
+      "out_bus_master",
+      0,
+      "out_bus_track",
+      trackBus,
+      "amp",
+      1
+    );
+    this.loopMonitors.set(name2, { loopBus, monitorNodeId });
+    return loopBus;
+  }
+  /**
+   * Get the loopBus for a named loop (0 if no monitor exists).
+   * The engine uses this to set task.outBus.
+   */
+  getLoopBus(name2) {
+    return this.loopMonitors.get(name2)?.loopBus ?? 0;
+  }
+  /**
+   * Free a specific loop's monitor synth and return its bus to the pool.
+   * Called when a loop is removed during hot-swap.
+   */
+  freeLoopMonitor(name2) {
+    const monitor = this.loopMonitors.get(name2);
+    if (!monitor) return;
+    this.sonic?.send("/n_free", monitor.monitorNodeId);
+    this.freeBus(monitor.loopBus);
+    this.loopMonitors.delete(name2);
+  }
+  /**
+   * Free all monitor synths (called on stop / re-evaluate).
+   * The loopBus numbers are returned to the pool so they can be
+   * reused on the next run. Monitor synths are also freed via
+   * /g_freeAll 102 in freeAllNodes(), but we clean the map here
+   * so createLoopMonitor() knows to recreate them.
+   */
+  clearLoopMonitors() {
+    for (const [, { loopBus }] of this.loopMonitors) {
+      this.freeBus(loopBus);
+    }
+    this.loopMonitors.clear();
+  }
   /** Allocate a private audio bus for FX routing. */
   allocateBus() {
     if (this.freeBuses.length > 0) return this.freeBuses.pop();
@@ -14300,11 +14801,13 @@ var _SuperSonicBridge = class _SuperSonicBridge {
   getSampleDuration(name2) {
     return this.sampleDurations.get(name2);
   }
-  /** Free all synth and FX nodes (clean slate for re-evaluate). */
+  /** Free all synth, FX, and monitor nodes (clean slate for re-evaluate). */
   freeAllNodes() {
     if (!this.sonic) return;
     this.sonic.send("/g_freeAll", 100);
     this.sonic.send("/g_freeAll", 101);
+    this.sonic.send("/g_freeAll", 102);
+    this.clearLoopMonitors();
   }
   /** Create a new group inside the FX group (101). Returns group ID. */
   createFxGroup() {
@@ -17543,7 +18046,7 @@ var SonicPiEngine = class {
           syncTarget = builderFnOrOpts.sync ?? null;
           builderFn = maybeFn;
         }
-        this.bridge?.allocateTrackBus(name2);
+        const loopBus = this.bridge?.createLoopMonitor(name2) ?? 0;
         this.loopBuilders.set(name2, builderFn);
         if (!this.loopSeeds.has(name2)) {
           let hash = 0;
@@ -17623,7 +18126,7 @@ var SonicPiEngine = class {
           if (task) {
             task.bpm = defaultBpm;
             task.currentSynth = defaultSynth;
-            task.outBus = 0;
+            task.outBus = loopBus;
           }
         }
       };
@@ -18004,7 +18507,7 @@ var SonicPiEngine = class {
           if (task) {
             task.bpm = defaults.bpm;
             task.currentSynth = defaults.synth;
-            task.outBus = 0;
+            task.outBus = this.bridge?.getLoopBus(name2) ?? 0;
           }
         }
         scheduler.resumeTick();
@@ -19036,7 +19539,7 @@ function wrap2(req) {
 var MAX_AUTO_SNAPSHOTS = 10;
 async function saveSnapshot(projectId, label, kind = "manual") {
   const doc = getActiveDoc();
-  const bytes = Y4.encodeStateAsUpdate(doc);
+  const bytes = Y3.encodeStateAsUpdate(doc);
   const meta = {
     id: crypto.randomUUID(),
     projectId,
@@ -19085,8 +19588,8 @@ async function restoreSnapshot(id) {
   );
   db.close();
   if (!stored) throw new Error(`snapshot ${id} not found`);
-  const snapDoc = new Y4.Doc();
-  Y4.applyUpdate(snapDoc, stored.bytes);
+  const snapDoc = new Y3.Doc();
+  Y3.applyUpdate(snapDoc, stored.bytes);
   const snapFiles = snapDoc.getMap("files");
   const snapOrder = snapDoc.getMap("fileOrder");
   const snapSubOrder = snapDoc.getMap("subfolderOrder");
@@ -19099,25 +19602,25 @@ async function restoreSnapshot(id) {
     for (const key of Array.from(activeOrder.keys())) activeOrder.delete(key);
     for (const key of Array.from(activeSubOrder.keys())) activeSubOrder.delete(key);
     for (const [fid, snapFile] of snapFiles.entries()) {
-      const clone = new Y4.Map();
+      const clone = new Y3.Map();
       clone.set("id", snapFile.get("id"));
       clone.set("path", snapFile.get("path"));
       clone.set("language", snapFile.get("language"));
       const meta = snapFile.get("meta");
       if (meta !== void 0) clone.set("meta", meta);
-      const content = new Y4.Text();
+      const content = new Y3.Text();
       const srcText = snapFile.get("content");
       content.insert(0, srcText.toString());
       clone.set("content", content);
       activeFiles.set(fid, clone);
     }
     for (const [folder, arr] of snapOrder.entries()) {
-      const next = new Y4.Array();
+      const next = new Y3.Array();
       next.push(arr.toArray());
       activeOrder.set(folder, next);
     }
     for (const [folder, arr] of snapSubOrder.entries()) {
-      const next = new Y4.Array();
+      const next = new Y3.Array();
       next.push(arr.toArray());
       activeSubOrder.set(folder, next);
     }
@@ -19907,6 +20410,6 @@ function registerPresetAsNamedViz(preset) {
   }
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedTheme, applyTheme, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getChildOrder, getEditorFontSize, getEditorMinimap, getEditorTheme, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onNamedVizChanged, onThemeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setChildOrder, setContent, setEditorFontSize, setEditorTheme, setFolderOrder, setSubfolderOrder, setVizConfig, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedTheme, applyTheme, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getChildOrder, getEditorFontSize, getEditorMinimap, getEditorTheme, getFile, getFolderOrder, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onNamedVizChanged, onThemeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setChildOrder, setContent, setEditorFontSize, setEditorTheme, setFolderOrder, setSubfolderOrder, setVizConfig, setZoneCropOverride, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

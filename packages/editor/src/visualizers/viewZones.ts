@@ -4,6 +4,7 @@ import type { VizRenderer, VizDescriptor } from './types'
 import { resolveDescriptor } from './resolveDescriptor'
 import { BufferedScheduler } from '../engine/BufferedScheduler'
 import { VizPresetStore, type CropRegion, type VizPreset } from './vizPreset'
+import { getZoneCropOverride, pruneZoneOverrides } from '../workspace/WorkspaceFile'
 
 export interface InlineZoneHandle {
   cleanup(): void
@@ -13,7 +14,16 @@ export interface InlineZoneHandle {
 
 export interface VizZoneActions {
   onEdit?: (vizId: string) => void
-  onCrop?: (vizId: string, presetId: string | null) => void
+  /**
+   * Fires when the user clicks the crop button on an inline zone.
+   *
+   * `trackKey` uniquely identifies THIS zone instance (same key the engine
+   * uses for vizRequests / trackSchedulers / trackAnalysers). Required so
+   * callers can save the crop as a per-instance override instead of
+   * overwriting the shared VizPreset — otherwise two $: blocks using the
+   * same preset would clobber each other's crop.
+   */
+  onCrop?: (vizId: string, presetId: string | null, trackKey: string) => void
 }
 
 /** Default native canvas dimensions for sketches that don't override them.
@@ -31,12 +41,17 @@ function nativeSizeFor(preset: VizPreset | null): { w: number; h: number } {
 }
 
 /**
- * Compute the inline zone height + canvas transform for a given content
- * width + native canvas size + crop region.
+ * Compute inline zone height + canvas transform.
  *
- * Uniform scale preserves aspect ratio. Zone height is derived from the
- * crop's native-pixel aspect so the displayed viz matches exactly what
- * the user picked in the crop popup (WYSIWYG).
+ * The cropped region fills the zone width — scale zooms so that
+ * cropW × nativeW maps to contentW. Zone height follows the crop's
+ * aspect. This is the original WYSIWYG model: what the user picks in
+ * the crop popup is exactly what appears inline, edge-to-edge.
+ *
+ *   scale = contentW / (cropW × nativeW)
+ *   zoneH = cropH × nativeH × scale
+ *   tx    = -cropX × nativeW × scale
+ *   ty    = -cropY × nativeH × scale
  */
 function computeLayout(
   contentW: number,
@@ -45,10 +60,8 @@ function computeLayout(
 ): { zoneH: number; scale: number; tx: number; ty: number } {
   const cropW = Math.max(0.01, crop.w)
   const cropH = Math.max(0.01, crop.h)
-  // scale so the cropped region's width fills contentW
   const scale = contentW / (cropW * native.w)
   let zoneH = cropH * native.h * scale
-  // Clamp to reasonable bounds
   if (zoneH > MAX_ZONE_HEIGHT) {
     const clamped = MAX_ZONE_HEIGHT / (cropH * native.h)
     return {
@@ -67,16 +80,44 @@ function computeLayout(
   }
 }
 
-/** Apply the computed transform to the canvas inside the container. */
+/**
+ * Read the canvas's actual intrinsic dimensions. p5 sketches call
+ * createCanvas(W, H) asynchronously after mount, often with dimensions that
+ * differ from preset.nativeSize. The transform math MUST use the canvas's
+ * actual size or the viz overflows the zone.
+ *
+ * Returns null if the canvas hasn't been created yet (first-frame pre-rAF).
+ */
+function readCanvasNative(container: HTMLElement): { w: number; h: number } | null {
+  const canvas = container.querySelector<HTMLCanvasElement>('canvas')
+  if (!canvas) return null
+  // Use CSS display dimensions, NOT canvas.width/height (buffer size).
+  // On HiDPI/Retina (devicePixelRatio > 1), p5 doubles the buffer for
+  // sharp rendering: canvas.width = CSS_width × DPR. Transform math must
+  // use the CSS size — buffer size halves the visual width on Retina.
+  const w = canvas.offsetWidth | 0
+  const h = canvas.offsetHeight | 0
+  if (w <= 0 || h <= 0) return null
+  return { w, h }
+}
+
+/** Apply the computed transform to the canvas inside the container.
+ *  `zoneH` is optional — when provided, the container height is re-asserted
+ *  in case Monaco reflowed it; otherwise the caller's pre-set height stands.
+ */
 function applyLayout(
   container: HTMLElement,
   canvas: HTMLElement | null,
-  layout: { scale: number; tx: number; ty: number },
+  layout: { scale: number; tx: number; ty: number; zoneH?: number },
 ): void {
-  container.style.height = `${layout.zoneH ?? container.style.height}`
+  if (typeof layout.zoneH === 'number') {
+    container.style.height = `${layout.zoneH}px`
+  }
   // The canvas (or its wrapper) gets the transform. We wrap the canvas
   // in a positioned div so we can transform it without fighting any
-  // inline styles the renderer might set.
+  // inline styles the renderer might set. The wrapper auto-sizes from the
+  // canvas's intrinsic display size — do NOT override with explicit dims
+  // or canvas CSS stretch, as that breaks the crop transform math.
   let wrapper = container.querySelector<HTMLElement>('[data-viz-canvas-wrap]')
   if (!wrapper && canvas) {
     wrapper = document.createElement('div')
@@ -133,9 +174,13 @@ function createFloatingActionBar(editorDom: HTMLElement): HTMLElement {
 
 interface ZoneEntry {
   zoneId: string
+  /** The zone descriptor object passed to addZone — kept so we can mutate
+   *  heightInPx and have Monaco pick up the new value on layoutZone. */
+  zoneDesc: { afterLineNumber: number; heightInPx: number; domNode: HTMLElement; suppressMouseDown: boolean }
   afterLine: number
   container: HTMLElement
   canvas: HTMLCanvasElement | null
+  trackKey: string
   vizId: string
   presetId: string | null
   native: { w: number; h: number }
@@ -149,6 +194,12 @@ export function addInlineViewZones(
   components: Partial<EngineComponents>,
   vizDescriptors: VizDescriptor[],
   actions?: VizZoneActions,
+  /**
+   * When provided, per-zone crop overrides stored on the file take precedence
+   * over `preset.cropRegion`. Without it, viewZones falls back to the preset
+   * default (legacy behaviour).
+   */
+  fileId?: string,
 ): InlineZoneHandle {
   const vizRequests = components.inlineViz?.vizRequests
   if (!vizRequests || vizRequests.size === 0) {
@@ -177,10 +228,17 @@ export function addInlineViewZones(
         trackScheduler = buffered
       }
 
+      // Prefer the per-track AnalyserNode published by the engine. If it's
+      // missing (producer not wired for this engine, e.g. Sonic Pi today — see
+      // .planning/phases/T-track-analyser/T-03-PARKED-sonic-pi.md), fall back
+      // to the global master-mix analyser so the viz still reacts to SOMETHING
+      // rather than sitting dead. Previous code returned `undefined` whenever
+      // a trackStream existed without a trackAnalyser, which silently severed
+      // audio for every Sonic Pi inline viz.
       const trackAnalyser = components.audio?.trackAnalysers?.get(trackKey)
       const zoneAudio = trackAnalyser && audioCtx
         ? { analyser: trackAnalyser, audioCtx, trackAnalysers: components.audio?.trackAnalysers }
-        : (trackStream ? undefined : components.audio)
+        : components.audio
 
       const zoneComponents: Partial<EngineComponents> = {
         ...components,
@@ -202,12 +260,13 @@ export function addInlineViewZones(
       container.setAttribute('data-viz-zone', '')
       container.style.cssText = `overflow:hidden;height:${layout.zoneH}px;position:relative;`
 
-      const zoneId = accessor.addZone({
+      const zoneDesc = {
         afterLineNumber: afterLine,
         heightInPx: layout.zoneH,
         domNode: container,
         suppressMouseDown: true,
-      })
+      }
+      const zoneId = accessor.addZone(zoneDesc)
 
       // Mount the renderer at native size. Canvas is created by the
       // renderer as a direct child of container.
@@ -230,11 +289,49 @@ export function addInlineViewZones(
         applyLayout(container, container.querySelector('canvas'), layout)
       })
 
-      zoneEntries.push({
-        zoneId, afterLine, container, canvas, vizId, presetId: null, native, crop,
-      })
+      const entry: ZoneEntry = {
+        zoneId, zoneDesc, afterLine, container, canvas, trackKey, vizId, presetId: null, native, crop,
+      }
+      zoneEntries.push(entry)
+
+      // p5's createCanvas(W, H) may pick dimensions that differ from the
+      // preset's declared nativeSize. The transform math MUST use the
+      // canvas's ACTUAL intrinsic size or the viz overflows its zone.
+      // Poll via rAF for up to 10 frames (~170ms) — once the canvas
+      // appears with non-zero dims, refine entry.native and recompute.
+      let refineAttempts = 0
+      const tryRefine = () => {
+        refineAttempts++
+        const actual = readCanvasNative(entry.container)
+        if (actual && (actual.w !== entry.native.w || actual.h !== entry.native.h)) {
+          entry.native = actual
+          entry.canvas = entry.container.querySelector<HTMLCanvasElement>('canvas')
+          const contentW = editor.getLayoutInfo().contentWidth || 400
+          const refined = computeLayout(contentW, entry.native, entry.crop)
+          editor.changeViewZones((acc) => {
+            entry.zoneDesc.heightInPx = refined.zoneH
+            entry.container.style.height = `${refined.zoneH}px`
+            acc.layoutZone(entry.zoneId)
+          })
+          applyLayout(entry.container, entry.container.querySelector('canvas'), refined)
+          return
+        }
+        if (refineAttempts < 10) requestAnimationFrame(tryRefine)
+      }
+      requestAnimationFrame(tryRefine)
     }
   })
+
+  // ── Prune stale zone overrides ──
+  // Remove overrides for trackKeys that no longer exist in vizRequests
+  // (block removed / anonymous keys shifted) or whose vizId changed.
+  if (fileId) {
+    const currentViz = new Map<string, string>()
+    for (const [trackKey, { vizId }] of vizRequests) {
+      currentViz.set(trackKey, vizId)
+    }
+    pruneZoneOverrides(fileId, currentViz)
+  }
 
   // ── Async: load presets and refine native size + crop ──
   const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '')
@@ -243,16 +340,29 @@ export function addInlineViewZones(
       const presets = await VizPresetStore.getAll()
       editor.changeViewZones((accessor) => {
         for (const entry of zoneEntries) {
+          // Read the per-instance crop override FIRST — this must happen
+          // regardless of whether a VizPreset exists in IDB. The preset
+          // seed is async and may not have finished yet on first load;
+          // gating the override behind `if (!preset) continue` caused
+          // crops to silently fail when the race lost.
+          const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : undefined
+
           const normViz = normalize(entry.vizId)
           const preset = presets.find(p => normalize(p.name) === normViz) ?? null
-          if (!preset) continue
-          entry.presetId = preset.id
-          entry.native = nativeSizeFor(preset)
-          entry.crop = preset.cropRegion ?? FULL_CROP
+          if (preset) {
+            entry.presetId = preset.id
+          }
+          // Prefer the canvas's actual intrinsic size if it's already been
+          // created — sketches author their own dimensions via createCanvas()
+          // and those are what the transform math must use. Preset nativeSize
+          // is the fallback when the canvas hasn't appeared yet.
+          const actual = readCanvasNative(entry.container)
+          entry.native = actual ?? (preset ? nativeSizeFor(preset) : entry.native)
+          entry.crop = override ?? preset?.cropRegion ?? FULL_CROP
           const contentW = editor.getLayoutInfo().contentWidth || 400
           const layout = computeLayout(contentW, entry.native, entry.crop)
+          entry.zoneDesc.heightInPx = layout.zoneH
           entry.container.style.height = `${layout.zoneH}px`
-          // Update Monaco's view zone height so the editor reflows.
           accessor.layoutZone(entry.zoneId)
           applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
         }
@@ -262,29 +372,37 @@ export function addInlineViewZones(
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400
         const layout = computeLayout(contentW, entry.native, entry.crop)
+        entry.zoneDesc.heightInPx = layout.zoneH
         entry.container.style.height = `${layout.zoneH}px`
         applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
       }
     } catch { /* ignore */ }
   })()
 
-  // ── Editor layout changes: recompute transform + zone height ──
-  const layoutChangeDisposable = editor.onDidLayoutChange?.(() => {
+  // ── Recompute on layout + scroll ──
+  // Monaco re-applies the original addZone heightInPx when a zone
+  // re-enters the viewport after scrolling away. We must re-assert the
+  // crop-adjusted height whenever layout changes OR the user scrolls.
+  const recomputeAllZones = () => {
     editor.changeViewZones((accessor) => {
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400
         const layout = computeLayout(contentW, entry.native, entry.crop)
+        entry.zoneDesc.heightInPx = layout.zoneH
         entry.container.style.height = `${layout.zoneH}px`
         accessor.layoutZone(entry.zoneId)
         applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
       }
     })
-  })
+  }
+  const layoutChangeDisposable = editor.onDidLayoutChange?.(recomputeAllZones)
+  const scrollDisposable = editor.onDidScrollChange?.(recomputeAllZones)
 
   // ── Floating action bar (unchanged from before) ──
   const editorDom = editor.getDomNode?.()
   let floatingBar: HTMLElement | null = null
   let mouseMoveDisposable: { dispose(): void } | null = null
+  let scrollHitTestDisposable: { dispose(): void } | null = null
 
   if (editorDom && actions && (actions.onEdit || actions.onCrop)) {
     floatingBar = createFloatingActionBar(editorDom)
@@ -300,21 +418,26 @@ export function addInlineViewZones(
       e.stopPropagation()
       const vizId = floatingBar?.getAttribute('data-viz-id')
       const presetId = floatingBar?.getAttribute('data-preset-id') || null
-      if (vizId && actions.onCrop) actions.onCrop(vizId, presetId)
+      const trackKey = floatingBar?.getAttribute('data-track-key') || ''
+      if (vizId && trackKey && actions.onCrop) actions.onCrop(vizId, presetId, trackKey)
     }
 
-    mouseMoveDisposable = editor.onMouseMove?.((ev: Monaco.editor.IEditorMouseEvent) => {
-      const mouseY = ev.event.posy
-      const mouseX = ev.event.posx
+    // Track last mouse position so we can re-run hit-testing on scroll.
+    // (Scrolling doesn't fire mouseMove, so without this the action bar
+    // gets stuck visible after the zone scrolls away from the cursor.)
+    let lastMouseX = -1
+    let lastMouseY = -1
+    const hitTestAndUpdateBar = () => {
+      if (!floatingBar || lastMouseX < 0) return
       let found: ZoneEntry | null = null
       for (const entry of zoneEntries) {
         const rect = entry.container.getBoundingClientRect()
-        if (mouseY >= rect.top && mouseY <= rect.bottom && mouseX >= rect.left && mouseX <= rect.right) {
+        if (lastMouseY >= rect.top && lastMouseY <= rect.bottom && lastMouseX >= rect.left && lastMouseX <= rect.right) {
           found = entry
           break
         }
       }
-      if (found && floatingBar) {
+      if (found) {
         const rect = found.container.getBoundingClientRect()
         const guardRect = (editorDom.querySelector('.overflow-guard') || editorDom).getBoundingClientRect()
         floatingBar.style.top = `${rect.top - guardRect.top + 4}px`
@@ -323,11 +446,20 @@ export function addInlineViewZones(
         floatingBar.style.pointerEvents = 'auto'
         floatingBar.setAttribute('data-viz-id', found.vizId)
         floatingBar.setAttribute('data-preset-id', found.presetId || '')
-      } else if (floatingBar) {
+        floatingBar.setAttribute('data-track-key', found.trackKey)
+      } else {
         floatingBar.style.opacity = '0'
         floatingBar.style.pointerEvents = 'none'
       }
+    }
+    mouseMoveDisposable = editor.onMouseMove?.((ev: Monaco.editor.IEditorMouseEvent) => {
+      lastMouseX = ev.event.posx
+      lastMouseY = ev.event.posy
+      hitTestAndUpdateBar()
     }) ?? null
+    // Re-hit-test when scrolling — zones move under a stationary cursor,
+    // so the bar's visible state must be re-evaluated.
+    scrollHitTestDisposable = editor.onDidScrollChange?.(hitTestAndUpdateBar) ?? null
   }
 
   const mouseLeaveHandler = () => {
@@ -341,7 +473,9 @@ export function addInlineViewZones(
   return {
     cleanup() {
       mouseMoveDisposable?.dispose?.()
+      scrollHitTestDisposable?.dispose?.()
       layoutChangeDisposable?.dispose?.()
+      scrollDisposable?.dispose?.()
       editorDom?.removeEventListener('mouseleave', mouseLeaveHandler)
       floatingBar?.remove()
       renderers.forEach(r => r.destroy())
