@@ -331,26 +331,28 @@ export function addInlineViewZones(
       const presets = await VizPresetStore.getAll()
       editor.changeViewZones((accessor) => {
         for (const entry of zoneEntries) {
+          // Read the per-instance crop override FIRST — this must happen
+          // regardless of whether a VizPreset exists in IDB. The preset
+          // seed is async and may not have finished yet on first load;
+          // gating the override behind `if (!preset) continue` caused
+          // crops to silently fail when the race lost.
+          const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : undefined
+
           const normViz = normalize(entry.vizId)
           const preset = presets.find(p => normalize(p.name) === normViz) ?? null
-          if (!preset) continue
-          entry.presetId = preset.id
+          if (preset) {
+            entry.presetId = preset.id
+          }
           // Prefer the canvas's actual intrinsic size if it's already been
           // created — sketches author their own dimensions via createCanvas()
           // and those are what the transform math must use. Preset nativeSize
           // is the fallback when the canvas hasn't appeared yet.
           const actual = readCanvasNative(entry.container)
-          entry.native = actual ?? nativeSizeFor(preset)
-          // Per-instance override on the file wins; preset.cropRegion is a
-          // legacy fallback (retained so existing user presets still show a
-          // crop until the user edits per-instance). FULL_CROP is the ultimate
-          // default.
-          const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : undefined
-          entry.crop = override ?? preset.cropRegion ?? FULL_CROP
+          entry.native = actual ?? (preset ? nativeSizeFor(preset) : entry.native)
+          entry.crop = override ?? preset?.cropRegion ?? FULL_CROP
           const contentW = editor.getLayoutInfo().contentWidth || 400
           const layout = computeLayout(contentW, entry.native, entry.crop)
           entry.container.style.height = `${layout.zoneH}px`
-          // Update Monaco's view zone height so the editor reflows.
           accessor.layoutZone(entry.zoneId)
           applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
         }

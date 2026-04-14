@@ -7910,14 +7910,15 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       const presets = await VizPresetStore.getAll();
       editor.changeViewZones((accessor) => {
         for (const entry of zoneEntries) {
+          const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : void 0;
           const normViz = normalize(entry.vizId);
           const preset = presets.find((p) => normalize(p.name) === normViz) ?? null;
-          if (!preset) continue;
-          entry.presetId = preset.id;
+          if (preset) {
+            entry.presetId = preset.id;
+          }
           const actual = readCanvasNative(entry.container);
-          entry.native = actual ?? nativeSizeFor(preset);
-          const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : void 0;
-          entry.crop = override ?? preset.cropRegion ?? FULL_CROP;
+          entry.native = actual ?? (preset ? nativeSizeFor(preset) : entry.native);
+          entry.crop = override ?? preset?.cropRegion ?? FULL_CROP;
           const contentW = editor.getLayoutInfo().contentWidth || 400;
           const layout = computeLayout(contentW, entry.native, entry.crop);
           entry.container.style.height = `${layout.zoneH}px`;
