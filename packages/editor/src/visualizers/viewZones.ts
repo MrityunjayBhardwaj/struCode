@@ -61,7 +61,7 @@ function computeLayout(
   contentW: number,
   native: { w: number; h: number },
   crop: CropRegion,
-): { zoneH: number; scale: number; tx: number; ty: number } {
+): { zoneH: number; scale: number; tx: number; ty: number; nativeW: number; nativeH: number } {
   const cropH = Math.max(0.01, crop.h)
   const scale = contentW / native.w
   let zoneH = cropH * native.h * scale
@@ -72,6 +72,8 @@ function computeLayout(
     scale,
     tx: -crop.x * native.w * scale,
     ty: -crop.y * native.h * scale,
+    nativeW: native.w,
+    nativeH: native.h,
   }
 }
 
@@ -116,7 +118,23 @@ function applyLayout(
     wrapper.appendChild(canvas)
   }
   if (wrapper) {
+    // Wrapper gets explicit native dimensions so the CSS transform
+    // scales from native → display. Canvas is stretched to 100% of
+    // wrapper, so sketches that create canvases at arbitrary intrinsic
+    // sizes (300×200, 1400×200, etc.) all fill the same native box.
+    const nw = layout.nativeW ?? wrapper.offsetWidth
+    const nh = layout.nativeH ?? wrapper.offsetHeight
+    if (nw > 0 && nh > 0) {
+      wrapper.style.width = `${nw}px`
+      wrapper.style.height = `${nh}px`
+    }
     wrapper.style.transform = `translate(${layout.tx}px, ${layout.ty}px) scale(${layout.scale})`
+    // Stretch canvas to fill wrapper at native dims
+    const c = wrapper.querySelector<HTMLCanvasElement>('canvas')
+    if (c) {
+      c.style.width = '100%'
+      c.style.height = '100%'
+    }
   }
 }
 
@@ -279,30 +297,20 @@ export function addInlineViewZones(
       }
       zoneEntries.push(entry)
 
-      // p5's createCanvas(W, H) may pick dimensions that differ from the
-      // preset's declared nativeSize. The transform math MUST use the
-      // canvas's ACTUAL intrinsic size or the viz overflows its zone.
-      // Poll via rAF for up to 10 frames (~170ms) — once the canvas
-      // appears with non-zero dims, refine entry.native and recompute.
-      let refineAttempts = 0
-      const tryRefine = () => {
-        refineAttempts++
-        const actual = readCanvasNative(entry.container)
-        if (actual && (actual.w !== entry.native.w || actual.h !== entry.native.h)) {
-          entry.native = actual
-          entry.canvas = entry.container.querySelector<HTMLCanvasElement>('canvas')
-          const contentW = editor.getLayoutInfo().contentWidth || 400
-          const refined = computeLayout(contentW, entry.native, entry.crop)
-          editor.changeViewZones((acc) => {
-            entry.container.style.height = `${refined.zoneH}px`
-            acc.layoutZone(entry.zoneId)
-          })
-          applyLayout(entry.container, entry.container.querySelector('canvas'), refined)
+      // p5 creates the canvas async (rAF). Once it appears, re-apply
+      // layout so the wrapper gets native dims + canvas gets 100% stretch.
+      let stretchAttempts = 0
+      const tryStretch = () => {
+        stretchAttempts++
+        const c = entry.container.querySelector<HTMLCanvasElement>('canvas')
+        if (c) {
+          entry.canvas = c
+          applyLayout(entry.container, c, layout)
           return
         }
-        if (refineAttempts < 10) requestAnimationFrame(tryRefine)
+        if (stretchAttempts < 10) requestAnimationFrame(tryStretch)
       }
-      requestAnimationFrame(tryRefine)
+      requestAnimationFrame(tryStretch)
     }
   })
 
@@ -328,12 +336,11 @@ export function addInlineViewZones(
           const preset = presets.find(p => normalize(p.name) === normViz) ?? null
           if (!preset) continue
           entry.presetId = preset.id
-          // Prefer the canvas's actual intrinsic size if it's already been
-          // created — sketches author their own dimensions via createCanvas()
-          // and those are what the transform math must use. Preset nativeSize
-          // is the fallback when the canvas hasn't appeared yet.
-          const actual = readCanvasNative(entry.container)
-          entry.native = actual ?? nativeSizeFor(preset)
+          // Use the preset's declared nativeSize for the scale calculation.
+          // Do NOT override with actual canvas intrinsic dims — sketches that
+          // create small canvases (e.g. 300×200) would distort the scale.
+          // Canvas is CSS-stretched to fill the wrapper regardless.
+          entry.native = nativeSizeFor(preset)
           // Per-instance override on the file wins; preset.cropRegion is a
           // legacy fallback (retained so existing user presets still show a
           // crop until the user edits per-instance). FULL_CROP is the ultimate
