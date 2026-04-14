@@ -6304,7 +6304,7 @@ function getZoneCropOverride(fileId, trackKey) {
   const entry = overrides.get(trackKey);
   return entry?.cropRegion;
 }
-function setZoneCropOverride(fileId, trackKey, cropRegion) {
+function setZoneCropOverride(fileId, trackKey, cropRegion, vizId) {
   ensureDoc();
   const overrides = ensureZoneOverridesMap(fileId);
   if (!overrides) return;
@@ -6313,8 +6313,28 @@ function setZoneCropOverride(fileId, trackKey, cropRegion) {
     if (cropRegion === null) {
       overrides.delete(trackKey);
     } else {
-      overrides.set(trackKey, { cropRegion });
+      overrides.set(trackKey, { cropRegion, vizId });
     }
+  }, STRUCT_ORIGIN);
+}
+function pruneZoneOverrides(fileId, currentViz) {
+  ensureDoc();
+  const overrides = ensureZoneOverridesMap(fileId);
+  if (!overrides) return;
+  const doc = ensureDoc();
+  const stale = [];
+  for (const [trackKey, value] of overrides.entries()) {
+    const entry = value;
+    const currentVizId = currentViz.get(trackKey);
+    if (!currentVizId) {
+      stale.push(trackKey);
+    } else if (entry.vizId && entry.vizId !== currentVizId) {
+      stale.push(trackKey);
+    }
+  }
+  if (stale.length === 0) return;
+  doc.transact(() => {
+    for (const key of stale) overrides.delete(key);
   }, STRUCT_ORIGIN);
 }
 function subscribeToZoneOverrides(fileId, cb) {
@@ -7895,6 +7915,13 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       requestAnimationFrame(tryRefine);
     }
   });
+  if (fileId) {
+    const currentViz = /* @__PURE__ */ new Map();
+    for (const [trackKey, { vizId }] of vizRequests) {
+      currentViz.set(trackKey, vizId);
+    }
+    pruneZoneOverrides(fileId, currentViz);
+  }
   const normalize = (s) => s.toLowerCase().replace(/[\s\-_]/g, "");
   void (async () => {
     try {
@@ -20489,6 +20516,7 @@ exports.patternFromJSON = patternFromJSON;
 exports.patternToJSON = patternToJSON;
 exports.previewProviderRegistry = previewProviderRegistry;
 exports.propagate = propagate;
+exports.pruneZoneOverrides = pruneZoneOverrides;
 exports.redo = redo;
 exports.registerNamedViz = registerNamedViz;
 exports.registerPresetAsNamedViz = registerPresetAsNamedViz;

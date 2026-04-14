@@ -530,6 +530,10 @@ function notify(id: string): void {
 
 export interface ZoneOverride {
   cropRegion?: { x: number; y: number; w: number; h: number }
+  /** The vizId at the time the crop was set — used by pruneZoneOverrides to
+   *  detect when the user switches .viz("A") → .viz("B") and the old crop
+   *  no longer matches the new viz's aspect. */
+  vizId?: string
 }
 
 const zoneOverrideSubscribers = new Map<string, Set<Subscriber>>()
@@ -575,6 +579,7 @@ export function setZoneCropOverride(
   fileId: string,
   trackKey: string,
   cropRegion: { x: number; y: number; w: number; h: number } | null,
+  vizId?: string,
 ): void {
   ensureDoc()
   const overrides = ensureZoneOverridesMap(fileId)
@@ -584,8 +589,43 @@ export function setZoneCropOverride(
     if (cropRegion === null) {
       overrides.delete(trackKey)
     } else {
-      overrides.set(trackKey, { cropRegion })
+      overrides.set(trackKey, { cropRegion, vizId })
     }
+  }, STRUCT_ORIGIN)
+}
+
+/**
+ * Prune stale zone overrides. Called on every evaluate — removes overrides
+ * whose trackKey is no longer in the current `vizRequests` or whose vizId
+ * has changed (crop picked for one viz's aspect is meaningless for another).
+ *
+ * `currentViz` maps trackKey → vizId for every $: block with a .viz() in
+ * the latest evaluate result (same Map shape as `inlineViz.vizRequests`
+ * but values are just the vizId string, not the full {vizId, afterLine}).
+ */
+export function pruneZoneOverrides(
+  fileId: string,
+  currentViz: Map<string, string>,
+): void {
+  ensureDoc()
+  const overrides = ensureZoneOverridesMap(fileId)
+  if (!overrides) return
+  const doc = ensureDoc()
+  const stale: string[] = []
+  for (const [trackKey, value] of overrides.entries()) {
+    const entry = value as ZoneOverride & { vizId?: string }
+    const currentVizId = currentViz.get(trackKey)
+    if (!currentVizId) {
+      // trackKey gone — $: block removed or anonymous keys shifted
+      stale.push(trackKey)
+    } else if (entry.vizId && entry.vizId !== currentVizId) {
+      // vizId changed — old crop aspect doesn't match new viz
+      stale.push(trackKey)
+    }
+  }
+  if (stale.length === 0) return
+  doc.transact(() => {
+    for (const key of stale) overrides.delete(key)
   }, STRUCT_ORIGIN)
 }
 

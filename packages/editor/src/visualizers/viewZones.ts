@@ -4,7 +4,7 @@ import type { VizRenderer, VizDescriptor } from './types'
 import { resolveDescriptor } from './resolveDescriptor'
 import { BufferedScheduler } from '../engine/BufferedScheduler'
 import { VizPresetStore, type CropRegion, type VizPreset } from './vizPreset'
-import { getZoneCropOverride } from '../workspace/WorkspaceFile'
+import { getZoneCropOverride, pruneZoneOverrides } from '../workspace/WorkspaceFile'
 
 export interface InlineZoneHandle {
   cleanup(): void
@@ -305,6 +305,17 @@ export function addInlineViewZones(
       requestAnimationFrame(tryRefine)
     }
   })
+
+  // ── Prune stale zone overrides ──
+  // Remove overrides for trackKeys that no longer exist in vizRequests
+  // (block removed / anonymous keys shifted) or whose vizId changed.
+  if (fileId) {
+    const currentViz = new Map<string, string>()
+    for (const [trackKey, { vizId }] of vizRequests) {
+      currentViz.set(trackKey, vizId)
+    }
+    pruneZoneOverrides(fileId, currentViz)
+  }
 
   // ── Async: load presets and refine native size + crop ──
   const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '')

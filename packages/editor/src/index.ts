@@ -113,6 +113,7 @@ export {
   setChildOrder,
   getZoneCropOverride,
   setZoneCropOverride,
+  pruneZoneOverrides,
   subscribeToZoneOverrides,
 } from './workspace/WorkspaceFile'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady, subscribeToDocUpdate } from './workspace/projectDoc'

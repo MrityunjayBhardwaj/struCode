@@ -106,7 +106,7 @@ export function CropPopup({ vizId, presetId, fileId, trackKey, onClose }: CropPo
     // the shared VizPreset. Two $: blocks using the same preset now have
     // independent crops. The file-level subscription in EditorView triggers
     // a zone remount so the inline zone picks up the new crop.
-    setZoneCropOverride(fileId, trackKey, crop);
+    setZoneCropOverride(fileId, trackKey, crop, vizId);
     showToast(`Crop saved for "${vizId}"`, "info");
     onClose();
   }, [crop, fileId, trackKey, vizId, onClose]);
