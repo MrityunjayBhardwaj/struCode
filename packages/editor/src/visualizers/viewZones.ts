@@ -402,6 +402,7 @@ export function addInlineViewZones(
   const editorDom = editor.getDomNode?.()
   let floatingBar: HTMLElement | null = null
   let mouseMoveDisposable: { dispose(): void } | null = null
+  let scrollHitTestDisposable: { dispose(): void } | null = null
 
   if (editorDom && actions && (actions.onEdit || actions.onCrop)) {
     floatingBar = createFloatingActionBar(editorDom)
@@ -421,18 +422,22 @@ export function addInlineViewZones(
       if (vizId && trackKey && actions.onCrop) actions.onCrop(vizId, presetId, trackKey)
     }
 
-    mouseMoveDisposable = editor.onMouseMove?.((ev: Monaco.editor.IEditorMouseEvent) => {
-      const mouseY = ev.event.posy
-      const mouseX = ev.event.posx
+    // Track last mouse position so we can re-run hit-testing on scroll.
+    // (Scrolling doesn't fire mouseMove, so without this the action bar
+    // gets stuck visible after the zone scrolls away from the cursor.)
+    let lastMouseX = -1
+    let lastMouseY = -1
+    const hitTestAndUpdateBar = () => {
+      if (!floatingBar || lastMouseX < 0) return
       let found: ZoneEntry | null = null
       for (const entry of zoneEntries) {
         const rect = entry.container.getBoundingClientRect()
-        if (mouseY >= rect.top && mouseY <= rect.bottom && mouseX >= rect.left && mouseX <= rect.right) {
+        if (lastMouseY >= rect.top && lastMouseY <= rect.bottom && lastMouseX >= rect.left && lastMouseX <= rect.right) {
           found = entry
           break
         }
       }
-      if (found && floatingBar) {
+      if (found) {
         const rect = found.container.getBoundingClientRect()
         const guardRect = (editorDom.querySelector('.overflow-guard') || editorDom).getBoundingClientRect()
         floatingBar.style.top = `${rect.top - guardRect.top + 4}px`
@@ -442,11 +447,19 @@ export function addInlineViewZones(
         floatingBar.setAttribute('data-viz-id', found.vizId)
         floatingBar.setAttribute('data-preset-id', found.presetId || '')
         floatingBar.setAttribute('data-track-key', found.trackKey)
-      } else if (floatingBar) {
+      } else {
         floatingBar.style.opacity = '0'
         floatingBar.style.pointerEvents = 'none'
       }
+    }
+    mouseMoveDisposable = editor.onMouseMove?.((ev: Monaco.editor.IEditorMouseEvent) => {
+      lastMouseX = ev.event.posx
+      lastMouseY = ev.event.posy
+      hitTestAndUpdateBar()
     }) ?? null
+    // Re-hit-test when scrolling — zones move under a stationary cursor,
+    // so the bar's visible state must be re-evaluated.
+    scrollHitTestDisposable = editor.onDidScrollChange?.(hitTestAndUpdateBar) ?? null
   }
 
   const mouseLeaveHandler = () => {
@@ -460,6 +473,7 @@ export function addInlineViewZones(
   return {
     cleanup() {
       mouseMoveDisposable?.dispose?.()
+      scrollHitTestDisposable?.dispose?.()
       layoutChangeDisposable?.dispose?.()
       scrollDisposable?.dispose?.()
       editorDom?.removeEventListener('mouseleave', mouseLeaveHandler)

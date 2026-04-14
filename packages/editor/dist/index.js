@@ -7957,6 +7957,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   const editorDom = editor.getDomNode?.();
   let floatingBar = null;
   let mouseMoveDisposable = null;
+  let scrollHitTestDisposable = null;
   if (editorDom && actions && (actions.onEdit || actions.onCrop)) {
     floatingBar = createFloatingActionBar(editorDom);
     const editBtn = floatingBar.children[0];
@@ -7973,18 +7974,19 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       const trackKey = floatingBar?.getAttribute("data-track-key") || "";
       if (vizId && trackKey && actions.onCrop) actions.onCrop(vizId, presetId, trackKey);
     };
-    mouseMoveDisposable = editor.onMouseMove?.((ev) => {
-      const mouseY = ev.event.posy;
-      const mouseX = ev.event.posx;
+    let lastMouseX = -1;
+    let lastMouseY = -1;
+    const hitTestAndUpdateBar = () => {
+      if (!floatingBar || lastMouseX < 0) return;
       let found = null;
       for (const entry of zoneEntries) {
         const rect = entry.container.getBoundingClientRect();
-        if (mouseY >= rect.top && mouseY <= rect.bottom && mouseX >= rect.left && mouseX <= rect.right) {
+        if (lastMouseY >= rect.top && lastMouseY <= rect.bottom && lastMouseX >= rect.left && lastMouseX <= rect.right) {
           found = entry;
           break;
         }
       }
-      if (found && floatingBar) {
+      if (found) {
         const rect = found.container.getBoundingClientRect();
         const guardRect = (editorDom.querySelector(".overflow-guard") || editorDom).getBoundingClientRect();
         floatingBar.style.top = `${rect.top - guardRect.top + 4}px`;
@@ -7994,11 +7996,17 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
         floatingBar.setAttribute("data-viz-id", found.vizId);
         floatingBar.setAttribute("data-preset-id", found.presetId || "");
         floatingBar.setAttribute("data-track-key", found.trackKey);
-      } else if (floatingBar) {
+      } else {
         floatingBar.style.opacity = "0";
         floatingBar.style.pointerEvents = "none";
       }
+    };
+    mouseMoveDisposable = editor.onMouseMove?.((ev) => {
+      lastMouseX = ev.event.posx;
+      lastMouseY = ev.event.posy;
+      hitTestAndUpdateBar();
     }) ?? null;
+    scrollHitTestDisposable = editor.onDidScrollChange?.(hitTestAndUpdateBar) ?? null;
   }
   const mouseLeaveHandler = () => {
     if (floatingBar) {
@@ -8010,6 +8018,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   return {
     cleanup() {
       mouseMoveDisposable?.dispose?.();
+      scrollHitTestDisposable?.dispose?.();
       layoutChangeDisposable?.dispose?.();
       scrollDisposable?.dispose?.();
       editorDom?.removeEventListener("mouseleave", mouseLeaveHandler);
