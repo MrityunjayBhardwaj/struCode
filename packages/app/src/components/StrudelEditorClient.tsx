@@ -134,8 +134,7 @@ export default function StrudelEditorClient({
       requires: ["streaming"],
       // Wide-and-short scrolling-timeline aspect — matches the historical
       // pianoroll look (pre-WYSIWYG default used createCanvas(stave.width,
-      // stave.height) which resolved to ~1400×200 in practice). Keeping this
-      // aspect means the inline zone mirrors what users expect.
+      // stave.height) which resolved to ~1400×200 in practice).
       nativeSize: { w: 1400, h: 350 },
       createdAt: Date.now(),
       updatedAt: Date.now(),
