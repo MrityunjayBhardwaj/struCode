@@ -4,6 +4,7 @@ import type { VizRenderer, VizDescriptor } from './types'
 import { resolveDescriptor } from './resolveDescriptor'
 import { BufferedScheduler } from '../engine/BufferedScheduler'
 import { VizPresetStore, type CropRegion, type VizPreset } from './vizPreset'
+import { getZoneCropOverride } from '../workspace/WorkspaceFile'
 
 export interface InlineZoneHandle {
   cleanup(): void
@@ -13,7 +14,16 @@ export interface InlineZoneHandle {
 
 export interface VizZoneActions {
   onEdit?: (vizId: string) => void
-  onCrop?: (vizId: string, presetId: string | null) => void
+  /**
+   * Fires when the user clicks the crop button on an inline zone.
+   *
+   * `trackKey` uniquely identifies THIS zone instance (same key the engine
+   * uses for vizRequests / trackSchedulers / trackAnalysers). Required so
+   * callers can save the crop as a per-instance override instead of
+   * overwriting the shared VizPreset — otherwise two $: blocks using the
+   * same preset would clobber each other's crop.
+   */
+  onCrop?: (vizId: string, presetId: string | null, trackKey: string) => void
 }
 
 /** Default native canvas dimensions for sketches that don't override them.
@@ -136,6 +146,7 @@ interface ZoneEntry {
   afterLine: number
   container: HTMLElement
   canvas: HTMLCanvasElement | null
+  trackKey: string
   vizId: string
   presetId: string | null
   native: { w: number; h: number }
@@ -149,6 +160,12 @@ export function addInlineViewZones(
   components: Partial<EngineComponents>,
   vizDescriptors: VizDescriptor[],
   actions?: VizZoneActions,
+  /**
+   * When provided, per-zone crop overrides stored on the file take precedence
+   * over `preset.cropRegion`. Without it, viewZones falls back to the preset
+   * default (legacy behaviour).
+   */
+  fileId?: string,
 ): InlineZoneHandle {
   const vizRequests = components.inlineViz?.vizRequests
   if (!vizRequests || vizRequests.size === 0) {
@@ -238,7 +255,7 @@ export function addInlineViewZones(
       })
 
       zoneEntries.push({
-        zoneId, afterLine, container, canvas, vizId, presetId: null, native, crop,
+        zoneId, afterLine, container, canvas, trackKey, vizId, presetId: null, native, crop,
       })
     }
   })
@@ -255,7 +272,12 @@ export function addInlineViewZones(
           if (!preset) continue
           entry.presetId = preset.id
           entry.native = nativeSizeFor(preset)
-          entry.crop = preset.cropRegion ?? FULL_CROP
+          // Per-instance override on the file wins; preset.cropRegion is a
+          // legacy fallback (retained so existing user presets still show a
+          // crop until the user edits per-instance). FULL_CROP is the ultimate
+          // default.
+          const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : undefined
+          entry.crop = override ?? preset.cropRegion ?? FULL_CROP
           const contentW = editor.getLayoutInfo().contentWidth || 400
           const layout = computeLayout(contentW, entry.native, entry.crop)
           entry.container.style.height = `${layout.zoneH}px`
@@ -307,7 +329,8 @@ export function addInlineViewZones(
       e.stopPropagation()
       const vizId = floatingBar?.getAttribute('data-viz-id')
       const presetId = floatingBar?.getAttribute('data-preset-id') || null
-      if (vizId && actions.onCrop) actions.onCrop(vizId, presetId)
+      const trackKey = floatingBar?.getAttribute('data-track-key') || ''
+      if (vizId && trackKey && actions.onCrop) actions.onCrop(vizId, presetId, trackKey)
     }
 
     mouseMoveDisposable = editor.onMouseMove?.((ev: Monaco.editor.IEditorMouseEvent) => {
@@ -330,6 +353,7 @@ export function addInlineViewZones(
         floatingBar.style.pointerEvents = 'auto'
         floatingBar.setAttribute('data-viz-id', found.vizId)
         floatingBar.setAttribute('data-preset-id', found.presetId || '')
+        floatingBar.setAttribute('data-track-key', found.trackKey)
       } else if (floatingBar) {
         floatingBar.style.opacity = '0'
         floatingBar.style.pointerEvents = 'none'

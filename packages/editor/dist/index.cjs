@@ -4,7 +4,7 @@ var React = require('react');
 var p5 = require('p5');
 var jsxRuntime = require('react/jsx-runtime');
 var MonacoEditorRaw = require('@monaco-editor/react');
-var Y4 = require('yjs');
+var Y3 = require('yjs');
 
 function _interopDefault (e) { return e && e.__esModule ? e : { default: e }; }
 
@@ -29,7 +29,7 @@ function _interopNamespace(e) {
 var React__default = /*#__PURE__*/_interopDefault(React);
 var p5__default = /*#__PURE__*/_interopDefault(p5);
 var MonacoEditorRaw__default = /*#__PURE__*/_interopDefault(MonacoEditorRaw);
-var Y4__namespace = /*#__PURE__*/_interopNamespace(Y4);
+var Y3__namespace = /*#__PURE__*/_interopNamespace(Y3);
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -5852,7 +5852,7 @@ async function initProjectDoc(projectId) {
   if (activeDoc) {
     activeDoc.destroy();
   }
-  activeDoc = new Y4__namespace.Doc();
+  activeDoc = new Y3__namespace.Doc();
   docReady = false;
   const { IndexeddbPersistence } = await import('y-indexeddb');
   activeProvider = new IndexeddbPersistence(`stave-${projectId}`, activeDoc);
@@ -5868,7 +5868,7 @@ function initProjectDocSync() {
   if (activeDoc) {
     activeDoc.destroy();
   }
-  activeDoc = new Y4__namespace.Doc();
+  activeDoc = new Y3__namespace.Doc();
   docReady = true;
 }
 function ensureDoc() {
@@ -5920,18 +5920,18 @@ function ensureUndoManager() {
   const files = doc.getMap("files");
   const fileOrder = doc.getMap("fileOrder");
   const subfolderOrder = doc.getMap("subfolderOrder");
-  const um = new Y4__namespace.UndoManager([files, fileOrder, subfolderOrder], {
+  const um = new Y3__namespace.UndoManager([files, fileOrder, subfolderOrder], {
     trackedOrigins: /* @__PURE__ */ new Set([STRUCT_ORIGIN]),
     captureTimeout: 300
   });
   for (const inner of files.values()) {
-    if (inner instanceof Y4__namespace.Map) um.addToScope(inner);
+    if (inner instanceof Y3__namespace.Map) um.addToScope(inner);
   }
   const filesObserver = (event) => {
     for (const [key, change] of event.changes.keys) {
       if (change.action === "add" || change.action === "update") {
         const val = files.get(key);
-        if (val instanceof Y4__namespace.Map) um.addToScope(val);
+        if (val instanceof Y3__namespace.Map) um.addToScope(val);
       }
     }
   };
@@ -6079,7 +6079,7 @@ function ensureFilesMapObserver() {
         }
         continue;
       }
-      if (event.target instanceof Y4__namespace.Text) continue;
+      if (event.target instanceof Y3__namespace.Text) continue;
       const path = event.path;
       const ownerId = path.length > 0 ? String(path[0]) : null;
       if (!ownerId) continue;
@@ -6099,12 +6099,12 @@ function createWorkspaceFile(id, path, content, language, meta) {
   const filesMap = getFilesMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const fileMap = new Y4__namespace.Map();
+    const fileMap = new Y3__namespace.Map();
     fileMap.set("id", id);
     fileMap.set("path", path);
     fileMap.set("language", language);
     if (meta !== void 0) fileMap.set("meta", meta);
-    const ytext = new Y4__namespace.Text();
+    const ytext = new Y3__namespace.Text();
     ytext.insert(0, content);
     fileMap.set("content", ytext);
     filesMap.set(id, fileMap);
@@ -6223,7 +6223,7 @@ function setFolderOrder(folderPath, orderedIds) {
   const map = getFolderOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y4__namespace.Array();
+    const next = new Y3__namespace.Array();
     next.push(orderedIds);
     map.set(folderPath, next);
   }, STRUCT_ORIGIN);
@@ -6248,7 +6248,7 @@ function setSubfolderOrder(parentPath, orderedNames) {
   const map = getSubfolderOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y4__namespace.Array();
+    const next = new Y3__namespace.Array();
     next.push(orderedNames);
     map.set(parentPath, next);
   }, STRUCT_ORIGIN);
@@ -6266,7 +6266,7 @@ function setChildOrder(parentPath, entries) {
   const map = getChildOrderMap();
   const doc = ensureDoc();
   doc.transact(() => {
-    const next = new Y4__namespace.Array();
+    const next = new Y3__namespace.Array();
     next.push(entries);
     map.set(parentPath, next);
   }, STRUCT_ORIGIN);
@@ -6277,6 +6277,60 @@ function notify(id) {
   const snapshot = Array.from(set);
   for (const cb of snapshot) cb();
 }
+var zoneOverrideSubscribers = /* @__PURE__ */ new Map();
+var wiredZoneObservers = /* @__PURE__ */ new Set();
+function ensureZoneOverridesMap(fileId) {
+  const filesMap = getFilesMap();
+  const fileMap = filesMap.get(fileId);
+  if (!fileMap) return null;
+  let overrides = fileMap.get("zoneOverrides");
+  if (!overrides) {
+    overrides = new Y3__namespace.Map();
+    fileMap.set("zoneOverrides", overrides);
+  }
+  if (!wiredZoneObservers.has(fileId)) {
+    overrides.observeDeep(() => {
+      const subs = zoneOverrideSubscribers.get(fileId);
+      if (subs) for (const cb of subs) cb();
+    });
+    wiredZoneObservers.add(fileId);
+  }
+  return overrides;
+}
+function getZoneCropOverride(fileId, trackKey) {
+  ensureDoc();
+  const overrides = ensureZoneOverridesMap(fileId);
+  if (!overrides) return void 0;
+  const entry = overrides.get(trackKey);
+  return entry?.cropRegion;
+}
+function setZoneCropOverride(fileId, trackKey, cropRegion) {
+  ensureDoc();
+  const overrides = ensureZoneOverridesMap(fileId);
+  if (!overrides) return;
+  const doc = ensureDoc();
+  doc.transact(() => {
+    if (cropRegion === null) {
+      overrides.delete(trackKey);
+    } else {
+      overrides.set(trackKey, { cropRegion });
+    }
+  }, STRUCT_ORIGIN);
+}
+function subscribeToZoneOverrides(fileId, cb) {
+  ensureDoc();
+  ensureZoneOverridesMap(fileId);
+  let set = zoneOverrideSubscribers.get(fileId);
+  if (!set) {
+    set = /* @__PURE__ */ new Set();
+    zoneOverrideSubscribers.set(fileId, set);
+  }
+  set.add(cb);
+  return () => {
+    set.delete(cb);
+    if (set.size === 0) zoneOverrideSubscribers.delete(fileId);
+  };
+}
 function resetFileStore() {
   for (const [id] of textObservers) {
     unwireTextObserver(id);
@@ -6286,6 +6340,8 @@ function resetFileStore() {
   subscribersByFile.clear();
   wiredFilesMap = null;
   folderOrderObserverWired = false;
+  zoneOverrideSubscribers.clear();
+  wiredZoneObservers.clear();
   resetUndoManager();
   notifyFileList();
   notifyFolderOrder();
@@ -7743,7 +7799,7 @@ function createFloatingActionBar(editorDom) {
   return bar;
 }
 var FULL_CROP = { x: 0, y: 0, w: 1, h: 1 };
-function addInlineViewZones(editor, components, vizDescriptors, actions) {
+function addInlineViewZones(editor, components, vizDescriptors, actions, fileId) {
   const vizRequests = components.inlineViz?.vizRequests;
   if (!vizRequests || vizRequests.size === 0) {
     return { cleanup: () => {
@@ -7810,6 +7866,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
         afterLine,
         container,
         canvas,
+        trackKey,
         vizId,
         presetId: null,
         native,
@@ -7828,7 +7885,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
           if (!preset) continue;
           entry.presetId = preset.id;
           entry.native = nativeSizeFor(preset);
-          entry.crop = preset.cropRegion ?? FULL_CROP;
+          const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : void 0;
+          entry.crop = override ?? preset.cropRegion ?? FULL_CROP;
           const contentW = editor.getLayoutInfo().contentWidth || 400;
           const layout = computeLayout(contentW, entry.native, entry.crop);
           entry.container.style.height = `${layout.zoneH}px`;
@@ -7872,7 +7930,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
       e.stopPropagation();
       const vizId = floatingBar?.getAttribute("data-viz-id");
       const presetId = floatingBar?.getAttribute("data-preset-id") || null;
-      if (vizId && actions.onCrop) actions.onCrop(vizId, presetId);
+      const trackKey = floatingBar?.getAttribute("data-track-key") || "";
+      if (vizId && trackKey && actions.onCrop) actions.onCrop(vizId, presetId, trackKey);
     };
     mouseMoveDisposable = editor.onMouseMove?.((ev) => {
       const mouseY = ev.event.posy;
@@ -7894,6 +7953,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions) {
         floatingBar.style.pointerEvents = "auto";
         floatingBar.setAttribute("data-viz-id", found.vizId);
         floatingBar.setAttribute("data-preset-id", found.presetId || "");
+        floatingBar.setAttribute("data-track-key", found.trackKey);
       } else if (floatingBar) {
         floatingBar.style.opacity = "0";
         floatingBar.style.pointerEvents = "none";
@@ -7993,7 +8053,8 @@ function EditorView({
             editorRef.current,
             payload.engineComponents ?? payload,
             DEFAULT_VIZ_DESCRIPTORS,
-            { onEdit: onEditViz, onCrop: onCropViz }
+            { onEdit: onEditViz, onCrop: onCropViz },
+            fileId
           );
           viewZoneHandleRef.current?.resume();
         } else if (payload === null) {
@@ -8010,7 +8071,7 @@ function EditorView({
   }, [fileId]);
   React.useEffect(() => {
     if (!fileId) return;
-    const unsub = onNamedVizChanged(() => {
+    const remount = () => {
       const payload = lastPayloadRef.current;
       if (!payload?.inlineViz?.vizRequests?.size || !editorRef.current) return;
       viewZoneHandleRef.current?.cleanup();
@@ -8018,11 +8079,17 @@ function EditorView({
         editorRef.current,
         payload.engineComponents ?? payload,
         DEFAULT_VIZ_DESCRIPTORS,
-        { onEdit: onEditViz, onCrop: onCropViz }
+        { onEdit: onEditViz, onCrop: onCropViz },
+        fileId
       );
       viewZoneHandleRef.current?.resume();
-    });
-    return unsub;
+    };
+    const unsubViz = onNamedVizChanged(remount);
+    const unsubOverrides = subscribeToZoneOverrides(fileId, remount);
+    return () => {
+      unsubViz();
+      unsubOverrides();
+    };
   }, [fileId]);
   useHighlighting(editorRef.current, hapStream);
   React.useEffect(() => {
@@ -19422,7 +19489,7 @@ function wrap2(req) {
 var MAX_AUTO_SNAPSHOTS = 10;
 async function saveSnapshot(projectId, label, kind = "manual") {
   const doc = getActiveDoc();
-  const bytes = Y4__namespace.encodeStateAsUpdate(doc);
+  const bytes = Y3__namespace.encodeStateAsUpdate(doc);
   const meta = {
     id: crypto.randomUUID(),
     projectId,
@@ -19471,8 +19538,8 @@ async function restoreSnapshot(id) {
   );
   db.close();
   if (!stored) throw new Error(`snapshot ${id} not found`);
-  const snapDoc = new Y4__namespace.Doc();
-  Y4__namespace.applyUpdate(snapDoc, stored.bytes);
+  const snapDoc = new Y3__namespace.Doc();
+  Y3__namespace.applyUpdate(snapDoc, stored.bytes);
   const snapFiles = snapDoc.getMap("files");
   const snapOrder = snapDoc.getMap("fileOrder");
   const snapSubOrder = snapDoc.getMap("subfolderOrder");
@@ -19485,25 +19552,25 @@ async function restoreSnapshot(id) {
     for (const key of Array.from(activeOrder.keys())) activeOrder.delete(key);
     for (const key of Array.from(activeSubOrder.keys())) activeSubOrder.delete(key);
     for (const [fid, snapFile] of snapFiles.entries()) {
-      const clone = new Y4__namespace.Map();
+      const clone = new Y3__namespace.Map();
       clone.set("id", snapFile.get("id"));
       clone.set("path", snapFile.get("path"));
       clone.set("language", snapFile.get("language"));
       const meta = snapFile.get("meta");
       if (meta !== void 0) clone.set("meta", meta);
-      const content = new Y4__namespace.Text();
+      const content = new Y3__namespace.Text();
       const srcText = snapFile.get("content");
       content.insert(0, srcText.toString());
       clone.set("content", content);
       activeFiles.set(fid, clone);
     }
     for (const [folder, arr] of snapOrder.entries()) {
-      const next = new Y4__namespace.Array();
+      const next = new Y3__namespace.Array();
       next.push(arr.toArray());
       activeOrder.set(folder, next);
     }
     for (const [folder, arr] of snapSubOrder.entries()) {
-      const next = new Y4__namespace.Array();
+      const next = new Y3__namespace.Array();
       next.push(arr.toArray());
       activeSubOrder.set(folder, next);
     }
@@ -20373,6 +20440,7 @@ exports.getRuntimeProviderForExtension = getRuntimeProviderForExtension;
 exports.getRuntimeProviderForLanguage = getRuntimeProviderForLanguage;
 exports.getSubfolderOrder = getSubfolderOrder;
 exports.getVizConfig = getVizConfig;
+exports.getZoneCropOverride = getZoneCropOverride;
 exports.hydraKaleidoscope = hydraKaleidoscope;
 exports.hydraPianoroll = hydraPianoroll;
 exports.hydraScope = hydraScope;
@@ -20424,6 +20492,7 @@ exports.setEditorTheme = setEditorTheme;
 exports.setFolderOrder = setFolderOrder;
 exports.setSubfolderOrder = setSubfolderOrder;
 exports.setVizConfig = setVizConfig;
+exports.setZoneCropOverride = setZoneCropOverride;
 exports.startSampleSound = startSampleSound;
 exports.stopSampleSound = stopSampleSound;
 exports.subscribeToDocUpdate = subscribeToDocUpdate;
@@ -20431,6 +20500,7 @@ exports.subscribeToFileList = subscribeToFileList;
 exports.subscribeToFolderOrder = subscribeToFolderOrder;
 exports.subscribeToUndoState = subscribeToUndoState;
 exports.subscribeToWorkspaceFile = subscribe;
+exports.subscribeToZoneOverrides = subscribeToZoneOverrides;
 exports.switchProject = switchProject;
 exports.timestretch = timestretch;
 exports.toStrudel = toStrudel;

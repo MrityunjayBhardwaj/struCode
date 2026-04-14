@@ -111,6 +111,9 @@ export {
   setSubfolderOrder,
   getChildOrder,
   setChildOrder,
+  getZoneCropOverride,
+  setZoneCropOverride,
+  subscribeToZoneOverrides,
 } from './workspace/WorkspaceFile'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady, subscribeToDocUpdate } from './workspace/projectDoc'
 export {

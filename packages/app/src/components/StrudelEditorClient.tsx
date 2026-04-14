@@ -70,7 +70,7 @@ interface StrudelEditorClientProps {
   /** Navigate to a viz file when the user clicks the edit icon on an inline viz. */
   onEditViz?: (vizId: string) => void;
   /** Open crop popup when the user clicks the crop icon on an inline viz. */
-  onCropViz?: (vizId: string, presetId: string | null) => void;
+  onCropViz?: (vizId: string, presetId: string | null, trackKey: string) => void;
 }
 
 export default function StrudelEditorClient({

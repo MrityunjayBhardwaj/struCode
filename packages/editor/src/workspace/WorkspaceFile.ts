@@ -515,6 +515,99 @@ function notify(id: string): void {
  * call this to clear stale snapshots from the previous project and re-wire
  * observers for the new doc's files.
  */
+// ---------------------------------------------------------------------------
+// Per-zone overrides
+// ---------------------------------------------------------------------------
+//
+// Inline .viz() zones share a VizPreset by name, but each user-placed zone
+// is a distinct instance — cropping one must not crop the others. The
+// preset itself is a shared default; per-instance overrides live here,
+// keyed by (fileId, trackKey). Same trackKey the engine uses to key
+// trackSchedulers / trackAnalysers / vizRequests.
+//
+// Storage shape inside each file's Y.Map:
+//   zoneOverrides: Y.Map<trackKey, { cropRegion: { x, y, w, h } }>
+
+export interface ZoneOverride {
+  cropRegion?: { x: number; y: number; w: number; h: number }
+}
+
+const zoneOverrideSubscribers = new Map<string, Set<Subscriber>>()
+const wiredZoneObservers = new Set<string>()
+
+function ensureZoneOverridesMap(fileId: string): Y.Map<unknown> | null {
+  const filesMap = getFilesMap()
+  const fileMap = filesMap.get(fileId) as Y.Map<unknown> | undefined
+  if (!fileMap) return null
+  let overrides = fileMap.get('zoneOverrides') as Y.Map<unknown> | undefined
+  if (!overrides) {
+    overrides = new Y.Map()
+    fileMap.set('zoneOverrides', overrides)
+  }
+  // Wire observer once per file. Yjs deliveres events for nested Y.Map
+  // mutations via observeDeep — one subscription watches the tree.
+  if (!wiredZoneObservers.has(fileId)) {
+    overrides.observeDeep(() => {
+      const subs = zoneOverrideSubscribers.get(fileId)
+      if (subs) for (const cb of subs) cb()
+    })
+    wiredZoneObservers.add(fileId)
+  }
+  return overrides
+}
+
+export function getZoneCropOverride(
+  fileId: string,
+  trackKey: string,
+): { x: number; y: number; w: number; h: number } | undefined {
+  ensureDoc()
+  const overrides = ensureZoneOverridesMap(fileId)
+  if (!overrides) return undefined
+  const entry = overrides.get(trackKey) as ZoneOverride | undefined
+  return entry?.cropRegion
+}
+
+/**
+ * Set the crop override for one (fileId, trackKey) pair. Pass `null` to
+ * remove the override (revert to preset default). Triggers subscribers.
+ */
+export function setZoneCropOverride(
+  fileId: string,
+  trackKey: string,
+  cropRegion: { x: number; y: number; w: number; h: number } | null,
+): void {
+  ensureDoc()
+  const overrides = ensureZoneOverridesMap(fileId)
+  if (!overrides) return
+  const doc = ensureDoc()
+  doc.transact(() => {
+    if (cropRegion === null) {
+      overrides.delete(trackKey)
+    } else {
+      overrides.set(trackKey, { cropRegion })
+    }
+  }, STRUCT_ORIGIN)
+}
+
+/**
+ * Subscribe to ANY zone-override change within a file. Fires after each
+ * committed mutation.
+ */
+export function subscribeToZoneOverrides(fileId: string, cb: Subscriber): () => void {
+  ensureDoc()
+  ensureZoneOverridesMap(fileId)
+  let set = zoneOverrideSubscribers.get(fileId)
+  if (!set) {
+    set = new Set()
+    zoneOverrideSubscribers.set(fileId, set)
+  }
+  set.add(cb)
+  return () => {
+    set!.delete(cb)
+    if (set!.size === 0) zoneOverrideSubscribers.delete(fileId)
+  }
+}
+
 export function resetFileStore(): void {
   for (const [id] of textObservers) {
     unwireTextObserver(id)
@@ -524,6 +617,8 @@ export function resetFileStore(): void {
   subscribersByFile.clear()
   wiredFilesMap = null
   folderOrderObserverWired = false
+  zoneOverrideSubscribers.clear()
+  wiredZoneObservers.clear()
   // Undo manager was bound to the previous Y.Doc — drop it so the next
   // access rebuilds against the new doc.
   resetUndoManager()
@@ -548,6 +643,8 @@ export function __resetWorkspaceFilesForTests(): void {
   subscribersByFile.clear()
   fileListSubscribers.clear()
   folderOrderSubscribers.clear()
+  zoneOverrideSubscribers.clear()
+  wiredZoneObservers.clear()
   wiredFilesMap = null
   folderOrderObserverWired = false
   destroyProjectDoc()

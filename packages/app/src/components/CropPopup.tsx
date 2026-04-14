@@ -6,7 +6,8 @@ import {
   compilePreset,
   mountVizRenderer,
   workspaceAudioBus,
-  registerPresetAsNamedViz,
+  setZoneCropOverride,
+  getZoneCropOverride,
   type CropRegion,
   type VizPreset,
   type VizRenderer,
@@ -16,15 +17,26 @@ import { showToast } from "../dialogs/host";
 interface CropPopupProps {
   vizId: string;
   presetId: string;
+  /** File id of the editor tab that owns this zone — override key part 1. */
+  fileId: string;
+  /** Per-$:-block identifier — override key part 2. Same as the engine's
+   *  trackKey (vizRequests / trackSchedulers / trackAnalysers). */
+  trackKey: string;
   onClose: () => void;
 }
 
 const PREVIEW_W = 640;
 const PREVIEW_H = 400;
 
-export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
+export function CropPopup({ vizId, presetId, fileId, trackKey, onClose }: CropPopupProps) {
   const [preset, setPreset] = useState<VizPreset | null>(null);
-  const [crop, setCrop] = useState<CropRegion>({ x: 0, y: 0, w: 1, h: 1 });
+  const [crop, setCrop] = useState<CropRegion>(() => {
+    // Seed from the per-instance override so the popup opens on the same
+    // crop the inline zone is currently showing — not the preset default,
+    // which may be different (or shared across sibling instances).
+    const override = getZoneCropOverride(fileId, trackKey);
+    return override ?? { x: 0, y: 0, w: 1, h: 1 };
+  });
   const [dragging, setDragging] = useState<
     | { kind: "move"; startX: number; startY: number; origCrop: CropRegion }
     | { kind: "resize"; edge: string; startX: number; startY: number; origCrop: CropRegion }
@@ -34,13 +46,13 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<{ renderer: VizRenderer; disconnect: () => void } | null>(null);
 
-  // Load preset on mount
+  // Load preset on mount. Do NOT seed `crop` from preset.cropRegion — that's
+  // a per-preset legacy default; the per-instance override (seeded above) is
+  // the source of truth for this zone. Only use the preset to compile the
+  // renderer for the preview canvas.
   useEffect(() => {
     VizPresetStore.get(presetId).then((p) => {
-      if (p) {
-        setPreset(p);
-        if (p.cropRegion) setCrop(p.cropRegion);
-      }
+      if (p) setPreset(p);
     });
   }, [presetId]);
 
@@ -89,26 +101,21 @@ export function CropPopup({ vizId, presetId, onClose }: CropPopupProps) {
     };
   }, [preset]);
 
-  const handleSave = useCallback(async () => {
-    if (!preset) return;
-    const updated = { ...preset, cropRegion: crop, updatedAt: Date.now() };
-    await VizPresetStore.put(updated);
-    // Re-register so onNamedVizChanged fires → EditorView remounts
-    // inline zones with the fresh cropRegion from IDB.
-    registerPresetAsNamedViz(updated);
+  const handleSave = useCallback(() => {
+    // Save the crop as a per-instance override on the WORKSPACE FILE, not on
+    // the shared VizPreset. Two $: blocks using the same preset now have
+    // independent crops. The file-level subscription in EditorView triggers
+    // a zone remount so the inline zone picks up the new crop.
+    setZoneCropOverride(fileId, trackKey, crop);
     showToast(`Crop saved for "${vizId}"`, "info");
     onClose();
-  }, [preset, crop, vizId, onClose]);
+  }, [crop, fileId, trackKey, vizId, onClose]);
 
-  const handleReset = useCallback(async () => {
-    if (!preset) return;
-    const { cropRegion: _, ...rest } = preset;
-    const updated = { ...rest, updatedAt: Date.now() } as VizPreset;
-    await VizPresetStore.put(updated);
-    registerPresetAsNamedViz(updated);
+  const handleReset = useCallback(() => {
+    setZoneCropOverride(fileId, trackKey, null);
     setCrop({ x: 0, y: 0, w: 1, h: 1 });
     showToast(`Crop cleared for "${vizId}"`, "info");
-  }, [preset, vizId]);
+  }, [fileId, trackKey, vizId]);
 
   // Drag handlers
   const handleMouseDown = useCallback(

@@ -342,9 +342,11 @@ export interface EditorViewProps {
   readonly onEditViz?: (vizId: string) => void
 
   /** Called when the user clicks the "crop" icon on an inline viz zone.
-   *  Receives the viz name and the preset id (for persistence). The host
-   *  should open a crop popup. */
-  readonly onCropViz?: (vizId: string, presetId: string | null) => void
+   *  Receives the viz name, preset id, and `trackKey` — the per-$:-block
+   *  identifier (same key used for trackSchedulers / trackAnalysers /
+   *  vizRequests). Required so the host can save the crop as a per-instance
+   *  override rather than overwriting the shared VizPreset. */
+  readonly onCropViz?: (vizId: string, presetId: string | null, trackKey: string) => void
 }
 
 /**
@@ -889,6 +891,8 @@ export interface WorkspaceShellProps {
   /** Inline viz "edit" icon clicked — navigate to the viz file. */
   readonly onEditViz?: (vizId: string) => void
 
-  /** Inline viz "crop" icon clicked — open crop popup. */
-  readonly onCropViz?: (vizId: string, presetId: string | null) => void
+  /** Inline viz "crop" icon clicked — open crop popup. `trackKey` scopes
+   *  the crop to this specific zone instance; see onCropViz above for the
+   *  per-instance rationale. */
+  readonly onCropViz?: (vizId: string, presetId: string | null, trackKey: string) => void
 }
