@@ -7732,8 +7732,18 @@ function computeLayout(contentW, native, crop) {
     ty: -crop.y * native.h * scale2
   };
 }
+function readCanvasNative(container) {
+  const canvas = container.querySelector("canvas");
+  if (!canvas) return null;
+  const w = canvas.width | 0;
+  const h = canvas.height | 0;
+  if (w <= 0 || h <= 0) return null;
+  return { w, h };
+}
 function applyLayout(container, canvas, layout) {
-  container.style.height = `${layout.zoneH ?? container.style.height}`;
+  if (typeof layout.zoneH === "number") {
+    container.style.height = `${layout.zoneH}px`;
+  }
   let wrapper = container.querySelector("[data-viz-canvas-wrap]");
   if (!wrapper && canvas) {
     wrapper = document.createElement("div");
@@ -7861,7 +7871,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       requestAnimationFrame(() => {
         applyLayout(container, container.querySelector("canvas"), layout);
       });
-      zoneEntries.push({
+      const entry = {
         zoneId,
         afterLine,
         container,
@@ -7871,7 +7881,27 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
         presetId: null,
         native,
         crop
-      });
+      };
+      zoneEntries.push(entry);
+      let refineAttempts = 0;
+      const tryRefine = () => {
+        refineAttempts++;
+        const actual = readCanvasNative(entry.container);
+        if (actual && (actual.w !== entry.native.w || actual.h !== entry.native.h)) {
+          entry.native = actual;
+          entry.canvas = entry.container.querySelector("canvas");
+          const contentW2 = editor.getLayoutInfo().contentWidth || 400;
+          const refined = computeLayout(contentW2, entry.native, entry.crop);
+          editor.changeViewZones((acc) => {
+            entry.container.style.height = `${refined.zoneH}px`;
+            acc.layoutZone(entry.zoneId);
+          });
+          applyLayout(entry.container, entry.container.querySelector("canvas"), refined);
+          return;
+        }
+        if (refineAttempts < 10) requestAnimationFrame(tryRefine);
+      };
+      requestAnimationFrame(tryRefine);
     }
   });
   const normalize = (s) => s.toLowerCase().replace(/[\s\-_]/g, "");
@@ -7884,7 +7914,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
           const preset = presets.find((p) => normalize(p.name) === normViz) ?? null;
           if (!preset) continue;
           entry.presetId = preset.id;
-          entry.native = nativeSizeFor(preset);
+          const actual = readCanvasNative(entry.container);
+          entry.native = actual ?? nativeSizeFor(preset);
           const override = fileId ? getZoneCropOverride(fileId, entry.trackKey) : void 0;
           entry.crop = override ?? preset.cropRegion ?? FULL_CROP;
           const contentW = editor.getLayoutInfo().contentWidth || 400;

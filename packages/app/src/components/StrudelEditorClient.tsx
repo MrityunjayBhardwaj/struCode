@@ -132,6 +132,11 @@ export default function StrudelEditorClient({
       renderer: "p5",
       code: PIANOROLL_P5_CODE,
       requires: ["streaming"],
+      // Wide-and-short scrolling-timeline aspect — matches the historical
+      // pianoroll look (pre-WYSIWYG default used createCanvas(stave.width,
+      // stave.height) which resolved to ~1400×200 in practice). Keeping this
+      // aspect means the inline zone mirrors what users expect.
+      nativeSize: { w: 1400, h: 350 },
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -141,6 +146,7 @@ export default function StrudelEditorClient({
       renderer: "hydra",
       code: PIANOROLL_HYDRA_CODE,
       requires: ["audio"],
+      nativeSize: { w: 1400, h: 400 },
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -164,6 +170,7 @@ export default function StrudelEditorClient({
         ...existingP5,
         id: seedState.p5PresetId, name: "Piano Roll", renderer: "p5",
         code: PIANOROLL_P5_CODE, requires: ["streaming"],
+        nativeSize: existingP5?.nativeSize ?? { w: 1400, h: 350 },
         createdAt: existingP5?.createdAt ?? now, updatedAt: now,
       });
       const existingHydra = await VizPresetStore.get(seedState.hydraPresetId);
@@ -171,6 +178,7 @@ export default function StrudelEditorClient({
         ...existingHydra,
         id: seedState.hydraPresetId, name: "Piano Roll (Hydra)", renderer: "hydra",
         code: PIANOROLL_HYDRA_CODE, requires: ["audio"],
+        nativeSize: existingHydra?.nativeSize ?? { w: 1400, h: 400 },
         createdAt: existingHydra?.createdAt ?? now, updatedAt: now,
       });
     }

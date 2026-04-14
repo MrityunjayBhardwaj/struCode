@@ -25,8 +25,21 @@ interface CropPopupProps {
   onClose: () => void;
 }
 
-const PREVIEW_W = 640;
-const PREVIEW_H = 400;
+/** Maximum preview dimensions — the popup fits inside these while preserving
+ *  the native canvas aspect so the crop visor rect WYSIWYG-matches the inline
+ *  zone render. Fixed 640×400 previously caused aspect mismatch for presets
+ *  whose native canvas is wide-and-short (e.g. pianoroll at 1400×350). */
+const MAX_PREVIEW_W = 800;
+const MAX_PREVIEW_H = 500;
+const DEFAULT_NATIVE = { w: 1200, h: 600 };
+
+/** Fit a native canvas size into the max preview box while preserving aspect. */
+function fitPreview(native: { w: number; h: number }): { w: number; h: number } {
+  const aspect = native.w / native.h;
+  let w = MAX_PREVIEW_W, h = MAX_PREVIEW_W / aspect;
+  if (h > MAX_PREVIEW_H) { h = MAX_PREVIEW_H; w = MAX_PREVIEW_H * aspect; }
+  return { w: Math.round(w), h: Math.round(h) };
+}
 
 export function CropPopup({ vizId, presetId, fileId, trackKey, onClose }: CropPopupProps) {
   const [preset, setPreset] = useState<VizPreset | null>(null);
@@ -56,6 +69,12 @@ export function CropPopup({ vizId, presetId, fileId, trackKey, onClose }: CropPo
     });
   }, [presetId]);
 
+  // Native canvas size comes from the preset so the popup preview mirrors
+  // the inline-zone aspect exactly (WYSIWYG). The canvas element below is
+  // CSS-scaled to 100% of its container, which is sized to the same aspect.
+  const native = preset?.nativeSize ?? DEFAULT_NATIVE;
+  const previewBox = fitPreview(native);
+
   // Mount the live viz renderer once the preset is loaded
   useEffect(() => {
     if (!preset || !canvasContainerRef.current) return;
@@ -80,14 +99,27 @@ export function CropPopup({ vizId, presetId, fileId, trackKey, onClose }: CropPo
         // Build minimal engine components from the payload
         const components = payload?.engineComponents ?? payload ?? {};
 
+        // Mount at NATIVE dimensions — the canvas renders at its authored
+        // resolution (e.g. pianoroll's 1400×350). CSS on the canvas element
+        // scales it down to fit the popup preview box while preserving
+        // aspect, so the crop visor's percent-based coords line up exactly
+        // with what the inline zone shows.
         rendererRef.current = mountVizRenderer(
           canvasContainerRef.current! as HTMLDivElement,
           descriptor.factory,
           components,
-          { w: PREVIEW_W, h: PREVIEW_H },
+          { w: native.w, h: native.h },
           console.error,
         );
         rendererRef.current.renderer.resume?.();
+        // Force the created canvas to scale to its container rather than
+        // overflow at native pixel size.
+        const c = canvasContainerRef.current?.querySelector('canvas') as HTMLCanvasElement | null;
+        if (c) {
+          c.style.width = '100%';
+          c.style.height = '100%';
+          c.style.display = 'block';
+        }
       },
     );
 
@@ -130,8 +162,8 @@ export function CropPopup({ vizId, presetId, fileId, trackKey, onClose }: CropPo
   useEffect(() => {
     if (!dragging) return;
     const handleMove = (e: MouseEvent) => {
-      const dx = (e.clientX - dragging.startX) / PREVIEW_W;
-      const dy = (e.clientY - dragging.startY) / PREVIEW_H;
+      const dx = (e.clientX - dragging.startX) / previewBox.w;
+      const dy = (e.clientY - dragging.startY) / previewBox.h;
       const orig = dragging.origCrop;
 
       if (dragging.kind === "move") {
@@ -209,8 +241,8 @@ export function CropPopup({ vizId, presetId, fileId, trackKey, onClose }: CropPo
           <div
             style={{
               position: "relative",
-              width: PREVIEW_W,
-              height: PREVIEW_H,
+              width: previewBox.w,
+              height: previewBox.h,
               background: "var(--bg-input, #0f0f1e)",
               borderRadius: 4,
               overflow: "hidden",
