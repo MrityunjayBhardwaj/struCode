@@ -1,10 +1,10 @@
 <div align="center">
 
-# Stave
+# Stave Code
 
-**A live-coding studio for [Strudel](https://strudel.cc) and [Sonic Pi](https://sonic-pi.net) — Monaco-grade editing, inline visualizers, and a real workspace around your music.**
+**A live-coding studio for [Strudel](https://strudel.cc), [Sonic Pi](https://sonic-pi.net), [p5.js](https://p5js.org), and [Hydra](https://hydra.ojack.xyz) — Monaco-grade editing, inline visualizers, and a real workspace around your music and visuals.**
 
-![Stave screenshot](assets/v2_0_scrst.jpeg)
+![Stave Code screenshot](assets/v2_0_scrst.jpeg)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -19,9 +19,11 @@
 
 Live coding deserves a better workspace than a single text box on a webpage.
 
-Stave is a full editor for Strudel and Sonic Pi — a VS Code-grade shell (tabs, split panes, command palette, search, activity bar, zen mode) wrapped around an audio runtime that's tightly integrated with `@strudel/core` and `@strudel/webaudio`. No iframe boundary. Your patterns, your visualizers, your project files, all in one place — local-first, with Yjs under the hood so your work keeps working even when the network doesn't.
+Stave Code is a full editor for Strudel, Sonic Pi, p5.js, and Hydra — a VS Code-grade shell (tabs, split panes, command palette, search, activity bar, zen mode) wrapped around runtimes that are tightly integrated with `@strudel/core` and `@strudel/webaudio`. No iframe boundary. Your patterns, your visualizers, your project files, all in one place — local-first, with Yjs under the hood so your work keeps working even when the network doesn't.
 
 Inline visualizers are the centerpiece: drop `.viz("spectrum")` after any `$:` pattern and the visualizer renders *between the code lines*, right under the pattern that feeds it. Name a visualizer, reuse it, hot-reload the canvas as you edit — the feedback loop between sound and image stays unbroken.
+
+> **Stave Code** is part of the Stave family. A separate product, **Stave Studio** (node-based synth creation + visual patching), is planned as its own repo when the time is right. This repo stays focused on the text-first live-coding experience.
 
 ---
 
@@ -32,8 +34,8 @@ Inline visualizers are the centerpiece: drop `.viz("spectrum")` after any `$:` p
 **Local:**
 
 ```bash
-git clone https://github.com/MrityunjayBhardwaj/stave.git
-cd stave
+git clone https://github.com/MrityunjayBhardwaj/stave-code.git
+cd stave-code
 pnpm install
 pnpm dev          # http://localhost:3000
 ```
@@ -111,7 +113,7 @@ You get two independent inline visualizers, each side-tapping its own pattern �
 ## Repo structure
 
 ```
-stave/
+stave-code/
 ├── packages/
 │   ├── editor/          # @stave/editor — React component library (tsup)
 │   │   └── src/
@@ -128,7 +130,7 @@ stave/
 
 ## Embedding
 
-Stave is the hosted studio, but the editor core ships as a library too. If you want to drop the editing experience into your own React app:
+Stave Code is the hosted studio, but the editor core ships as a library too. If you want to drop the editing experience into your own React app:
 
 ```tsx
 import { StrudelEditor } from '@stave/editor'
