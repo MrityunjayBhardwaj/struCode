@@ -8108,6 +8108,7 @@ function EditorView({
   const viewZoneHandleRef = React.useRef(null);
   const lastPayloadRef = React.useRef(null);
   const [hapStream, setHapStream] = React.useState(null);
+  const [editorReady, setEditorReady] = React.useState(false);
   React.useEffect(() => {
     if (!containerRef.current) return;
     applyTheme(containerRef.current, theme);
@@ -8145,7 +8146,7 @@ function EditorView({
       viewZoneHandleRef.current?.cleanup();
       viewZoneHandleRef.current = null;
     };
-  }, [fileId]);
+  }, [fileId, editorReady]);
   React.useEffect(() => {
     if (!fileId) return;
     const remount = () => {
@@ -8193,6 +8194,7 @@ function EditorView({
   const handleMonacoMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    setEditorReady(true);
     registerEditor(fileId, editor);
     registerMonacoNamespace(monaco);
     applyPersistedEditorOptions(editor);

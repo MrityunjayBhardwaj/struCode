@@ -124,6 +124,12 @@ export function EditorView({
   // HapStream from the bus payload — drives useHighlighting.
   const [hapStream, setHapStream] = useState<HapStream | null>(null)
 
+  // Flipped in `handleMonacoMount`; included in the bus-subscribe deps so a
+  // split editor group re-subscribes AFTER `editorRef.current` is populated
+  // — the re-subscribe's synchronous initial fire then redelivers any
+  // in-flight payload. Fixes #22.
+  const [editorReady, setEditorReady] = useState(false)
+
   // Theme application — PV6 / PK6. Two layers that must stay in sync:
   //
   //   1. CSS vars on the container (chrome bars, backgrounds, borders).
@@ -196,7 +202,7 @@ export function EditorView({
       viewZoneHandleRef.current?.cleanup()
       viewZoneHandleRef.current = null
     }
-  }, [fileId])
+  }, [fileId, editorReady])
 
   // ----------------------------------------------------------------
   // Viz hot-reload — remount inline zones when a named viz preset
@@ -276,6 +282,7 @@ export function EditorView({
   const handleMonacoMount = (editor: any, monaco: any): void => {
     editorRef.current = editor
     monacoRef.current = monaco
+    setEditorReady(true)
     registerEditor(fileId, editor)
     registerMonacoNamespace(monaco)
     applyPersistedEditorOptions(editor)

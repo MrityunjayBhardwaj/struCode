@@ -87,12 +87,18 @@ const stubMonaco = {
 }
 
 let capturedOnMount: ((editor: unknown, monaco: unknown) => void) | null = null
+// When false, the mock captures onMount but does NOT auto-invoke it. Tests
+// that simulate Monaco's async mount race (e.g. split-editor while playing)
+// flip this off, publish to the bus, then manually invoke capturedOnMount.
+let autoFireOnMount = true
 
 vi.mock('@monaco-editor/react', () => ({
   default: (props: MonacoEditorProps) => {
     React.useEffect(() => {
       capturedOnMount = props.onMount ?? null
-      props.onMount?.(stubEditor, stubMonaco)
+      if (autoFireOnMount) {
+        props.onMount?.(stubEditor, stubMonaco)
+      }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
     return (
@@ -130,6 +136,7 @@ describe('EditorView bus wiring (Task 07)', () => {
     __resetWorkspaceAudioBusForTests()
     __resetWorkspaceLanguagesForTests()
     capturedOnMount = null
+    autoFireOnMount = true
     stubRegisteredLanguages.length = 0
     mockZoneHandle.cleanup.mockClear()
     mockZoneHandle.pause.mockClear()
@@ -247,6 +254,63 @@ describe('EditorView bus wiring (Task 07)', () => {
     mockZoneHandle.cleanup.mockClear()
     unmount()
     expect(mockZoneHandle.cleanup).toHaveBeenCalled()
+  })
+
+  // Regression: splitting an editor group while the runtime is already
+  // publishing used to leave the new editor silent — the bus delivered the
+  // payload synchronously at subscribe time, BEFORE Monaco's async onMount
+  // populated `editorRef.current`. The callback's `editorRef.current` guard
+  // failed and no redelivery happened. The fix adds an `editorReady` state
+  // set inside `handleMonacoMount`, included in the bus-subscribe effect's
+  // deps — the effect re-subscribes after mount, and the re-subscribe's
+  // synchronous initial fire delivers the in-flight payload into a callback
+  // whose guard now passes. See issue #22.
+  it('wires viz on a new editor mounted while the bus is already publishing (split-group race)', () => {
+    createWorkspaceFile('f1', 'f1.strudel', '// code', 'strudel')
+
+    // Publish BEFORE the editor mounts — models the "runtime already playing
+    // when user splits a new editor group" scenario.
+    const payload: AudioPayload = {
+      inlineViz: { vizRequests: new Map([['$', { vizId: 'pianoroll', afterLine: 1 }]]) } as any,
+      hapStream: { on: vi.fn(), off: vi.fn() } as any,
+    }
+    act(() => {
+      workspaceAudioBus.publish('f1', payload)
+    })
+
+    // Disable the mock's auto-onMount so mounting simulates real async Monaco
+    // init — editor mounts, but Monaco's onMount hasn't fired yet.
+    autoFireOnMount = false
+    render(<EditorView fileId="f1" />)
+
+    // At this point the bus-subscribe effect has already run with
+    // editorRef.current=null. Without the fix, the inline-viz branch was
+    // silently skipped and no redelivery mechanism existed.
+    expect(addInlineViewZones).not.toHaveBeenCalled()
+
+    // Now simulate Monaco finishing its async mount.
+    act(() => {
+      capturedOnMount?.(stubEditor, stubMonaco)
+    })
+
+    // editorReady flipped true → bus-subscribe effect re-ran → synchronous
+    // initial fire redelivered the in-flight payload with editorRef.current
+    // populated → zones added.
+    expect(addInlineViewZones).toHaveBeenCalledTimes(1)
+    expect(addInlineViewZones).toHaveBeenCalledWith(
+      stubEditor,
+      payload,
+      expect.any(Array),
+      expect.any(Object),
+      'f1',
+    )
+    expect(mockZoneHandle.resume).toHaveBeenCalled()
+
+    // Highlighting also wires up — useHighlighting's last call sees the
+    // hapStream from the redelivered payload.
+    const calls = vi.mocked(useHighlighting).mock.calls
+    const lastCall = calls[calls.length - 1]
+    expect(lastCall[1]).toBe(payload.hapStream)
   })
 
   // ---- Active highlighting (S5) ----
