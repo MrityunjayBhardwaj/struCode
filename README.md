@@ -1,10 +1,10 @@
 <div align="center">
 
-# struCode
+# Stave
 
-**A professional Monaco-based editor for [Strudel.js](https://strudel.cc) — built as an embeddable React component library.**
+**A live-coding studio for [Strudel](https://strudel.cc) and [Sonic Pi](https://sonic-pi.net) — Monaco-grade editing, inline visualizers, and a real workspace around your music.**
 
-![struCode screenshot](assets/v1_5_scrst.png)
+![Stave screenshot](assets/v2_0_scrst.jpeg)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -17,66 +17,121 @@
 
 ## Overview
 
-struCode is the editor that [strudel.cc](https://strudel.cc) should have had. It replaces the default strudel web component with a Monaco-powered editing experience — tightly integrated with `@strudel/core` and `@strudel/webaudio` (no iframe boundary), designed to be embedded in any React application.
+Live coding deserves a better workspace than a single text box on a webpage.
+
+Stave is a full editor for Strudel and Sonic Pi — a VS Code-grade shell (tabs, split panes, command palette, search, activity bar, zen mode) wrapped around an audio runtime that's tightly integrated with `@strudel/core` and `@strudel/webaudio`. No iframe boundary. Your patterns, your visualizers, your project files, all in one place — local-first, with Yjs under the hood so your work keeps working even when the network doesn't.
+
+Inline visualizers are the centerpiece: drop `.viz("spectrum")` after any `$:` pattern and the visualizer renders *between the code lines*, right under the pattern that feeds it. Name a visualizer, reuse it, hot-reload the canvas as you edit — the feedback loop between sound and image stays unbroken.
 
 ---
 
-## Features
+## Try it
+
+**Hosted:** [stave.live](https://stave.live)
+
+**Local:**
+
+```bash
+git clone https://github.com/MrityunjayBhardwaj/stave.git
+cd stave
+pnpm install
+pnpm dev          # http://localhost:3000
+```
+
+Prereqs: Node 18+, pnpm 9+.
+
+---
+
+## What's in it
+
+### Editor
 
 | Feature | Status |
 |---------|--------|
-| Active note highlighting — source chars glow in sync with the audio scheduler | ✅ |
-| Sound autocompletion — `s("...")` suggests all Dirt-Samples and synth names | ✅ |
-| Runtime error surfacing — scheduler-time errors appear in the editor, not just the console | ✅ |
-| WAV export — offline fast-render via `OfflineAudioContext` (50× realtime) | ✅ |
+| VS Code-parity shell — tabs, splits, command palette, activity bar, status bar, zen mode | ✅ |
+| Monaco language support — syntax highlighting, bracket matching, autocomplete, hover docs | ✅ |
+| Global search — across files, symbols, commands, and history | ✅ |
+| Keyboard shortcuts overlay + customizable bindings | ✅ |
+| Breadcrumbs, multi-select, tab context menu, settings gear | ✅ |
+
+### Audio
+
+| Feature | Status |
+|---------|--------|
+| Strudel runtime, no iframe — direct `@strudel/core` + `@strudel/webaudio` integration | ✅ |
+| Sonic Pi runtime via `sonicPiWeb` (CDN SynthDefs) | ✅ runtime, per-track analysers pending |
+| Active-note highlighting — source chars glow in sync with the scheduler | ✅ |
+| Sound autocompletion — `s("…")` suggests every Dirt-Samples and synth name | ✅ |
+| Per-track AnalyserNode producer — each `$:` pattern gets its own side-tap | ✅ |
+| Runtime error surfacing — scheduler-time errors land in the editor, not just the console | ✅ |
+
+### Visualizers
+
+| Feature | Status |
+|---------|--------|
+| Inline `.viz("name")` — renders between code lines, under the pattern that feeds it | ✅ |
+| Named visualizer files (`.p5`, `.hydra`) — reusable, referenced by name | ✅ |
+| Hot-reload on viz file save | ✅ |
+| Per-instance crop overrides — two `$:` blocks using the same viz don't clobber each other | ✅ |
+| Built-in visualizers — pianoroll, oscilloscope, spectrum analyser, spiral, pitchwheel | ✅ |
+| Edit + crop action buttons on every inline zone | ✅ |
+
+### Workspace
+
+| Feature | Status |
+|---------|--------|
+| Local-first project storage — Yjs + y-indexeddb, no server required | ✅ |
+| Multi-file projects with folders, drag-reorder, bracket-aware outline | ✅ |
+| Version history — save / restore / delete snapshots, auto-snapshot on idle | ✅ |
+| Import / export project as `.zip` | ✅ |
+| Theme system — unified tokens, light/dark with instant propagation | ✅ |
+
+### Export
+
+| Feature | Status |
+|---------|--------|
+| WAV export — offline fast-render via `OfflineAudioContext` (~50× realtime) | ✅ |
 | Multi-stem export — render each pattern to a separate WAV in parallel | ✅ |
-| Monaco language support — syntax highlighting, bracket matching, keyboard shortcuts | ✅ |
-| Inline pianoroll embedded between code lines | Planned |
-| Oscilloscope, spectrum analyser, spiral, pitchwheel visualizers | Planned |
-| Hover docs and error squiggles | Planned |
+
+---
+
+## A tiny example
+
+Open a fresh Strudel file and paste:
+
+```js
+$: note("c3 e3 g3 b3").s("sine").gain(0.7).viz("spectrum")
+$: s("bd*4, ~ cp").gain(0.9).viz("scope")
+```
+
+You get two independent inline visualizers, each side-tapping its own pattern — not the master mix. Click the crop icon on either one to frame the part you care about. Save. It persists.
 
 ---
 
 ## Repo structure
 
 ```
-struCode/
+stave/
 ├── packages/
-│   ├── editor/          # @strucode/editor — React component library (tsup)
+│   ├── editor/          # @stave/editor — React component library (tsup)
 │   │   └── src/
-│   │       ├── StrudelEditor.tsx       # Root component
-│   │       ├── engine/
-│   │       │   ├── StrudelEngine.ts    # Wraps @strudel/core + @strudel/webaudio
-│   │       │   ├── HapStream.ts        # Event bus — emits haps as they are scheduled
-│   │       │   ├── OfflineRenderer.ts  # OfflineAudioContext fast render
-│   │       │   ├── LiveRecorder.ts     # Live capture → WAV Blob
-│   │       │   └── WavEncoder.ts       # AudioBuffer → WAV Blob (zero deps)
-│   │       └── monaco/
-│   │           ├── StrudelMonaco.tsx   # Monaco editor wrapper
-│   │           ├── language.ts         # Strudel language tokens + config
-│   │           └── useHighlighting.ts  # Hap → Monaco decoration hook
-│   └── app/             # Next.js 16 demo app (Turbopack)
+│   │       ├── engine/              # Strudel + Sonic Pi runtimes, per-track analysers
+│   │       ├── monaco/              # Language, diagnostics, highlighting
+│   │       ├── visualizers/         # Inline viz view-zone pipeline
+│   │       ├── workspace/           # Yjs-backed file store, tabs, splits
+│   │       └── ir/                  # Pattern IR (early — see project docs)
+│   └── app/             # Next.js 16 demo app (Turbopack) — what stave.live runs
+└── assets/              # Screenshots, branding
 ```
 
 ---
 
-## Getting started
+## Embedding
 
-**Prerequisites:** Node 18+, pnpm 9+
-
-```bash
-git clone https://github.com/MrityunjayBhardwaj/struCode.git
-cd struCode
-pnpm install
-pnpm dev          # http://localhost:3000
-```
-
----
-
-## Usage
+Stave is the hosted studio, but the editor core ships as a library too. If you want to drop the editing experience into your own React app:
 
 ```tsx
-import { StrudelEditor } from '@strucode/editor'
+import { StrudelEditor } from '@stave/editor'
 
 export default function App() {
   return (
@@ -108,16 +163,18 @@ export default function App() {
 
 ## Stack
 
-- **Editor** — [Monaco Editor](https://microsoft.github.io/monaco-editor/) via `@monaco-editor/react`
-- **Audio** — [Strudel](https://strudel.cc) (`@strudel/core`, `@strudel/webaudio`, `@strudel/mini`, `@strudel/tonal`, `@strudel/xen`, `@strudel/midi`, `@strudel/soundfonts`)
+- **Editor** — [Monaco Editor](https://microsoft.github.io/monaco-editor/) via `@monaco-editor/react`, view-zones for inline viz
+- **Audio** — [Strudel](https://strudel.cc) (`@strudel/core`, `@strudel/webaudio`, `@strudel/mini`, `@strudel/tonal`, `@strudel/xen`, `@strudel/midi`, `@strudel/soundfonts`), `sonicPiWeb` for Sonic Pi
+- **Visualizers** — p5.js, Hydra
+- **Persistence** — Yjs + y-indexeddb (local-first CRDT)
 - **Framework** — React 19, Next.js 16 (Turbopack)
-- **Tooling** — TypeScript, pnpm workspaces, tsup, Vitest
+- **Tooling** — TypeScript, pnpm workspaces, tsup, Vitest, Playwright
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on the DCO signoff requirement, PR workflow, and what not to commit.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the DCO signoff, PR workflow, and what not to commit.
 
 This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 
