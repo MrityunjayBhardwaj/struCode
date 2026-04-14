@@ -41,35 +41,40 @@ function nativeSizeFor(preset: VizPreset | null): { w: number; h: number } {
 }
 
 /**
- * Compute the inline zone layout from content width + native size + crop.
+ * Compute inline zone height + canvas transform.
  *
- * **Model — crop visor maps 1:1 to visible canvas area:**
+ * The cropped region fills the zone width — scale zooms so that
+ * cropW × nativeW maps to contentW. Zone height follows the crop's
+ * aspect. This is the original WYSIWYG model: what the user picks in
+ * the crop popup is exactly what appears inline, edge-to-edge.
  *
- *   scale    = contentW / nativeW          (constant — native pixel density)
- *   clipW    = cropW × contentW            (100% crop → full width; 50% → half)
- *   clipH    = cropH × nativeH × scale     (proportional to visor height)
- *   zoneH    = clipH                       (Monaco zone height = visible area)
- *   tx       = -cropX × nativeW × scale    (shift canvas so crop origin = (0,0))
- *   ty       = -cropY × nativeH × scale
- *
- * The zone container stays full contentW (Monaco enforces this). An inner
- * clip div sized to clipW × clipH provides the actual viewport. The
- * remaining editor space shows through as transparent background.
+ *   scale = contentW / (cropW × nativeW)
+ *   zoneH = cropH × nativeH × scale
+ *   tx    = -cropX × nativeW × scale
+ *   ty    = -cropY × nativeH × scale
  */
 function computeLayout(
   contentW: number,
   native: { w: number; h: number },
   crop: CropRegion,
-): { clipW: number; zoneH: number; scale: number; tx: number; ty: number; nativeW: number; nativeH: number } {
+): { zoneH: number; scale: number; tx: number; ty: number; nativeW: number; nativeH: number } {
   const cropW = Math.max(0.01, crop.w)
   const cropH = Math.max(0.01, crop.h)
-  const scale = contentW / native.w
-  const clipW = cropW * contentW
+  const scale = contentW / (cropW * native.w)
   let zoneH = cropH * native.h * scale
-  if (zoneH > MAX_ZONE_HEIGHT) zoneH = MAX_ZONE_HEIGHT
-  else if (zoneH < MIN_ZONE_HEIGHT) zoneH = MIN_ZONE_HEIGHT
+  if (zoneH > MAX_ZONE_HEIGHT) {
+    const clamped = MAX_ZONE_HEIGHT / (cropH * native.h)
+    return {
+      zoneH: MAX_ZONE_HEIGHT,
+      scale: clamped,
+      tx: -crop.x * native.w * clamped,
+      ty: -crop.y * native.h * clamped,
+      nativeW: native.w,
+      nativeH: native.h,
+    }
+  }
+  if (zoneH < MIN_ZONE_HEIGHT) zoneH = MIN_ZONE_HEIGHT
   return {
-    clipW,
     zoneH,
     scale,
     tx: -crop.x * native.w * scale,
@@ -97,45 +102,25 @@ function readCanvasNative(container: HTMLElement): { w: number; h: number } | nu
 }
 
 /**
- * Apply the computed layout to the zone's DOM structure:
+ * Apply computed transform to the canvas inside the container.
  *
- *   container [data-viz-zone]    — Monaco-controlled, full contentW
- *     └─ clip [data-viz-clip]    — overflow:hidden, clipW × zoneH
- *         └─ wrapper [data-viz-canvas-wrap] — nativeW × nativeH, transform
- *             └─ canvas          — intrinsic size, CSS-stretched to 100%
+ * The wrapper gets explicit native dimensions so the canvas can
+ * CSS-stretch to fill regardless of its intrinsic size. The CSS
+ * transform on the wrapper maps native → display (zoom + crop offset).
  */
 function applyLayout(
   container: HTMLElement,
   canvas: HTMLElement | null,
   layout: {
     scale: number; tx: number; ty: number
-    zoneH?: number; clipW?: number
+    zoneH?: number
     nativeW?: number; nativeH?: number
   },
 ): void {
   if (typeof layout.zoneH === 'number') {
     container.style.height = `${layout.zoneH}px`
   }
-
-  // Ensure clip div exists
-  let clip = container.querySelector<HTMLElement>('[data-viz-clip]')
-  if (!clip) {
-    clip = document.createElement('div')
-    clip.setAttribute('data-viz-clip', '')
-    clip.style.cssText = 'overflow:hidden;position:relative;'
-    // Move all existing children into clip
-    while (container.firstChild) clip.appendChild(container.firstChild)
-    container.appendChild(clip)
-  }
-  if (typeof layout.clipW === 'number') {
-    clip.style.width = `${layout.clipW}px`
-  }
-  if (typeof layout.zoneH === 'number') {
-    clip.style.height = `${layout.zoneH}px`
-  }
-
-  // Ensure wrapper exists around the canvas
-  let wrapper = clip.querySelector<HTMLElement>('[data-viz-canvas-wrap]')
+  let wrapper = container.querySelector<HTMLElement>('[data-viz-canvas-wrap]')
   if (!wrapper && canvas) {
     wrapper = document.createElement('div')
     wrapper.setAttribute('data-viz-canvas-wrap', '')
