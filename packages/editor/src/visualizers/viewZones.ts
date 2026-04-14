@@ -185,6 +185,11 @@ interface ZoneEntry {
   presetId: string | null
   native: { w: number; h: number }
   crop: CropRegion
+  /** Decoration on the `.viz("<vizId>")` source line — the anchor that
+   *  survives edits to surrounding blocks. Null when the call couldn't be
+   *  located at mount time; in that case the zone falls back to static
+   *  positioning until the next evaluate. */
+  vizDecoration: Monaco.editor.IEditorDecorationsCollection | null
 }
 
 const FULL_CROP: CropRegion = { x: 0, y: 0, w: 1, h: 1 }
@@ -195,22 +200,41 @@ const FULL_CROP: CropRegion = { x: 0, y: 0, w: 1, h: 1 }
  * is the 1-indexed afterLine for the Nth `$:` block. Used to re-anchor
  * zones as the user edits between evaluations.
  */
-function scanStrudelBlockAfterLines(code: string): number[] {
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Find the source line (1-indexed) of the `.viz("<vizId>")` call for the
+ * block whose end matches `targetAfterLine`. Returns null if no such block
+ * / call combination exists (happens e.g. after the user deletes the call
+ * or renames the viz). Called once per zone at mount time to plant the
+ * decoration anchor — live re-anchor then reads the decoration's current
+ * line instead of re-running this search.
+ */
+function findVizCallLineForBlock(
+  code: string,
+  vizId: string,
+  targetAfterLine: number,
+): number | null {
   const lines = code.split('\n')
-  const result: number[] = []
+  const vizPattern = new RegExp(
+    `\\.viz\\s*\\(\\s*["\`']${escapeRegex(vizId)}["\`']\\s*\\)`,
+  )
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i].trim().startsWith('$:')) continue
-    let lastLineIdx = i
+    let blockEnd = i
     for (let j = i + 1; j < lines.length; j++) {
       const next = lines[j].trim()
       if (next.startsWith('$:') || next.startsWith('setcps')) break
-      // `//` comments count as empty so trailing commented-out code doesn't
-      // drag the zone anchor past the real end of the pattern block.
-      if (next !== '' && !next.startsWith('//')) lastLineIdx = j
+      if (next !== '' && !next.startsWith('//')) blockEnd = j
     }
-    result.push(lastLineIdx + 1)
+    if (blockEnd + 1 !== targetAfterLine) continue
+    for (let k = i; k <= blockEnd; k++) {
+      if (vizPattern.test(lines[k])) return k + 1
+    }
   }
-  return result
+  return null
 }
 
 export function addInlineViewZones(
@@ -233,15 +257,6 @@ export function addInlineViewZones(
   const renderers: VizRenderer[] = []
   const bufferedSchedulers: BufferedScheduler[] = []
   const zoneEntries: ZoneEntry[] = []
-
-  // Record the $: block count at mount time. Live re-anchor (below) only
-  // runs while this count stays the same — any add/remove of a $: block
-  // invalidates the positional trackKey → block mapping, so we defer to
-  // the next evaluate (which cleans up and re-mounts with fresh keys).
-  const initialModel = editor.getModel?.()
-  const expectedBlockCount = initialModel
-    ? scanStrudelBlockAfterLines(initialModel.getValue()).length
-    : 0
 
   const audioCtx = components.audio?.audioCtx
 
@@ -322,8 +337,38 @@ export function addInlineViewZones(
         applyLayout(container, container.querySelector('canvas'), layout)
       })
 
+      // Plant a decoration on the .viz("<vizId>") source line so the zone
+      // follows its block when other blocks are inserted or removed. Uses
+      // NeverGrowsWhenTypingAtEdges stickiness so adjacent edits don't
+      // stretch the anchor. If the call can't be found (unlikely —
+      // vizRequests came from the engine scanning the same code), skip
+      // decoration and the zone will stay static until next evaluate.
+      let vizDecoration: Monaco.editor.IEditorDecorationsCollection | null = null
+      const modelForMount = editor.getModel?.()
+      if (modelForMount) {
+        const vizLine = findVizCallLineForBlock(
+          modelForMount.getValue(),
+          vizId,
+          afterLine,
+        )
+        if (vizLine !== null) {
+          const maxCol = modelForMount.getLineMaxColumn?.(vizLine) ?? 1
+          vizDecoration = editor.createDecorationsCollection([
+            {
+              range: {
+                startLineNumber: vizLine,
+                startColumn: 1,
+                endLineNumber: vizLine,
+                endColumn: maxCol,
+              },
+              options: { stickiness: 1 },
+            },
+          ])
+        }
+      }
+
       const entry: ZoneEntry = {
-        zoneId, zoneDesc, afterLine, container, canvas, trackKey, vizId, presetId: null, native, crop,
+        zoneId, zoneDesc, afterLine, container, canvas, trackKey, vizId, presetId: null, native, crop, vizDecoration,
       }
       zoneEntries.push(entry)
 
@@ -443,27 +488,46 @@ export function addInlineViewZones(
   const reAnchorZones = () => {
     const model = editor.getModel?.()
     if (!model) return
-    const afterLines = scanStrudelBlockAfterLines(model.getValue())
-
-    // Defer when the $: block count changed — the engine re-keys trackKey
-    // on the next evaluate, and until then any positional mapping is
-    // unsafe (a new $: at the top would make zone $0 jump to the new,
-    // unrelated block).
-    if (afterLines.length !== expectedBlockCount) return
+    const lines = model.getValue().split('\n')
 
     const changed: ZoneEntry[] = []
     for (const entry of zoneEntries) {
-      const m = entry.trackKey.match(/^\$(\d+)$/)
-      if (!m) continue
-      const idx = parseInt(m[1], 10)
-      if (idx >= afterLines.length) continue
-      const newAfterLine = afterLines[idx]
+      // Decoration-based: the decoration follows its text through every
+      // edit, so its current line is a reliable pointer to where .viz()
+      // lives NOW. This replaces the earlier positional trackKey $N →
+      // afterLines[N] mapping, which was fragile when other blocks were
+      // added or removed. Zones without a decoration (call not found at
+      // mount) stay static until the next evaluate.
+      if (!entry.vizDecoration) continue
+      const ranges = entry.vizDecoration.getRanges()
+      if (ranges.length === 0) continue
+
+      const vizLineIdx = ranges[0].startLineNumber - 1 // back to 0-indexed
+      if (vizLineIdx < 0 || vizLineIdx >= lines.length) continue
+
+      // Walk backward to the $: that opens this block.
+      let blockStart = vizLineIdx
+      while (blockStart >= 0 && !lines[blockStart].trim().startsWith('$:')) {
+        blockStart--
+      }
+      if (blockStart < 0) continue // decoration sits above any $:, bail
+
+      // Scan forward for the block's last non-empty, non-comment line.
+      let blockEnd = blockStart
+      for (let j = blockStart + 1; j < lines.length; j++) {
+        const next = lines[j].trim()
+        if (next.startsWith('$:') || next.startsWith('setcps')) break
+        if (next !== '' && !next.startsWith('//')) blockEnd = j
+      }
+
+      const newAfterLine = blockEnd + 1
       if (newAfterLine !== entry.afterLine) {
         entry.afterLine = newAfterLine
         entry.zoneDesc.afterLineNumber = newAfterLine
         changed.push(entry)
       }
     }
+
     if (changed.length === 0) return
     editor.changeViewZones((accessor) => {
       for (const entry of changed) {
@@ -560,6 +624,7 @@ export function addInlineViewZones(
       editor.changeViewZones((accessor) => {
         zoneEntries.forEach(e => accessor.removeZone(e.zoneId))
       })
+      zoneEntries.forEach(e => e.vizDecoration?.clear())
     },
     pause() { renderers.forEach(r => r.pause()) },
     resume() { renderers.forEach(r => r.resume()) },

@@ -7829,20 +7829,28 @@ function createFloatingActionBar(editorDom) {
   return bar;
 }
 var FULL_CROP = { x: 0, y: 0, w: 1, h: 1 };
-function scanStrudelBlockAfterLines(code) {
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function findVizCallLineForBlock(code, vizId, targetAfterLine) {
   const lines = code.split("\n");
-  const result = [];
+  const vizPattern = new RegExp(
+    `\\.viz\\s*\\(\\s*["\`']${escapeRegex(vizId)}["\`']\\s*\\)`
+  );
   for (let i2 = 0; i2 < lines.length; i2++) {
     if (!lines[i2].trim().startsWith("$:")) continue;
-    let lastLineIdx = i2;
+    let blockEnd = i2;
     for (let j = i2 + 1; j < lines.length; j++) {
       const next = lines[j].trim();
       if (next.startsWith("$:") || next.startsWith("setcps")) break;
-      if (next !== "" && !next.startsWith("//")) lastLineIdx = j;
+      if (next !== "" && !next.startsWith("//")) blockEnd = j;
     }
-    result.push(lastLineIdx + 1);
+    if (blockEnd + 1 !== targetAfterLine) continue;
+    for (let k = i2; k <= blockEnd; k++) {
+      if (vizPattern.test(lines[k])) return k + 1;
+    }
   }
-  return result;
+  return null;
 }
 function addInlineViewZones(editor, components, vizDescriptors, actions, fileId) {
   const vizRequests = components.inlineViz?.vizRequests;
@@ -7855,8 +7863,6 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   const renderers = [];
   const bufferedSchedulers = [];
   const zoneEntries = [];
-  const initialModel = editor.getModel?.();
-  const expectedBlockCount = initialModel ? scanStrudelBlockAfterLines(initialModel.getValue()).length : 0;
   const audioCtx = components.audio?.audioCtx;
   editor.changeViewZones((accessor) => {
     for (const [trackKey, { vizId, afterLine }] of vizRequests) {
@@ -7909,6 +7915,29 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       requestAnimationFrame(() => {
         applyLayout(container, container.querySelector("canvas"), layout);
       });
+      let vizDecoration = null;
+      const modelForMount = editor.getModel?.();
+      if (modelForMount) {
+        const vizLine = findVizCallLineForBlock(
+          modelForMount.getValue(),
+          vizId,
+          afterLine
+        );
+        if (vizLine !== null) {
+          const maxCol = modelForMount.getLineMaxColumn?.(vizLine) ?? 1;
+          vizDecoration = editor.createDecorationsCollection([
+            {
+              range: {
+                startLineNumber: vizLine,
+                startColumn: 1,
+                endLineNumber: vizLine,
+                endColumn: maxCol
+              },
+              options: { stickiness: 1 }
+            }
+          ]);
+        }
+      }
       const entry = {
         zoneId,
         zoneDesc,
@@ -7919,7 +7948,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
         vizId,
         presetId: null,
         native,
-        crop
+        crop,
+        vizDecoration
       };
       zoneEntries.push(entry);
       let refineAttempts = 0;
@@ -8001,15 +8031,26 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   const reAnchorZones = () => {
     const model = editor.getModel?.();
     if (!model) return;
-    const afterLines = scanStrudelBlockAfterLines(model.getValue());
-    if (afterLines.length !== expectedBlockCount) return;
+    const lines = model.getValue().split("\n");
     const changed = [];
     for (const entry of zoneEntries) {
-      const m = entry.trackKey.match(/^\$(\d+)$/);
-      if (!m) continue;
-      const idx = parseInt(m[1], 10);
-      if (idx >= afterLines.length) continue;
-      const newAfterLine = afterLines[idx];
+      if (!entry.vizDecoration) continue;
+      const ranges = entry.vizDecoration.getRanges();
+      if (ranges.length === 0) continue;
+      const vizLineIdx = ranges[0].startLineNumber - 1;
+      if (vizLineIdx < 0 || vizLineIdx >= lines.length) continue;
+      let blockStart = vizLineIdx;
+      while (blockStart >= 0 && !lines[blockStart].trim().startsWith("$:")) {
+        blockStart--;
+      }
+      if (blockStart < 0) continue;
+      let blockEnd = blockStart;
+      for (let j = blockStart + 1; j < lines.length; j++) {
+        const next = lines[j].trim();
+        if (next.startsWith("$:") || next.startsWith("setcps")) break;
+        if (next !== "" && !next.startsWith("//")) blockEnd = j;
+      }
+      const newAfterLine = blockEnd + 1;
       if (newAfterLine !== entry.afterLine) {
         entry.afterLine = newAfterLine;
         entry.zoneDesc.afterLineNumber = newAfterLine;
@@ -8100,6 +8141,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       editor.changeViewZones((accessor) => {
         zoneEntries.forEach((e) => accessor.removeZone(e.zoneId));
       });
+      zoneEntries.forEach((e) => e.vizDecoration?.clear());
     },
     pause() {
       renderers.forEach((r) => r.pause());

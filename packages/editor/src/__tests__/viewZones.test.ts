@@ -40,11 +40,22 @@ const mockVizDescriptors = [
   { id: 'scope', label: 'Scope', requires: ['audio'] as (keyof EngineComponents)[], factory: mockScopeFactory },
 ]
 
+interface MockDecoration {
+  ranges: Array<{
+    startLineNumber: number
+    startColumn: number
+    endLineNumber: number
+    endColumn: number
+  }>
+  cleared: boolean
+}
+
 function makeEditor(initialCode = '') {
   const zoneIds: string[] = []
   let idCounter = 0
   const addedZones: Array<{ afterLineNumber: number; heightInPx: number }> = []
   const removedIds: string[] = []
+  const decorations: MockDecoration[] = []
 
   const accessor = {
     addZone: vi.fn((zone: { afterLineNumber: number; heightInPx: number; domNode: HTMLElement }) => {
@@ -69,7 +80,10 @@ function makeEditor(initialCode = '') {
   const editor = {
     changeViewZones,
     getLayoutInfo: vi.fn(() => ({ contentWidth: 800 })),
-    getModel: () => ({ getValue: () => code }),
+    getModel: () => ({
+      getValue: () => code,
+      getLineMaxColumn: () => 80,
+    }),
     onDidChangeModelContent: vi.fn((cb: () => void) => {
       contentChangeListeners.push(cb)
       return { dispose: () => {
@@ -77,14 +91,35 @@ function makeEditor(initialCode = '') {
         if (i >= 0) contentChangeListeners.splice(i, 1)
       } }
     }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    createDecorationsCollection: vi.fn((items: Array<{ range: any }>) => {
+      const dec: MockDecoration = {
+        ranges: items.map((i) => ({ ...i.range })),
+        cleared: false,
+      }
+      decorations.push(dec)
+      return {
+        getRanges: () => (dec.cleared ? [] : dec.ranges),
+        clear: () => { dec.cleared = true },
+      }
+    }),
   }
 
-  const setCode = (newCode: string) => {
+  const setCode = (newCode: string, decorationLineShift = 0) => {
     code = newCode
+    if (decorationLineShift !== 0) {
+      for (const dec of decorations) {
+        if (dec.cleared) continue
+        for (const r of dec.ranges) {
+          r.startLineNumber += decorationLineShift
+          r.endLineNumber += decorationLineShift
+        }
+      }
+    }
     for (const cb of contentChangeListeners) cb()
   }
 
-  return { editor, accessor, addedZones, removedIds, changeViewZones, setCode }
+  return { editor, accessor, addedZones, removedIds, changeViewZones, setCode, decorations }
 }
 
 function makeComponents(
@@ -314,71 +349,10 @@ describe('addInlineViewZones', () => {
   })
 
   // Regression for #25 — zone re-anchors as the user edits between evals.
+  // Decoration-based anchor: Monaco tracks the .viz() text position, so the
+  // mock simulates the decoration shifting down by (lineShift) when the edit
+  // adds lines before the .viz() call.
   it('re-anchors zone to new block-end line when code grows without re-eval', () => {
-    const { editor, addedZones, removedIds, setCode } = makeEditor(
-      '$: s("bd*4").viz("pianoroll")\n' // 1 line — zone after line 1
-    )
-    const components = makeComponents(
-      new Map([['$0', { vizId: 'pianoroll', afterLine: 1 }]])
-    )
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, components, mockVizDescriptors as any)
-    expect(addedZones).toHaveLength(1)
-    expect(addedZones[0].afterLineNumber).toBe(1)
-
-    // User types: same block, now 5 lines. Block-end shifts from 1 to 5.
-    setCode(
-      '$: stack(\n' +
-      '  s("hh*8").gain(0.3),\n' +
-      '  s("bd [~ bd] ~ bd").gain(0.5),\n' +
-      '  s("~ sd ~ [sd cp]").gain(0.4)\n' +
-      ').viz("pianoroll")\n'
-    )
-
-    // Zone removed + re-added with new afterLineNumber; same domNode preserved
-    // by the entry (we only check the wire-level move here).
-    expect(removedIds).toContain('zone-1')
-    expect(addedZones).toHaveLength(2)
-    expect(addedZones[1].afterLineNumber).toBe(5)
-  })
-
-  // Regression for #27 — trailing `//` comments must not drag the anchor.
-  it('re-anchors zone immediately after .viz() even with trailing // comments', () => {
-    const initial =
-      '$: stack(\n' +
-      '  note("c4 e4").s("saw")\n' +
-      ').viz("p5test")\n'
-    const { editor, addedZones, setCode } = makeEditor(initial)
-    const components = makeComponents(
-      new Map([['$0', { vizId: 'pianoroll', afterLine: 3 }]])
-    )
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    addInlineViewZones(editor as any, components, mockVizDescriptors as any)
-    expect(addedZones[0].afterLineNumber).toBe(3)
-
-    // User adds a blank line and a multi-line // comment block after the .viz.
-    // Expected: zone stays anchored at line 3 — trailing comments don't move it.
-    setCode(
-      initial +
-      '\n' +
-      '// $: stack(\n' +
-      '//   s("hh*2").gain(0.3)\n' +
-      '// )\n'
-    )
-
-    // No re-anchor fired — afterLine was already correct. Verify we did NOT
-    // produce a second zone at a later line (that would indicate the scanner
-    // walked into the comments).
-    const latestAfterLine = addedZones[addedZones.length - 1].afterLineNumber
-    expect(latestAfterLine).toBe(3)
-  })
-
-  // Regression for #28 — inserting a new $: above a viz'd block must not
-  // drag the existing zone to the new (empty) block via the positional
-  // trackKey $0 → afterLines[0] mapping.
-  it('does not re-anchor when a new $: block is inserted above existing ones', () => {
     const initial = '$: s("bd*4").viz("pianoroll")\n'
     const { editor, addedZones, removedIds, setCode } = makeEditor(initial)
     const components = makeComponents(
@@ -390,22 +364,118 @@ describe('addInlineViewZones', () => {
     expect(addedZones).toHaveLength(1)
     expect(addedZones[0].afterLineNumber).toBe(1)
 
-    // User types a new $: at the top — block count goes from 1 to 2.
-    // The existing zone's trackKey $0 still refers to the ORIGINAL viz'd
-    // block, but positionally that block is now at index 1. Naive re-anchor
-    // would move the zone to the new empty block at index 0 (line 1).
-    // With the guard, we should defer entirely.
-    setCode('$:\n' + initial)
+    // User expands the one-liner into a 5-line block — .viz() moves to line 5.
+    setCode(
+      '$: stack(\n' +
+      '  s("hh*8").gain(0.3),\n' +
+      '  s("bd [~ bd] ~ bd").gain(0.5),\n' +
+      '  s("~ sd ~ [sd cp]").gain(0.4)\n' +
+      ').viz("pianoroll")\n',
+      4, // decoration shifts from line 1 → line 5
+    )
 
-    // No additional addZone calls, no removeZone calls.
-    expect(removedIds).toHaveLength(0)
-    expect(addedZones).toHaveLength(1)
+    expect(removedIds).toContain('zone-1')
+    expect(addedZones).toHaveLength(2)
+    expect(addedZones[1].afterLineNumber).toBe(5)
   })
 
-  it('does not re-anchor when block count changes (defers to next eval)', () => {
-    const { editor, addedZones, removedIds, setCode } = makeEditor(
-      '$: s("bd*4").viz("pianoroll")\n'
+  // Regression for #27 — trailing `//` comments must not drag the anchor.
+  it('re-anchors zone immediately after .viz() even with trailing // comments', () => {
+    const initial =
+      '$: stack(\n' +
+      '  note("c4 e4").s("saw")\n' +
+      ').viz("pianoroll")\n'
+    const { editor, addedZones, setCode } = makeEditor(initial)
+    const components = makeComponents(
+      new Map([['$0', { vizId: 'pianoroll', afterLine: 3 }]])
     )
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    addInlineViewZones(editor as any, components, mockVizDescriptors as any)
+    expect(addedZones[0].afterLineNumber).toBe(3)
+
+    // User appends trailing // comments. The .viz() text doesn't move, so
+    // the decoration stays at line 3. Block-end scan still stops at line 3
+    // because // lines don't advance lastLineIdx (#27).
+    setCode(
+      initial +
+      '\n' +
+      '// $: stack(\n' +
+      '//   s("hh*2").gain(0.3)\n' +
+      '// )\n'
+    )
+
+    const latestAfterLine = addedZones[addedZones.length - 1].afterLineNumber
+    expect(latestAfterLine).toBe(3)
+  })
+
+  // Regression for #28 — inserting a new $: above a viz'd block must not
+  // drag the zone to the new (empty) block.
+  // Decoration-based: when the user inserts a line above the viz, Monaco
+  // shifts the decoration down by 1. Walk-back finds the ORIGINAL block,
+  // not the new one.
+  it('zone stays anchored to its block when a new $: is inserted above', () => {
+    const initial = '$: s("bd*4").viz("pianoroll")\n'
+    const { editor, addedZones, removedIds, setCode } = makeEditor(initial)
+    const components = makeComponents(
+      new Map([['$0', { vizId: 'pianoroll', afterLine: 1 }]])
+    )
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    addInlineViewZones(editor as any, components, mockVizDescriptors as any)
+    expect(addedZones[0].afterLineNumber).toBe(1)
+
+    // User types a new $: above. Decoration shifts line 1 → line 2.
+    setCode('$:\n' + initial, 1)
+
+    // Re-anchor finds the $: at line 2 (the original block), block end at
+    // line 2. New afterLine = 2. The zone moves DOWN by 1 (because the
+    // whole block shifted), but it is still anchored to its own block —
+    // NOT the new empty $: at line 1.
+    expect(addedZones).toHaveLength(2)
+    expect(addedZones[addedZones.length - 1].afterLineNumber).toBe(2)
+    expect(removedIds).toContain('zone-1')
+  })
+
+  // Regression for #29 — zone anchored to its .viz() source must survive
+  // unrelated block insertions further away in the file.
+  it('zone stays on its .viz() line when a new $: block is inserted between existing ones', () => {
+    const initial =
+      '$: s("hh*8").gain(0.3)\n' +
+      '\n' +
+      '$: s("bd*4").viz("pianoroll")\n'
+    const { editor, addedZones, removedIds, setCode } = makeEditor(initial)
+    const components = makeComponents(
+      new Map([['$1', { vizId: 'pianoroll', afterLine: 3 }]])
+    )
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    addInlineViewZones(editor as any, components, mockVizDescriptors as any)
+    expect(addedZones[0].afterLineNumber).toBe(3)
+
+    // User inserts a new $:(  ) block between the two originals — adds 3
+    // lines before the viz'd block. Decoration shifts from line 3 → line 6.
+    setCode(
+      '$: s("hh*8").gain(0.3)\n' +
+      '\n' +
+      '$:(\n' +
+      ')\n' +
+      '\n' +
+      '$: s("bd*4").viz("pianoroll")\n',
+      3,
+    )
+
+    // Decoration at line 6 points at the viz'd block. Re-anchor finds
+    // block start at line 6, block end at line 6. New afterLine = 6 — zone
+    // sits DIRECTLY under its own .viz("p5test") block, not inside the new
+    // $:(  ) block further up.
+    expect(removedIds).toContain('zone-1')
+    expect(addedZones[addedZones.length - 1].afterLineNumber).toBe(6)
+  })
+
+  it('does not re-anchor when decoration has been deleted (viz call text removed)', () => {
+    const initial = '$: s("bd*4").viz("pianoroll")\n'
+    const { editor, addedZones, removedIds, setCode, decorations } = makeEditor(initial)
     const components = makeComponents(
       new Map([['$0', { vizId: 'pianoroll', afterLine: 1 }]])
     )
@@ -414,11 +484,13 @@ describe('addInlineViewZones', () => {
     addInlineViewZones(editor as any, components, mockVizDescriptors as any)
     expect(addedZones).toHaveLength(1)
 
-    // User deletes the only $: block — block count drops to zero.
-    // The existing zone's trackKey $0 no longer has a matching block.
-    // Don't touch it; the next eval will republish and rebuild.
+    // User deletes the .viz(...) text entirely. Simulate decoration
+    // collapse by clearing it.
+    decorations[0].cleared = true
     setCode('// nothing\n')
 
+    // No re-anchor fires — decoration has no ranges, zone stays static
+    // pending next evaluate.
     expect(removedIds).toHaveLength(0)
     expect(addedZones).toHaveLength(1)
   })
