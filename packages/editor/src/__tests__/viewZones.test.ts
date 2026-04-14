@@ -375,6 +375,33 @@ describe('addInlineViewZones', () => {
     expect(latestAfterLine).toBe(3)
   })
 
+  // Regression for #28 — inserting a new $: above a viz'd block must not
+  // drag the existing zone to the new (empty) block via the positional
+  // trackKey $0 → afterLines[0] mapping.
+  it('does not re-anchor when a new $: block is inserted above existing ones', () => {
+    const initial = '$: s("bd*4").viz("pianoroll")\n'
+    const { editor, addedZones, removedIds, setCode } = makeEditor(initial)
+    const components = makeComponents(
+      new Map([['$0', { vizId: 'pianoroll', afterLine: 1 }]])
+    )
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    addInlineViewZones(editor as any, components, mockVizDescriptors as any)
+    expect(addedZones).toHaveLength(1)
+    expect(addedZones[0].afterLineNumber).toBe(1)
+
+    // User types a new $: at the top — block count goes from 1 to 2.
+    // The existing zone's trackKey $0 still refers to the ORIGINAL viz'd
+    // block, but positionally that block is now at index 1. Naive re-anchor
+    // would move the zone to the new empty block at index 0 (line 1).
+    // With the guard, we should defer entirely.
+    setCode('$:\n' + initial)
+
+    // No additional addZone calls, no removeZone calls.
+    expect(removedIds).toHaveLength(0)
+    expect(addedZones).toHaveLength(1)
+  })
+
   it('does not re-anchor when block count changes (defers to next eval)', () => {
     const { editor, addedZones, removedIds, setCode } = makeEditor(
       '$: s("bd*4").viz("pianoroll")\n'

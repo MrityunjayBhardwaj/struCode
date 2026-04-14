@@ -234,6 +234,15 @@ export function addInlineViewZones(
   const bufferedSchedulers: BufferedScheduler[] = []
   const zoneEntries: ZoneEntry[] = []
 
+  // Record the $: block count at mount time. Live re-anchor (below) only
+  // runs while this count stays the same — any add/remove of a $: block
+  // invalidates the positional trackKey → block mapping, so we defer to
+  // the next evaluate (which cleans up and re-mounts with fresh keys).
+  const initialModel = editor.getModel?.()
+  const expectedBlockCount = initialModel
+    ? scanStrudelBlockAfterLines(initialModel.getValue()).length
+    : 0
+
   const audioCtx = components.audio?.audioCtx
 
   editor.changeViewZones((accessor) => {
@@ -435,6 +444,12 @@ export function addInlineViewZones(
     const model = editor.getModel?.()
     if (!model) return
     const afterLines = scanStrudelBlockAfterLines(model.getValue())
+
+    // Defer when the $: block count changed — the engine re-keys trackKey
+    // on the next evaluate, and until then any positional mapping is
+    // unsafe (a new $: at the top would make zone $0 jump to the new,
+    // unrelated block).
+    if (afterLines.length !== expectedBlockCount) return
 
     const changed: ZoneEntry[] = []
     for (const entry of zoneEntries) {

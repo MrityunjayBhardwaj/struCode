@@ -7828,6 +7828,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   const renderers = [];
   const bufferedSchedulers = [];
   const zoneEntries = [];
+  const initialModel = editor.getModel?.();
+  const expectedBlockCount = initialModel ? scanStrudelBlockAfterLines(initialModel.getValue()).length : 0;
   const audioCtx = components.audio?.audioCtx;
   editor.changeViewZones((accessor) => {
     for (const [trackKey, { vizId, afterLine }] of vizRequests) {
@@ -7973,6 +7975,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
     const model = editor.getModel?.();
     if (!model) return;
     const afterLines = scanStrudelBlockAfterLines(model.getValue());
+    if (afterLines.length !== expectedBlockCount) return;
     const changed = [];
     for (const entry of zoneEntries) {
       const m = entry.trackKey.match(/^\$(\d+)$/);
