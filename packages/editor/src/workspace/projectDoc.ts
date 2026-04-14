@@ -1,0 +1,166 @@
+/**
+ * projectDoc — PM Phase 1 (local persistence).
+ *
+ * Manages the active Yjs document that backs the WorkspaceFile store.
+ * Each project is a single Y.Doc persisted to IndexedDB via y-indexeddb.
+ *
+ * Two init paths:
+ * - `initProjectDoc(id)` — async, wires y-indexeddb, awaits IDB sync.
+ *   Used by the real app. Files loaded from IDB are available after resolve.
+ * - `initProjectDocSync()` — sync, in-memory only, no IDB.
+ *   Used by tests and as a lazy fallback if no explicit init was called.
+ *
+ * The store (WorkspaceFile.ts) calls `ensureDoc()` which lazy-inits
+ * in-memory if no explicit init happened — making tests work without
+ * any async ceremony while the real app gets persistence.
+ */
+
+import * as Y from 'yjs'
+
+// Dynamic import for y-indexeddb so tests in jsdom (no IDB) don't crash
+// at import time. The import is only executed inside initProjectDoc().
+type IndexeddbPersistenceType = import('y-indexeddb').IndexeddbPersistence
+
+let activeDoc: Y.Doc | null = null
+let activeProvider: IndexeddbPersistenceType | null = null
+let activeProjectId: string | null = null
+let docReady = false
+
+/**
+ * Async init with IndexedDB persistence. Resolves after IDB sync
+ * completes — all persisted files are in the Y.Doc when this returns.
+ *
+ * Must be called BEFORE any createWorkspaceFile / seedWorkspaceFile
+ * calls to avoid the seed-vs-persisted race condition.
+ */
+export async function initProjectDoc(projectId: string): Promise<void> {
+  // Clean up previous doc if switching projects
+  if (activeProvider) {
+    activeProvider.destroy()
+    activeProvider = null
+  }
+  if (activeDoc) {
+    activeDoc.destroy()
+  }
+
+  activeDoc = new Y.Doc()
+  docReady = false
+
+  // Dynamic import — avoids jsdom crash in tests
+  const { IndexeddbPersistence } = await import('y-indexeddb')
+  activeProvider = new IndexeddbPersistence(`stave-${projectId}`, activeDoc)
+
+  await activeProvider.whenSynced
+  activeProjectId = projectId
+  docReady = true
+}
+
+/**
+ * Sync init without persistence. Used by tests and as a lazy fallback.
+ * The Y.Doc lives only in memory — lost on refresh.
+ */
+export function initProjectDocSync(): void {
+  if (activeProvider) {
+    activeProvider.destroy()
+    activeProvider = null
+  }
+  if (activeDoc) {
+    activeDoc.destroy()
+  }
+
+  activeDoc = new Y.Doc()
+  docReady = true
+}
+
+/**
+ * Ensure a Y.Doc exists. If none was explicitly initialized, creates
+ * an in-memory doc (sync path). This lets tests call store functions
+ * without any init ceremony.
+ */
+export function ensureDoc(): Y.Doc {
+  if (!activeDoc) {
+    initProjectDocSync()
+  }
+  return activeDoc!
+}
+
+/** Returns the active Y.Doc. Throws if none initialized. */
+export function getActiveDoc(): Y.Doc {
+  return ensureDoc()
+}
+
+/** Returns the files Y.Map from the active doc. */
+export function getFilesMap(): Y.Map<Y.Map<unknown>> {
+  return ensureDoc().getMap('files')
+}
+
+/** Whether the doc has finished loading from IDB (always true for sync init). */
+export function isDocReady(): boolean {
+  return docReady
+}
+
+/** Returns the active project id, or null if none initialized. */
+export function getActiveProjectId(): string | null {
+  return activeProjectId
+}
+
+/**
+ * Switch to a different project. Destroys the current doc + provider,
+ * creates a new Y.Doc for the target project, and awaits IDB sync.
+ *
+ * Callers MUST also call resetFileStore() (from WorkspaceFile.ts) to
+ * clear cached snapshots and re-wire observers before any store reads.
+ * initProjectDoc already handles the doc-level cleanup; this function
+ * is a convenience alias that also updates the active project id.
+ */
+export async function switchProject(projectId: string): Promise<void> {
+  await initProjectDoc(projectId)
+}
+
+/**
+ * Subscribe to ANY update on the active Y.Doc (file content typing,
+ * structural file-list changes, folder-order changes, etc). Used by
+ * the app's auto-snapshot debouncer. Returns an unsubscribe function.
+ *
+ * Note: the subscription is bound to whatever Y.Doc is active at
+ * registration time. Callers should re-register when the project
+ * switches (the old doc gets destroyed).
+ */
+export function subscribeToDocUpdate(
+  cb: () => void,
+  options?: { localOnly?: boolean },
+): () => void {
+  const doc = ensureDoc()
+  const localOnly = options?.localOnly ?? false
+  const handler = (
+    _update: Uint8Array,
+    _origin: unknown,
+    _doc: Y.Doc,
+    tr: Y.Transaction,
+  ) => {
+    // When localOnly is set, skip transactions that aren't from a local
+    // user edit — y-indexeddb replays on project load have tr.local=false.
+    if (localOnly && !tr.local) return
+    cb()
+  }
+  doc.on('update', handler)
+  return () => {
+    doc.off('update', handler)
+  }
+}
+
+/**
+ * Destroy the active doc and provider. Used by tests and project switching.
+ */
+export function destroyProjectDoc(): void {
+  if (activeProvider) {
+    activeProvider.destroy()
+    activeProvider = null
+  }
+  if (activeDoc) {
+    activeDoc.destroy()
+    activeDoc = null
+  }
+  activeProjectId = null
+  docReady = false
+}

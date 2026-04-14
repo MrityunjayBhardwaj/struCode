@@ -38,6 +38,14 @@ export type { HydraPatternFn } from './visualizers/renderers/HydraVizRenderer'
 export { hydraPianoroll, hydraScope, hydraKaleidoscope } from './visualizers/renderers/hydraPresets'
 export { DEFAULT_VIZ_DESCRIPTORS } from './visualizers/defaultDescriptors'
 export { resolveDescriptor } from './visualizers/resolveDescriptor'
+export {
+  registerNamedViz,
+  unregisterNamedViz,
+  getNamedViz,
+  listNamedVizNames,
+  listNamedVizEntries,
+  onNamedVizChanged,
+} from './visualizers/namedVizRegistry'
 export type { VizConfig } from './visualizers/vizConfig'
 export { DEFAULT_VIZ_CONFIG, createVizConfig, getVizConfig, setVizConfig } from './visualizers/vizConfig'
 
@@ -49,7 +57,7 @@ export { VizEditor } from './visualizers/VizEditor'
 export type { VizEditorProps } from './visualizers/VizEditor'
 
 // Visualizers — preset system
-export type { VizPreset } from './visualizers/vizPreset'
+export type { VizPreset, CropRegion } from './visualizers/vizPreset'
 export {
   VizPresetStore,
   BUNDLED_PREFIX,
@@ -59,11 +67,12 @@ export {
   generateUniquePresetId,
 } from './visualizers/vizPreset'
 export { compilePreset } from './visualizers/vizCompiler'
+export { mountVizRenderer } from './visualizers/mountVizRenderer'
 
 // Visualizers — editor internals (advanced use)
 export { SplitPane } from './visualizers/editor/SplitPane'
-export { EditorGroup } from './visualizers/editor/EditorGroup'
-export type { VizTab, PreviewMode, EditorGroupState } from './visualizers/editor/vizEditorTypes'
+// EditorGroup deleted in Phase 10.2 Task 09 — replaced by WorkspaceShell.
+// VizTab, PreviewMode, EditorGroupState removed — replaced by WorkspaceTab / WorkspaceGroupState.
 
 // Visualizers — individual sketches (for advanced use: manual P5VizRenderer wrapping)
 export { PianorollSketch } from './visualizers/sketches/PianorollSketch'
@@ -71,3 +80,135 @@ export { ScopeSketch } from './visualizers/sketches/ScopeSketch'
 export { SpectrumSketch } from './visualizers/sketches/SpectrumSketch'
 export { SpiralSketch } from './visualizers/sketches/SpiralSketch'
 export { PitchwheelSketch } from './visualizers/sketches/PitchwheelSketch'
+
+// ---------------------------------------------------------------------------
+// Phase 10.2 — Workspace primitives (Tasks 01–08)
+// ---------------------------------------------------------------------------
+
+// WorkspaceShell + views
+export { WorkspaceShell } from './workspace/WorkspaceShell'
+export type { WorkspaceShellHandle } from './workspace/WorkspaceShell'
+export { EditorView } from './workspace/EditorView'
+export { PreviewView } from './workspace/PreviewView'
+
+// WorkspaceFile store + hook
+export type { WorkspaceFile, WorkspaceLanguage } from './workspace/types'
+export {
+  createWorkspaceFile,
+  seedWorkspaceFile,
+  getFile,
+  setContent,
+  subscribe as subscribeToWorkspaceFile,
+  resetFileStore,
+  listWorkspaceFiles,
+  subscribeToFileList,
+  deleteWorkspaceFile,
+  renameWorkspaceFile,
+  getFolderOrder,
+  setFolderOrder,
+  subscribeToFolderOrder,
+  getSubfolderOrder,
+  setSubfolderOrder,
+  getChildOrder,
+  setChildOrder,
+} from './workspace/WorkspaceFile'
+export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady, subscribeToDocUpdate } from './workspace/projectDoc'
+export {
+  undo,
+  redo,
+  canUndo,
+  canRedo,
+  subscribeToUndoState,
+  resetUndoManager,
+  withStructBatch,
+} from './workspace/undoManager'
+export {
+  revealLineInFile,
+  getEditorFontSize,
+  getEditorMinimap,
+  setEditorFontSize,
+  bumpEditorFontSize,
+  toggleEditorMinimap,
+  getEditorTheme,
+  getResolvedTheme,
+  setEditorTheme,
+  cycleEditorTheme,
+  onThemeChange,
+  applyPersistedTheme,
+} from './workspace/editorRegistry'
+export type { EditorTheme, ResolvedTheme } from './workspace/editorRegistry'
+export {
+  saveSnapshot,
+  listSnapshots,
+  deleteSnapshot,
+  restoreSnapshot,
+  AUTO_SNAPSHOT_PREFIX,
+} from './workspace/snapshotStore'
+export type { SnapshotMeta } from './workspace/snapshotStore'
+export {
+  listProjects,
+  getProject,
+  getLastOpenedProject,
+  createProject,
+  touchProject,
+  renameProject,
+  deleteProject,
+  duplicateProject,
+  type ProjectMeta,
+} from './workspace/projectRegistry'
+
+// Sample sound (test audio source for viz development)
+export {
+  startSampleSound,
+  stopSampleSound,
+  isSampleSoundPlaying,
+  SAMPLE_SOUND_SOURCE_ID,
+  SAMPLE_SOUND_LABEL,
+} from './workspace/sampleSound'
+export { useWorkspaceFile } from './workspace/useWorkspaceFile'
+export type { UseWorkspaceFileResult } from './workspace/useWorkspaceFile'
+
+// Audio bus
+export { workspaceAudioBus } from './workspace/WorkspaceAudioBus'
+export type { AudioSourceRef, AudioPayload, WorkspaceAudioBus } from './workspace/types'
+
+// Runtime provider registry + built-ins
+export { LiveCodingRuntime } from './workspace/runtime/LiveCodingRuntime'
+export type {
+  LiveCodingRuntime as LiveCodingRuntimeInterface,
+  LiveCodingRuntimeProvider,
+  ChromeContext,
+} from './workspace/types'
+export {
+  liveCodingRuntimeRegistry,
+  registerRuntimeProvider,
+  getRuntimeProviderForExtension,
+  getRuntimeProviderForLanguage,
+  STRUDEL_RUNTIME,
+  SONICPI_RUNTIME,
+} from './workspace/runtime'
+
+// Preview provider registry + built-ins
+export type { PreviewProvider, PreviewContext } from './workspace/PreviewProvider'
+export {
+  previewProviderRegistry,
+  registerPreviewProvider,
+  getPreviewProviderForExtension,
+  getPreviewProviderForLanguage,
+  HYDRA_VIZ,
+  P5_VIZ,
+  seedFromPreset,
+  seedFromPresetId,
+  flushToPreset,
+  getPresetIdForFile,
+  registerPresetAsNamedViz,
+  workspaceFileIdForPreset,
+} from './workspace/preview'
+
+// Shell types
+export type {
+  WorkspaceTab,
+  WorkspaceGroupState,
+  WorkspaceShellProps,
+  ChromeForTab,
+} from './workspace/types'

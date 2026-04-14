@@ -1,0 +1,227 @@
+/**
+ * WorkspaceShell + commands integration tests (Phase 10.2 Task 08).
+ *
+ * Covers the shell's command wiring:
+ *   - Shell with a preview-able tab --> Cmd+K V --> new split group with preview tab
+ *   - Shell with a pattern tab (no preview provider) --> Cmd+K V --> silent no-op, console.warn
+ *   - Cmd+K B --> background decoration appears, Cmd+K B again --> disappears
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import React from 'react'
+import { render, act } from '@testing-library/react'
+
+// ---------------------------------------------------------------------------
+// Mock @monaco-editor/react BEFORE importing anything that reaches for it.
+// ---------------------------------------------------------------------------
+
+interface MonacoEditorProps {
+  language?: string
+  value?: string
+  onChange?: (value: string | undefined) => void
+  onMount?: (editor: unknown, monaco: unknown) => void
+  height?: string | number
+  options?: Record<string, unknown>
+}
+
+const stubEditor = { id: 'stub-editor' }
+const stubMonaco = {
+  languages: {
+    register: vi.fn(),
+    setMonarchTokensProvider: vi.fn(),
+    setLanguageConfiguration: vi.fn(),
+    getLanguages: vi.fn(() => [] as Array<{ id: string }>),
+  },
+}
+
+vi.mock('@monaco-editor/react', () => ({
+  default: (props: MonacoEditorProps) => {
+    React.useEffect(() => {
+      props.onMount?.(stubEditor, stubMonaco)
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+    return (
+      <div
+        data-testid="mock-monaco-editor"
+        data-language={props.language ?? ''}
+        data-value={props.value ?? ''}
+      />
+    )
+  },
+}))
+
+vi.mock('../../visualizers/defaultDescriptors', () => ({
+  DEFAULT_VIZ_DESCRIPTORS: [],
+}))
+vi.mock('../../visualizers/viewZones', () => ({
+  addInlineViewZones: vi.fn(() => ({ cleanup: vi.fn(), pause: vi.fn(), resume: vi.fn() })),
+}))
+vi.mock('../../monaco/useHighlighting', () => ({
+  useHighlighting: vi.fn(() => ({ clearAll: vi.fn() })),
+}))
+vi.mock('../../monaco/diagnostics', () => ({
+  setEvalError: vi.fn(),
+  clearEvalErrors: vi.fn(),
+}))
+
+import { WorkspaceShell } from '../WorkspaceShell'
+import {
+  createWorkspaceFile,
+  __resetWorkspaceFilesForTests,
+} from '../WorkspaceFile'
+import { __resetWorkspaceLanguagesForTests } from '../languages'
+import { __resetWorkspaceAudioBusForTests } from '../WorkspaceAudioBus'
+import { resetCommandRegistryForTests } from '../commands/CommandRegistry'
+import type {
+  PreviewProvider,
+  PreviewContext,
+} from '../PreviewProvider'
+import type { WorkspaceTab } from '../types'
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+function makePreviewProvider(): PreviewProvider {
+  return {
+    extensions: ['hydra'],
+    label: 'Test Preview',
+    keepRunningWhenHidden: false,
+    reload: 'instant',
+    render(ctx: PreviewContext) {
+      return (
+        <div
+          data-testid="stub-preview-output"
+          data-file-content={ctx.file.content}
+        />
+      )
+    },
+  }
+}
+
+function seedFiles() {
+  createWorkspaceFile('f-strudel', 'pattern.strudel', '// strudel code', 'strudel')
+  createWorkspaceFile('f-hydra', 'pianoroll.hydra', '// hydra code', 'hydra')
+}
+
+function editorTab(id: string, fileId: string): WorkspaceTab {
+  return { kind: 'editor', id, fileId }
+}
+
+function fireKeyDown(
+  key: string,
+  modifiers?: { metaKey?: boolean; ctrlKey?: boolean },
+): void {
+  const event = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    cancelable: true,
+    metaKey: modifiers?.metaKey ?? false,
+    ctrlKey: modifiers?.ctrlKey ?? false,
+  })
+  window.dispatchEvent(event)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('WorkspaceShell commands integration', () => {
+  beforeEach(() => {
+    __resetWorkspaceFilesForTests()
+    __resetWorkspaceLanguagesForTests()
+    __resetWorkspaceAudioBusForTests()
+    resetCommandRegistryForTests()
+    seedFiles()
+  })
+
+  it('Cmd+K V on a hydra editor tab creates a new split group with preview tab', () => {
+    const provider = makePreviewProvider()
+    const tabs = [editorTab('t-hydra', 'f-hydra')]
+    const { container } = render(
+      <WorkspaceShell
+        initialTabs={tabs}
+        previewProviderFor={(tab) =>
+          tab.fileId === 'f-hydra' ? provider : undefined
+        }
+      />,
+    )
+
+    // One group initially.
+    expect(container.querySelectorAll('[data-workspace-group]').length).toBe(1)
+
+    // Fire Cmd+K V
+    act(() => {
+      fireKeyDown('k', { metaKey: true })
+    })
+    act(() => {
+      fireKeyDown('v')
+    })
+
+    // Now there should be two groups (original + split).
+    const groups = container.querySelectorAll('[data-workspace-group]')
+    expect(groups.length).toBe(2)
+
+    // The second group should contain a preview tab.
+    const previewTabs = container.querySelectorAll('[data-tab-kind="preview"]')
+    expect(previewTabs.length).toBe(1)
+  })
+
+  it('Cmd+K V on a strudel editor tab is a silent no-op with console.warn', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tabs = [editorTab('t-strudel', 'f-strudel')]
+    const { container } = render(
+      <WorkspaceShell initialTabs={tabs} />,
+    )
+
+    act(() => {
+      fireKeyDown('k', { metaKey: true })
+    })
+    act(() => {
+      fireKeyDown('v')
+    })
+
+    // Still one group -- no split happened.
+    expect(container.querySelectorAll('[data-workspace-group]').length).toBe(1)
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('not available for .strudel files'),
+    )
+    warnSpy.mockRestore()
+  })
+
+  it('Cmd+K B toggles background decoration on then off', () => {
+    const provider = makePreviewProvider()
+    const tabs = [editorTab('t-hydra', 'f-hydra')]
+    const { container } = render(
+      <WorkspaceShell
+        initialTabs={tabs}
+        previewProviderFor={(tab) =>
+          tab.fileId === 'f-hydra' ? provider : undefined
+        }
+      />,
+    )
+
+    // Toggle on
+    act(() => {
+      fireKeyDown('k', { metaKey: true })
+    })
+    act(() => {
+      fireKeyDown('b')
+    })
+
+    // Background decoration should be rendered.
+    let bgLayer = container.querySelector('[data-workspace-background]')
+    expect(bgLayer).not.toBeNull()
+
+    // Toggle off
+    act(() => {
+      fireKeyDown('k', { metaKey: true })
+    })
+    act(() => {
+      fireKeyDown('b')
+    })
+
+    bgLayer = container.querySelector('[data-workspace-background]')
+    expect(bgLayer).toBeNull()
+  })
+})
