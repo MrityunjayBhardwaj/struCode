@@ -19,11 +19,33 @@
 
 import React, { useCallback, useEffect, useState } from 'react'
 import type { PreviewEditorChromeContext } from '../PreviewProvider'
+import type { AudioSourceRef } from '../types'
+import { workspaceAudioBus } from '../WorkspaceAudioBus'
+import {
+  BUILTIN_EXAMPLE_SOURCES,
+  BUILTIN_SOURCE_IDS,
+  findBuiltinExampleSource,
+} from '../builtinExampleSources'
 import {
   getVizLive,
   onVizLiveChange,
   toggleVizLive,
 } from './vizLiveToggle'
+
+function refToString(ref: AudioSourceRef): string {
+  if (ref.kind === 'default') return 'default'
+  if (ref.kind === 'none') return 'none'
+  return `file:${ref.fileId}`
+}
+
+function stringToRef(value: string): AudioSourceRef {
+  if (value === 'default') return { kind: 'default' }
+  if (value === 'none') return { kind: 'none' }
+  if (value.startsWith('file:')) {
+    return { kind: 'file', fileId: value.slice('file:'.length) }
+  }
+  return { kind: 'default' }
+}
 
 /**
  * Primary action button style — matches the Play button on the pattern
@@ -50,6 +72,7 @@ export function VizEditorChrome({
   previewOpen,
   previewPaused,
   onTogglePausePreview,
+  onChangePreviewSource,
 }: PreviewEditorChromeContext): React.ReactElement {
   // Subscribe to the per-file hot-reload toggle so other surfaces
   // (command palette, future settings) stay in sync with the button.
@@ -58,10 +81,49 @@ export function VizEditorChrome({
     setLiveOn(getVizLive(file.id))
     return onVizLiveChange(file.id, setLiveOn)
   }, [file.id])
-  // The source selector chrome was removed, so we always open a preview
-  // with the default ref (follow most recent publisher). Kept as a local
-  // so future bring-back of a source picker stays cheap.
-  const selectedSource = { kind: 'default' as const }
+
+  // Per-tab source pin. Default is "follow most recent" so users who
+  // don't care still see the latest publisher on the bus. Built-in
+  // examples are restored to the dropdown so the viz can be tested
+  // without a pattern file currently playing.
+  const [selectedSource, setSelectedSource] = useState<AudioSourceRef>({
+    kind: 'default',
+  })
+
+  // The bus's source set changes when patterns start/stop. Re-render
+  // the dropdown options when that happens so newly-running patterns
+  // appear without waiting for an unrelated trigger.
+  const [, forceSourcesRerender] = useState(0)
+  useEffect(() => {
+    return workspaceAudioBus.onSourcesChanged(() => {
+      forceSourcesRerender((n) => n + 1)
+    })
+  }, [])
+
+  const handleSourceChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const next = stringToRef(e.target.value)
+      const prevBuiltin =
+        selectedSource.kind === 'file'
+          ? findBuiltinExampleSource(selectedSource.fileId)
+          : undefined
+      const nextBuiltin =
+        next.kind === 'file'
+          ? findBuiltinExampleSource(next.fileId)
+          : undefined
+      setSelectedSource(next)
+      if (previewOpen && onChangePreviewSource) {
+        if (nextBuiltin && !previewPaused) {
+          nextBuiltin.startIfIdle()
+        }
+        if (prevBuiltin && prevBuiltin !== nextBuiltin) {
+          prevBuiltin.stopIfRunning()
+        }
+        onChangePreviewSource(next)
+      }
+    },
+    [previewOpen, previewPaused, onChangePreviewSource, selectedSource],
+  )
 
   // Primary-button click handler. Three states drive the behavior:
   //
@@ -89,20 +151,12 @@ export function VizEditorChrome({
   // to own the audio side effect.
   const handlePrimaryButtonClick = useCallback(() => {
     if (previewOpen && onTogglePausePreview) {
-      // Stop / Play click — flip the renderer pause state. The
-      // shell-side `onTogglePausePreview` handler ALSO dispatches
-      // built-in audio start/stop using the OPEN PREVIEW TAB's
-      // sourceRef as the source of truth — NOT this chrome's
-      // local `selectedSource` state. The chrome can be unmounted
-      // and remounted whenever the layout shape changes (e.g.,
-      // splitting from one group to two), which wipes
-      // `selectedSource` back to default. The shell's preview-
-      // tab sourceRef survives such remounts because it's stored
-      // in the shell's `groups` map, not in component state. See
-      // `WorkspaceShell.handleTogglePausePreview` for the audio
-      // dispatch.
       onTogglePausePreview()
       return
+    }
+    if (selectedSource.kind === 'file') {
+      const builtin = findBuiltinExampleSource(selectedSource.fileId)
+      if (builtin) builtin.startIfIdle()
     }
     onOpenPreview(selectedSource)
   }, [onOpenPreview, onTogglePausePreview, previewOpen, selectedSource])
@@ -161,6 +215,55 @@ export function VizEditorChrome({
       >
         {buttonLabel}
       </button>
+
+      <label
+        htmlFor={`viz-chrome-source-${file.id}`}
+        style={{ color: 'var(--foreground-muted)', fontSize: 10 }}
+      >
+        source:
+      </label>
+      <select
+        id={`viz-chrome-source-${file.id}`}
+        data-testid="viz-chrome-source"
+        value={refToString(selectedSource)}
+        onChange={handleSourceChange}
+        style={{
+          background: 'var(--surface-elevated)',
+          color: 'var(--foreground)',
+          border: '1px solid var(--border)',
+          borderRadius: 3,
+          padding: '2px 6px',
+          fontSize: 10,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+        }}
+      >
+        <option value="default">default (follow most recent)</option>
+        <optgroup label="built-in examples">
+          {BUILTIN_EXAMPLE_SOURCES.map((src) => (
+            <option key={src.sourceId} value={`file:${src.sourceId}`}>
+              {src.label}
+            </option>
+          ))}
+        </optgroup>
+        {(() => {
+          const patternSources = workspaceAudioBus
+            .listSources()
+            .filter((s) => !BUILTIN_SOURCE_IDS.has(s.sourceId))
+          if (patternSources.length === 0) return null
+          return (
+            <optgroup label="playing patterns">
+              {patternSources.map((source) => (
+                <option key={source.sourceId} value={`file:${source.sourceId}`}>
+                  {source.playing ? '\u25CF ' : '\u25CB '}
+                  {source.label}
+                </option>
+              ))}
+            </optgroup>
+          )
+        })()}
+        <option value="none">none (demo mode)</option>
+      </select>
 
       <div style={{ flex: 1 }} />
 
