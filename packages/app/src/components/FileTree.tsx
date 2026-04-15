@@ -250,12 +250,28 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
   // During a drag, track mouse globally (user can drag outside the
   // sidebar). Using window listeners instead of React events so the
   // drag works even if the pointer leaves the handle briefly.
+  //
+  // VS Code-style collapse: if the user drags the edge further left
+  // than half the minimum width, snap the sidebar shut and end the
+  // drag. The raw (unclamped) cursor offset drives this — if we only
+  // looked at the clamped `width`, it would plateau at MIN_WIDTH and
+  // never fire the collapse.
+  const COLLAPSE_THRESHOLD = Math.floor(MIN_WIDTH / 2); // 80px
   useEffect(() => {
     if (!resizing) return;
+    let collapsedThisDrag = false;
     const handleMove = (e: MouseEvent) => {
+      if (collapsedThisDrag) return;
       if (!sidebarRef.current) return;
       const rect = sidebarRef.current.getBoundingClientRect();
-      const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, e.clientX - rect.left));
+      const raw = e.clientX - rect.left;
+      if (raw < COLLAPSE_THRESHOLD) {
+        collapsedThisDrag = true;
+        setResizing(false);
+        onToggleCollapse();
+        return;
+      }
+      const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, raw));
       setWidth(next);
     };
     const handleUp = () => setResizing(false);
@@ -271,6 +287,7 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
       document.body.style.userSelect = prevSelect;
       document.body.style.cursor = "";
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resizing]);
 
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
