@@ -668,33 +668,31 @@ export function StaveApp({ initialProject }: StaveAppProps) {
 
   return (
     <div style={styles.root}>
-      {!zenMode && (
-        <MenuBar
-          projectName={activeProject.name}
-          onOpenEditorSettings={() => setEditorSettingsOpen(true)}
-          onOpenShortcuts={() => setShortcutsOpen(true)}
-          onNewProject={() => setTemplateModalOpen(true)}
-          onOpenProject={() => setSwitcherModalOpen(true)}
-          onRenameProject={handleRenameActiveProject}
-          onExportProject={() => {
-            exportProjectAsZip(activeProject).catch((err) => {
-              console.error("[stave] export failed:", err);
-              showToast("Export failed — see console for details.", "error");
-            });
-          }}
-          onImportProject={triggerImportPicker}
-          onShareProject={handleShareProject}
-          onVersionHistory={openSnapshotPanel}
-          onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleZenMode={() => setZenMode((z) => !z)}
-          zenMode={zenMode}
-          onUndo={() => { undo(); }}
-          onRedo={() => { redo(); }}
-          canUndo={undoState.canUndo}
-          canRedo={undoState.canRedo}
-        />
-      )}
+      <MenuBar
+        projectName={activeProject.name}
+        onOpenEditorSettings={() => setEditorSettingsOpen(true)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+        onNewProject={() => setTemplateModalOpen(true)}
+        onOpenProject={() => setSwitcherModalOpen(true)}
+        onRenameProject={handleRenameActiveProject}
+        onExportProject={() => {
+          exportProjectAsZip(activeProject).catch((err) => {
+            console.error("[stave] export failed:", err);
+            showToast("Export failed — see console for details.", "error");
+          });
+        }}
+        onImportProject={triggerImportPicker}
+        onShareProject={handleShareProject}
+        onVersionHistory={openSnapshotPanel}
+        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleZenMode={() => setZenMode((z) => !z)}
+        zenMode={zenMode}
+        onUndo={() => { undo(); }}
+        onRedo={() => { redo(); }}
+        canUndo={undoState.canUndo}
+        canRedo={undoState.canRedo}
+      />
 
       <div style={styles.main}>
         {!zenMode && (
