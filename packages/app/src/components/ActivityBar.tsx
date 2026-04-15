@@ -10,6 +10,7 @@ interface ActivityBarProps {
 
 export function ActivityBar({ activePanelId, onSelect }: ActivityBarProps) {
   const [tick, setTick] = useState(0);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   useEffect(() => subscribeToPanels(() => setTick((t) => t + 1)), []);
   const panels: Panel[] = React.useMemo(() => listPanels(), [tick]);
 
@@ -17,6 +18,11 @@ export function ActivityBar({ activePanelId, onSelect }: ActivityBarProps) {
     <div style={styles.bar}>
       {panels.map((p) => {
         const isActive = activePanelId === p.id;
+        const isHovered = hoveredId === p.id;
+        // Render the edge bar always, opacity-transitioned. Active shows
+        // full accent; hover previews it at reduced intensity via a CSS
+        // transition on opacity for the slow fade-in feel.
+        const edgeOpacity = isActive ? 1 : isHovered ? 0.45 : 0;
         return (
           <button
             key={p.id}
@@ -24,9 +30,11 @@ export function ActivityBar({ activePanelId, onSelect }: ActivityBarProps) {
             title={p.title}
             aria-label={p.title}
             onClick={() => onSelect(isActive ? null : p.id)}
+            onMouseEnter={() => setHoveredId(p.id)}
+            onMouseLeave={() => setHoveredId((cur) => (cur === p.id ? null : cur))}
           >
             <span style={styles.icon}>{p.icon}</span>
-            {isActive && <span style={styles.activeBar} />}
+            <span style={{ ...styles.activeBar, opacity: edgeOpacity }} />
           </button>
         );
       })}
@@ -78,5 +86,7 @@ const styles: Record<string, React.CSSProperties> = {
     bottom: 4,
     width: 2,
     background: "var(--accent-strong)",
+    transition: "opacity 260ms ease-out",
+    pointerEvents: "none",
   },
 };
