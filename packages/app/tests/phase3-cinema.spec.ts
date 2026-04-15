@@ -77,27 +77,31 @@ test.describe('Code surface blur (#39)', () => {
   }) => {
     await gotoApp(page)
 
-    // Inspect the first code-panel wrapper — initially off (no backdrop).
     const panel = page
       .locator('[data-stave-code-panel="true"]')
       .first()
     await expect(panel).toHaveAttribute('data-stave-backdrop', 'off')
 
-    // Pin via context menu → should flip to 'on'.
-    const hydraRow = page.locator('text=.hydra').first()
-    await hydraRow.click({ button: 'right' })
-    await page
-      .getByRole('button', { name: /Set as Background/i })
-      .click()
+    // Activate the hydra tab so its chrome button is mounted, then
+    // flip the backdrop on.
+    const allTabs = page.locator('[data-workspace-tab]')
+    const count = await allTabs.count()
+    for (let i = 0; i < count; i++) {
+      const text = await allTabs.nth(i).textContent()
+      if (text && /\.hydra/.test(text)) {
+        await allTabs.nth(i).click()
+        break
+      }
+    }
+    const btn = page
+      .locator('[data-testid="viz-chrome-bg-toggle"]')
+      .first()
+    await btn.click()
     await expect(panel).toHaveAttribute('data-stave-backdrop', 'on', {
       timeout: 5000,
     })
 
-    // Cleanup.
-    await hydraRow.click({ button: 'right' })
-    await page
-      .getByRole('button', { name: /Clear Background/i })
-      .click()
+    await btn.click()
   })
 
   test('--stave-backdrop-blur persists to localStorage', async ({ page }) => {
@@ -139,12 +143,20 @@ test.describe('Backdrop quality ladder (#41)', () => {
     })
     await page.locator('.monaco-editor').waitFor({ timeout: 15000 })
 
-    // Pin a backdrop to exercise the render.
-    const hydraRow = page.locator('text=.hydra').first()
-    await hydraRow.click({ button: 'right' })
-    await page
-      .getByRole('button', { name: /Set as Background/i })
-      .click()
+    // Pin a backdrop via the viz-chrome toggle to exercise the render.
+    const allTabs = page.locator('[data-workspace-tab]')
+    const count = await allTabs.count()
+    for (let i = 0; i < count; i++) {
+      const text = await allTabs.nth(i).textContent()
+      if (text && /\.hydra/.test(text)) {
+        await allTabs.nth(i).click()
+        break
+      }
+    }
+    const btn = page
+      .locator('[data-testid="viz-chrome-bg-toggle"]')
+      .first()
+    await btn.click()
 
     const backdrop = page.locator('[data-workspace-background]').first()
     await expect(backdrop).toBeVisible({ timeout: 5000 })
@@ -153,11 +165,7 @@ test.describe('Backdrop quality ladder (#41)', () => {
       'quarter',
     )
 
-    // Cleanup.
-    await hydraRow.click({ button: 'right' })
-    await page
-      .getByRole('button', { name: /Clear Background/i })
-      .click()
+    await btn.click()
     await page.evaluate(() => {
       window.localStorage.removeItem('stave:backdropQuality')
     })

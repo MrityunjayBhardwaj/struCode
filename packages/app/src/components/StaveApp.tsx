@@ -887,8 +887,6 @@ export function StaveApp({ initialProject }: StaveAppProps) {
             activeFileId={activeFileId}
             onToggleCollapse={() => setActivePanelId(null)}
             onImportZipProject={handleImportZip}
-            onSetAsBackground={handleSetAsBackground}
-            backgroundFileId={backgroundFileId}
           />
         )}
         {!zenMode && activePanelId === "search" && (

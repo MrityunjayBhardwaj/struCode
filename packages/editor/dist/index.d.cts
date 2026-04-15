@@ -1629,6 +1629,15 @@ interface PreviewEditorChromeContext {
     readonly onChangePreviewSource?: (ref: AudioSourceRef) => void;
     /** Toggle the background decoration (viz behind the editor). */
     readonly onToggleBackground: () => void;
+    /**
+     * Whether this chrome's file is the active group's pinned backdrop.
+     * The VizEditorChrome uses it to render the Set/Clear BG button as
+     * an active (on) or inactive (off) toggle — no round-trip through
+     * the shell on every render. Optional for callers that don't track
+     * backdrop state (the button still works via onToggleBackground;
+     * the label just can't flip).
+     */
+    readonly isBackground?: boolean;
     /** Save the file back to its persistent store (VizPresetStore). */
     readonly onSave: () => void;
     /**

@@ -1518,6 +1518,8 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
                       },
                     })
                   },
+                  isBackground:
+                    groups.get(groupId)?.backgroundFileId === tab.fileId,
                   onSave: () => {
                     // Bridge to the host-supplied save callback. The host
                     // owns the persistence layer (e.g., flushToPreset for

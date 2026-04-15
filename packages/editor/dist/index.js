@@ -10299,6 +10299,7 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
                       }
                     });
                   },
+                  isBackground: groups.get(groupId)?.backgroundFileId === tab.fileId,
                   onSave: () => {
                     onSaveFileRef.current?.(tab);
                   }
@@ -20387,7 +20388,9 @@ function VizEditorChrome({
   previewOpen,
   previewPaused,
   onTogglePausePreview,
-  onChangePreviewSource
+  onChangePreviewSource,
+  onToggleBackground,
+  isBackground
 }) {
   const [liveOn, setLiveOn] = useState(() => getVizLive(file.id));
   useEffect(() => {
@@ -20503,6 +20506,30 @@ function VizEditorChrome({
           }
         ),
         /* @__PURE__ */ jsx("div", { style: { flex: 1 } }),
+        /* @__PURE__ */ jsx(
+          "button",
+          {
+            "data-testid": "viz-chrome-bg-toggle",
+            "data-bg-mode": isBackground ? "on" : "off",
+            onClick: onToggleBackground,
+            title: isBackground ? "This file is the group backdrop \u2014 click to clear (Cmd+K B)" : "Set as background for this group (Cmd+K B)",
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 8px",
+              borderRadius: 3,
+              fontSize: 10,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              userSelect: "none",
+              background: isBackground ? "var(--accent-dim)" : "none",
+              color: isBackground ? "var(--accent-strong, var(--accent))" : "var(--foreground-muted)",
+              border: `1px solid ${isBackground ? "var(--accent-dim)" : "var(--border)"}`
+            },
+            children: isBackground ? "\u25A0 bg" : "\u25A0"
+          }
+        ),
         /* @__PURE__ */ jsx(
           "button",
           {
