@@ -246,38 +246,53 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
   const sidebarRef = useRef<HTMLDivElement>(null);
   const [resizing, setResizing] = useState(false);
   const [resizeHover, setResizeHover] = useState(false);
+  // Mid-drag collapse intent. While true, the sidebar visually folds to
+  // zero width but stays mounted so the window-level drag listeners keep
+  // running — that's how VS Code lets the user pull the edge back past
+  // the threshold and "uncollapse" in the same gesture. The real parent
+  // `onToggleCollapse()` only fires on mouseup if the intent is still
+  // active at that point.
+  const [pendingCollapse, setPendingCollapse] = useState(false);
 
   // During a drag, track mouse globally (user can drag outside the
   // sidebar). Using window listeners instead of React events so the
   // drag works even if the pointer leaves the handle briefly.
   //
-  // VS Code-style collapse: if the user drags the edge further left
-  // than half the minimum width, snap the sidebar shut and end the
-  // drag. The raw (unclamped) cursor offset drives this — if we only
-  // looked at the clamped `width`, it would plateau at MIN_WIDTH and
-  // never fire the collapse.
+  // VS Code-style collapse / uncollapse: pulling the edge further left
+  // than half the minimum width visually folds the sidebar shut but the
+  // drag KEEPS RUNNING. Pulling back past the threshold within the same
+  // gesture re-expands it. Only on mouseup (with pending still true) do
+  // we commit by calling onToggleCollapse. The raw (unclamped) cursor
+  // offset drives this — the clamped `width` plateaus at MIN_WIDTH and
+  // would never cross back either way.
   const COLLAPSE_THRESHOLD = Math.floor(MIN_WIDTH / 2); // 80px
   useEffect(() => {
     if (!resizing) return;
-    let collapsedThisDrag = false;
     const handleMove = (e: MouseEvent) => {
-      if (collapsedThisDrag) return;
       if (!sidebarRef.current) return;
       const rect = sidebarRef.current.getBoundingClientRect();
       const raw = e.clientX - rect.left;
       if (raw < COLLAPSE_THRESHOLD) {
-        collapsedThisDrag = true;
-        setResizing(false);
-        onToggleCollapse();
+        setPendingCollapse(true);
         return;
       }
+      setPendingCollapse(false);
       const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, raw));
       setWidth(next);
     };
-    const handleUp = () => setResizing(false);
+    const handleUp = () => {
+      setResizing(false);
+      // Read from the closure-captured DOM signal — the intent flag's
+      // latest value is what we saw in the last `handleMove` invocation.
+      // React state won't help us here because setResizing(false) runs
+      // synchronously with this callback. Use a ref for the latest value.
+      if (pendingCollapseRef.current) {
+        setPendingCollapse(false);
+        onToggleCollapse();
+      }
+    };
     window.addEventListener("mousemove", handleMove);
     window.addEventListener("mouseup", handleUp);
-    // Disable text selection while dragging
     const prevSelect = document.body.style.userSelect;
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
@@ -289,6 +304,15 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resizing]);
+
+  // Mirror `pendingCollapse` state into a ref so the mouseup handler
+  // inside the stable effect above reads the latest value without
+  // needing `pendingCollapse` as an effect dep (which would re-subscribe
+  // window listeners on every threshold crossing).
+  const pendingCollapseRef = useRef(false);
+  useEffect(() => {
+    pendingCollapseRef.current = pendingCollapse;
+  }, [pendingCollapse]);
 
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
 
@@ -968,13 +992,18 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
     [moveFileToFolder, moveFolderToFolder, betweenFolderTarget, reorderFolderWithin, reorderChildWithin, importNativeFiles],
   );
 
+  // While `pendingCollapse` is true we fold the sidebar to zero width
+  // but keep it mounted so the ongoing drag can uncommit the collapse
+  // (see the resize effect above).
+  const renderedWidth = pendingCollapse ? 0 : width;
   return (
     <div
       ref={sidebarRef}
       style={{
         ...styles.sidebar,
-        width,
-        minWidth: width,
+        width: renderedWidth,
+        minWidth: renderedWidth,
+        overflow: pendingCollapse ? "hidden" : undefined,
       }}
     >
       <div style={styles.header}>
