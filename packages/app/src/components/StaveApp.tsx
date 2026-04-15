@@ -50,6 +50,7 @@ import {
   applyPersistedTheme,
   applyPersistedUiIconSize,
   applyPersistedInlineVizActionSize,
+  applyPersistedBackdropBlur,
 } from "@stave/editor";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { EditorSettingsModal } from "./EditorSettingsModal";
@@ -121,6 +122,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     applyPersistedTheme();
     applyPersistedUiIconSize();
     applyPersistedInlineVizActionSize();
+    applyPersistedBackdropBlur();
   }, []);
   const [zenMode, setZenMode] = useState(false);
   const searchViewRef = useRef<WorkspaceSearchViewHandle | null>(null);
@@ -142,6 +144,18 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [backgroundFileId, setBackgroundFileId] = useState<string | null>(
     null,
   );
+
+  // Cinema Mode — Zen + Backdrop composed into one toggle (#43).
+  // Entering: remember prior zen + backdrop, force zen on, auto-pin a
+  // viz file as backdrop if none is set. Exiting: restore prior state,
+  // unpinning only the auto-pinned backdrop (user-pinned backdrops
+  // survive exit — explicit promotions shouldn't vanish on Cmd+K F).
+  const [cinemaMode, setCinemaMode] = useState(false);
+  const cinemaPrior = useRef<{
+    zen: boolean;
+    bgFileId: string | null;
+    autoPinned: boolean;
+  } | null>(null);
 
   const handleImportZip = useCallback(async (file: File) => {
     try {
@@ -363,6 +377,76 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     },
     [activeProject.id],
   );
+
+  /**
+   * Cinema Mode toggle (#43). On enter, saves the prior zen +
+   * backdrop state, forces zen on, and auto-pins the first available
+   * viz file as backdrop if none is set. On exit, restores prior
+   * zen state and — only if we auto-pinned — clears the backdrop
+   * (user-pinned backdrops survive Cinema exit).
+   *
+   * `listWorkspaceFiles` is consulted at call time, not subscription-
+   * style — this avoids re-running on every file-list change and
+   * keeps cinema-mode's React surface small. The auto-pick prefers
+   * `.hydra`, falls back to `.p5`, because backdrop hydra sketches
+   * are the marquee case.
+   */
+  const handleToggleCinemaMode = useCallback(() => {
+    if (cinemaMode) {
+      // Exit — restore prior state.
+      const prior = cinemaPrior.current;
+      cinemaPrior.current = null;
+      setCinemaMode(false);
+      if (!prior) {
+        // Defensive: somehow entered without saving prior. Turn zen
+        // off as a safe default.
+        setZenMode(false);
+        return;
+      }
+      setZenMode(prior.zen);
+      if (prior.autoPinned) {
+        // Only undo OUR pin — leave user-set backdrops alone.
+        handleSetAsBackground(prior.bgFileId);
+      }
+      return;
+    }
+    // Enter — capture state, then apply.
+    let autoPinned = false;
+    const priorBg = backgroundFileId;
+    if (!backgroundFileId) {
+      const files = listWorkspaceFiles();
+      const pick =
+        files.find((f) => f.language === "hydra") ??
+        files.find((f) => f.language === "p5");
+      if (pick) {
+        handleSetAsBackground(pick.id);
+        autoPinned = true;
+      }
+    }
+    cinemaPrior.current = {
+      zen: zenMode,
+      bgFileId: priorBg,
+      autoPinned,
+    };
+    setZenMode(true);
+    setCinemaMode(true);
+  }, [cinemaMode, zenMode, backgroundFileId, handleSetAsBackground]);
+
+  // Cinema cleanup: when zen drops (Esc, browser exits fullscreen,
+  // direct Zen-mode toggle while Cinema was on), tear down Cinema
+  // state — restore the prior backdrop if we were the ones who auto-
+  // pinned it. Lives in its own effect so handleSetAsBackground is
+  // in lexical scope at dep-array time (the fullscreen sync effect
+  // runs earlier and would hit a TDZ otherwise).
+  useEffect(() => {
+    if (zenMode || !cinemaMode) return;
+    const prior = cinemaPrior.current;
+    cinemaPrior.current = null;
+    setCinemaMode(false);
+    if (prior?.autoPinned) {
+      handleSetAsBackground(prior.bgFileId);
+    }
+  }, [zenMode, cinemaMode, handleSetAsBackground]);
 
   // Restore the persisted backdrop when the active project changes.
   // Reads the stored fileId from project metadata and pushes it into
@@ -621,6 +705,15 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       run: () => setZenMode((z) => !z),
     }));
     unregs.push(registerCommand({
+      id: "stave.view.cinema",
+      title: "Toggle Cinema Mode",
+      category: "View",
+      description:
+        "Zen + Backdrop together. Hides chrome and pins a viz as the backdrop.",
+      keybinding: "mod+k f",
+      run: () => handleToggleCinemaMode(),
+    }));
+    unregs.push(registerCommand({
       id: "stave.view.fontUp",
       title: "Increase Editor Font Size",
       category: "View",
@@ -727,7 +820,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       render: () => null,
     }));
     return () => { for (const u of unregs) u(); };
-  }, [activeProject, handleRenameActiveProject, openSnapshotPanel, handleShareProject]);
+  }, [activeProject, handleRenameActiveProject, openSnapshotPanel, handleShareProject, handleToggleCinemaMode]);
 
   // Build file rows for QuickOpen — memoised so mount of the palette
   // has a stable array. Rebuilt when the file list changes.
@@ -771,6 +864,8 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         sidebarCollapsed={sidebarCollapsed}
         onToggleZenMode={() => setZenMode((z) => !z)}
         zenMode={zenMode}
+        onToggleCinemaMode={handleToggleCinemaMode}
+        cinemaMode={cinemaMode}
         onUndo={() => { undo(); }}
         onRedo={() => { redo(); }}
         canUndo={undoState.canUndo}

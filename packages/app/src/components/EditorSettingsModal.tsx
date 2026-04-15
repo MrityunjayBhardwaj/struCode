@@ -10,6 +10,11 @@ import {
   setEditorUiIconSize,
   getInlineVizActionSize,
   setInlineVizActionSize,
+  getEditorBackdropBlur,
+  setEditorBackdropBlur,
+  getBackdropQuality,
+  setBackdropQuality,
+  type BackdropQuality,
   getEditorTheme,
   setEditorTheme,
   type EditorTheme,
@@ -31,6 +36,9 @@ export function EditorSettingsModal({ open, onClose }: Props) {
   const [minimap, setMinimap] = useState(false);
   const [iconSize, setIconSize] = useState(25);
   const [vizActionSize, setVizActionSize] = useState(11);
+  const [backdropBlur, setBackdropBlur] = useState(8);
+  const [backdropQuality, setBackdropQualityLocal] =
+    useState<BackdropQuality>("half");
   const [theme, setTheme] = useState<EditorTheme>("dark");
 
   useEffect(() => {
@@ -39,6 +47,8 @@ export function EditorSettingsModal({ open, onClose }: Props) {
     setMinimap(getEditorMinimap());
     setIconSize(getEditorUiIconSize());
     setVizActionSize(getInlineVizActionSize());
+    setBackdropBlur(getEditorBackdropBlur());
+    setBackdropQualityLocal(getBackdropQuality());
     setTheme(getEditorTheme());
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
@@ -109,6 +119,36 @@ export function EditorSettingsModal({ open, onClose }: Props) {
               style={s.range}
             />
             <span style={s.value}>{vizActionSize}px</span>
+          </Row>
+          <Row label="Code surface blur">
+            <input
+              type="range"
+              min={0}
+              max={24}
+              value={backdropBlur}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setBackdropBlur(v);
+                setEditorBackdropBlur(v);
+              }}
+              style={s.range}
+            />
+            <span style={s.value}>{backdropBlur}px</span>
+          </Row>
+          <Row label="Backdrop quality">
+            <select
+              style={s.select}
+              value={backdropQuality}
+              onChange={(e) => {
+                const v = e.target.value as BackdropQuality;
+                setBackdropQualityLocal(v);
+                setBackdropQuality(v);
+              }}
+            >
+              <option value="full">Full</option>
+              <option value="half">Half (default)</option>
+              <option value="quarter">Quarter</option>
+            </select>
           </Row>
           <Row label="Theme">
             <select

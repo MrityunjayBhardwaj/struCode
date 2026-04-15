@@ -122,6 +122,12 @@ import { useKeyboardCommands } from './commands/useKeyboardCommands'
 import { executeCommand } from './commands/CommandRegistry'
 import { getPreviewProviderForLanguage } from './preview/registry'
 import { getFile, subscribe as subscribeToWorkspaceFile } from './WorkspaceFile'
+import {
+  getBackdropQuality,
+  onBackdropQualityChange,
+  backdropQualityFactor,
+  type BackdropQuality,
+} from './editorRegistry'
 import type { WorkspaceShellActions } from './commands/CommandRegistry'
 import type {
   WorkspaceGroupState,
@@ -363,6 +369,18 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
    */
   const [pausedPreviews, setPausedPreviews] = useState<Set<string>>(
     () => new Set(),
+  )
+
+  // Backdrop quality — subscribed so the render reacts when the user
+  // flips Full / Half / Quarter in settings. Lives at the shell so
+  // all group backdrops update together (simple policy — a future
+  // per-backdrop override can overlay on top).
+  const [backdropQuality, setBackdropQualityState] = useState<BackdropQuality>(
+    () => getBackdropQuality(),
+  )
+  useEffect(
+    () => onBackdropQualityChange(setBackdropQualityState),
+    [],
   )
 
   // Theme application — PV6 / PK6. Effect, not render.
@@ -1836,31 +1854,66 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
                 sourceRef: { kind: 'default' },
               })
               if (!bgProvider) return null
+              // Quality ladder (#41): the inner wrapper is sized at
+              // (1/factor) × viewport and scaled back by `factor` —
+              // renderer sees a smaller container, CSS stretches the
+              // result. factor=1 → full; 0.5 → half (default, quartered
+              // pixel budget); 0.25 → quarter (1/16 budget).
+              const qf = backdropQualityFactor(backdropQuality)
+              const innerSizePct = qf === 1 ? 100 : 100 / qf
               return (
                 <div
                   data-workspace-background={group.id}
                   data-background-file-id={bgFileId}
+                  data-backdrop-quality={backdropQuality}
                   style={{
                     position: 'absolute',
                     inset: 0,
                     zIndex: 0,
                     opacity: 0.4,
                     pointerEvents: 'none',
+                    overflow: 'hidden',
                   }}
                 >
-                  <PreviewView
-                    fileId={bgFileId}
-                    provider={bgProvider}
-                    sourceRef={{ kind: 'default' }}
-                    theme={theme}
-                    hidden={false}
-                    onSourceRefChange={() => {}}
-                  />
+                  <div
+                    style={{
+                      width: `${innerSizePct}%`,
+                      height: `${innerSizePct}%`,
+                      transform:
+                        qf === 1 ? undefined : `scale(${qf})`,
+                      transformOrigin: 'top left',
+                    }}
+                  >
+                    <PreviewView
+                      fileId={bgFileId}
+                      provider={bgProvider}
+                      sourceRef={{ kind: 'default' }}
+                      theme={theme}
+                      hidden={false}
+                      onSourceRefChange={() => {}}
+                    />
+                  </div>
                 </div>
               )
             })()}
             {activeTabObj ? (
-              <div style={{ position: 'relative', zIndex: 1, height: '100%' }}>
+              <div
+                data-stave-code-panel="true"
+                data-stave-backdrop={
+                  group.backgroundFileId ? 'on' : 'off'
+                }
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  height: '100%',
+                  // Blur / halo only kick in when the data attribute
+                  // flips to 'on' via the CSS rule in globals.css.
+                  // Shipping the rule on the wrapper (not on a global
+                  // selector) keeps the effect local to this group
+                  // so split panes with different backdrops stay
+                  // independent.
+                }}
+              >
                 {renderTabContent(activeTabObj, group.id, isShellActiveGroup)}
               </div>
             ) : (

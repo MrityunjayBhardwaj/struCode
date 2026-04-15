@@ -18,6 +18,8 @@ interface MenuBarProps {
   sidebarCollapsed: boolean;
   onToggleZenMode: () => void;
   zenMode: boolean;
+  onToggleCinemaMode: () => void;
+  cinemaMode: boolean;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -41,6 +43,8 @@ export function MenuBar({
   sidebarCollapsed,
   onToggleZenMode,
   zenMode,
+  onToggleCinemaMode,
+  cinemaMode,
   onUndo,
   onRedo,
   canUndo,
@@ -105,6 +109,11 @@ export function MenuBar({
           label={zenMode ? "Exit Zen Mode" : "Zen Mode (Fullscreen)"}
           shortcut="⌘K Z"
           onClick={() => clickItem(onToggleZenMode)}
+        />
+        <MenuItem
+          label={cinemaMode ? "Exit Cinema Mode" : "Cinema Mode"}
+          shortcut="⌘K F"
+          onClick={() => clickItem(onToggleCinemaMode)}
         />
       </MenuButton>
 

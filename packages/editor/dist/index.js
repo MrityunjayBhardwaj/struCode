@@ -7483,6 +7483,63 @@ function onInlineVizActionSizeChange(cb) {
 function applyPersistedInlineVizActionSize() {
   applyInlineVizActionSizeVar(readInlineVizActionSize());
 }
+var DEFAULT_BACKDROP_BLUR = 8;
+var BACKDROP_BLUR_STORAGE = "stave:backdropBlur";
+var BACKDROP_BLUR_VAR = "--stave-backdrop-blur";
+function readBackdropBlur() {
+  const ls = safeLocalStorage();
+  if (!ls) return DEFAULT_BACKDROP_BLUR;
+  const saved = Number(ls.getItem(BACKDROP_BLUR_STORAGE));
+  return Number.isFinite(saved) && saved >= 0 && saved <= 40 ? saved : DEFAULT_BACKDROP_BLUR;
+}
+function writeBackdropBlur(size) {
+  safeLocalStorage()?.setItem(BACKDROP_BLUR_STORAGE, String(size));
+}
+function applyBackdropBlurVar(size) {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty(
+    BACKDROP_BLUR_VAR,
+    `${size}px`
+  );
+}
+function getEditorBackdropBlur() {
+  return readBackdropBlur();
+}
+function setEditorBackdropBlur(size) {
+  const clamped = Math.max(0, Math.min(40, Math.round(size)));
+  writeBackdropBlur(clamped);
+  applyBackdropBlurVar(clamped);
+}
+function applyPersistedBackdropBlur() {
+  applyBackdropBlurVar(readBackdropBlur());
+}
+var DEFAULT_BACKDROP_QUALITY = "half";
+var BACKDROP_QUALITY_STORAGE = "stave:backdropQuality";
+var backdropQualityListeners = /* @__PURE__ */ new Set();
+function readBackdropQuality() {
+  const ls = safeLocalStorage();
+  const v = ls?.getItem(BACKDROP_QUALITY_STORAGE);
+  return v === "full" || v === "half" || v === "quarter" ? v : DEFAULT_BACKDROP_QUALITY;
+}
+function writeBackdropQuality(q) {
+  safeLocalStorage()?.setItem(BACKDROP_QUALITY_STORAGE, q);
+}
+function getBackdropQuality() {
+  return readBackdropQuality();
+}
+function setBackdropQuality(q) {
+  writeBackdropQuality(q);
+  for (const cb of Array.from(backdropQualityListeners)) cb(q);
+}
+function onBackdropQualityChange(cb) {
+  backdropQualityListeners.add(cb);
+  return () => {
+    backdropQualityListeners.delete(cb);
+  };
+}
+function backdropQualityFactor(q) {
+  return q === "full" ? 1 : q === "quarter" ? 0.25 : 0.5;
+}
 function applyPersistedEditorOptions(editor) {
   applyOptionsToEditor(editor);
 }
@@ -9544,6 +9601,13 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
   const [pausedPreviews, setPausedPreviews] = useState(
     () => /* @__PURE__ */ new Set()
   );
+  const [backdropQuality, setBackdropQualityState] = useState(
+    () => getBackdropQuality()
+  );
+  useEffect(
+    () => onBackdropQualityChange(setBackdropQualityState),
+    []
+  );
   useEffect(() => {
     if (!shellRootRef.current) return;
     applyTheme(shellRootRef.current, theme);
@@ -10537,34 +10601,67 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
                       sourceRef: { kind: "default" }
                     });
                     if (!bgProvider) return null;
+                    const qf = backdropQualityFactor(backdropQuality);
+                    const innerSizePct = qf === 1 ? 100 : 100 / qf;
                     return /* @__PURE__ */ jsx(
                       "div",
                       {
                         "data-workspace-background": group.id,
                         "data-background-file-id": bgFileId,
+                        "data-backdrop-quality": backdropQuality,
                         style: {
                           position: "absolute",
                           inset: 0,
                           zIndex: 0,
                           opacity: 0.4,
-                          pointerEvents: "none"
+                          pointerEvents: "none",
+                          overflow: "hidden"
                         },
                         children: /* @__PURE__ */ jsx(
-                          PreviewView,
+                          "div",
                           {
-                            fileId: bgFileId,
-                            provider: bgProvider,
-                            sourceRef: { kind: "default" },
-                            theme,
-                            hidden: false,
-                            onSourceRefChange: () => {
-                            }
+                            style: {
+                              width: `${innerSizePct}%`,
+                              height: `${innerSizePct}%`,
+                              transform: qf === 1 ? void 0 : `scale(${qf})`,
+                              transformOrigin: "top left"
+                            },
+                            children: /* @__PURE__ */ jsx(
+                              PreviewView,
+                              {
+                                fileId: bgFileId,
+                                provider: bgProvider,
+                                sourceRef: { kind: "default" },
+                                theme,
+                                hidden: false,
+                                onSourceRefChange: () => {
+                                }
+                              }
+                            )
                           }
                         )
                       }
                     );
                   })(),
-                  activeTabObj ? /* @__PURE__ */ jsx("div", { style: { position: "relative", zIndex: 1, height: "100%" }, children: renderTabContent(activeTabObj, group.id, isShellActiveGroup) }) : /* @__PURE__ */ jsx(
+                  activeTabObj ? /* @__PURE__ */ jsx(
+                    "div",
+                    {
+                      "data-stave-code-panel": "true",
+                      "data-stave-backdrop": group.backgroundFileId ? "on" : "off",
+                      style: {
+                        position: "relative",
+                        zIndex: 1,
+                        height: "100%"
+                        // Blur / halo only kick in when the data attribute
+                        // flips to 'on' via the CSS rule in globals.css.
+                        // Shipping the rule on the wrapper (not on a global
+                        // selector) keeps the effect local to this group
+                        // so split panes with different backdrops stay
+                        // independent.
+                      },
+                      children: renderTabContent(activeTabObj, group.id, isShellActiveGroup)
+                    }
+                  ) : /* @__PURE__ */ jsx(
                     "div",
                     {
                       "data-testid": `group-empty-${group.id}`,
@@ -20647,6 +20744,6 @@ function registerPresetAsNamedViz(preset) {
   }
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getChildOrder, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFolderOrder, getInlineVizActionSize, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setChildOrder, setContent, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getBackdropQuality, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFolderOrder, getInlineVizActionSize, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropQuality, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

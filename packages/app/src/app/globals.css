@@ -145,3 +145,15 @@ body {
 [data-stave-menu-item][data-danger="true"]:hover:not(:disabled) {
   background: var(--danger-hover) !important;
 }
+
+/* Code surface blur — applied when a backdrop is pinned (#39).
+   Targets the shell group wrapper flagged with
+   data-stave-backdrop="on". The blur reads --stave-backdrop-blur
+   (default 8px) so the Editor Settings slider can override at
+   runtime. The halo softens the edge where the code panel meets
+   the viz, keeping text legible without hiding the backdrop. */
+[data-stave-code-panel][data-stave-backdrop="on"] {
+  backdrop-filter: blur(var(--stave-backdrop-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--stave-backdrop-blur, 8px));
+  box-shadow: 0 0 var(--stave-backdrop-halo, 40px) var(--bg-app);
+}

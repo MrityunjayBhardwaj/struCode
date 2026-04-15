@@ -7510,6 +7510,63 @@ function onInlineVizActionSizeChange(cb) {
 function applyPersistedInlineVizActionSize() {
   applyInlineVizActionSizeVar(readInlineVizActionSize());
 }
+var DEFAULT_BACKDROP_BLUR = 8;
+var BACKDROP_BLUR_STORAGE = "stave:backdropBlur";
+var BACKDROP_BLUR_VAR = "--stave-backdrop-blur";
+function readBackdropBlur() {
+  const ls = safeLocalStorage();
+  if (!ls) return DEFAULT_BACKDROP_BLUR;
+  const saved = Number(ls.getItem(BACKDROP_BLUR_STORAGE));
+  return Number.isFinite(saved) && saved >= 0 && saved <= 40 ? saved : DEFAULT_BACKDROP_BLUR;
+}
+function writeBackdropBlur(size) {
+  safeLocalStorage()?.setItem(BACKDROP_BLUR_STORAGE, String(size));
+}
+function applyBackdropBlurVar(size) {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty(
+    BACKDROP_BLUR_VAR,
+    `${size}px`
+  );
+}
+function getEditorBackdropBlur() {
+  return readBackdropBlur();
+}
+function setEditorBackdropBlur(size) {
+  const clamped = Math.max(0, Math.min(40, Math.round(size)));
+  writeBackdropBlur(clamped);
+  applyBackdropBlurVar(clamped);
+}
+function applyPersistedBackdropBlur() {
+  applyBackdropBlurVar(readBackdropBlur());
+}
+var DEFAULT_BACKDROP_QUALITY = "half";
+var BACKDROP_QUALITY_STORAGE = "stave:backdropQuality";
+var backdropQualityListeners = /* @__PURE__ */ new Set();
+function readBackdropQuality() {
+  const ls = safeLocalStorage();
+  const v = ls?.getItem(BACKDROP_QUALITY_STORAGE);
+  return v === "full" || v === "half" || v === "quarter" ? v : DEFAULT_BACKDROP_QUALITY;
+}
+function writeBackdropQuality(q) {
+  safeLocalStorage()?.setItem(BACKDROP_QUALITY_STORAGE, q);
+}
+function getBackdropQuality() {
+  return readBackdropQuality();
+}
+function setBackdropQuality(q) {
+  writeBackdropQuality(q);
+  for (const cb of Array.from(backdropQualityListeners)) cb(q);
+}
+function onBackdropQualityChange(cb) {
+  backdropQualityListeners.add(cb);
+  return () => {
+    backdropQualityListeners.delete(cb);
+  };
+}
+function backdropQualityFactor(q) {
+  return q === "full" ? 1 : q === "quarter" ? 0.25 : 0.5;
+}
 function applyPersistedEditorOptions(editor) {
   applyOptionsToEditor(editor);
 }
@@ -9571,6 +9628,13 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
   const [pausedPreviews, setPausedPreviews] = React.useState(
     () => /* @__PURE__ */ new Set()
   );
+  const [backdropQuality, setBackdropQualityState] = React.useState(
+    () => getBackdropQuality()
+  );
+  React.useEffect(
+    () => onBackdropQualityChange(setBackdropQualityState),
+    []
+  );
   React.useEffect(() => {
     if (!shellRootRef.current) return;
     applyTheme(shellRootRef.current, theme);
@@ -10564,34 +10628,67 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
                       sourceRef: { kind: "default" }
                     });
                     if (!bgProvider) return null;
+                    const qf = backdropQualityFactor(backdropQuality);
+                    const innerSizePct = qf === 1 ? 100 : 100 / qf;
                     return /* @__PURE__ */ jsxRuntime.jsx(
                       "div",
                       {
                         "data-workspace-background": group.id,
                         "data-background-file-id": bgFileId,
+                        "data-backdrop-quality": backdropQuality,
                         style: {
                           position: "absolute",
                           inset: 0,
                           zIndex: 0,
                           opacity: 0.4,
-                          pointerEvents: "none"
+                          pointerEvents: "none",
+                          overflow: "hidden"
                         },
                         children: /* @__PURE__ */ jsxRuntime.jsx(
-                          PreviewView,
+                          "div",
                           {
-                            fileId: bgFileId,
-                            provider: bgProvider,
-                            sourceRef: { kind: "default" },
-                            theme,
-                            hidden: false,
-                            onSourceRefChange: () => {
-                            }
+                            style: {
+                              width: `${innerSizePct}%`,
+                              height: `${innerSizePct}%`,
+                              transform: qf === 1 ? void 0 : `scale(${qf})`,
+                              transformOrigin: "top left"
+                            },
+                            children: /* @__PURE__ */ jsxRuntime.jsx(
+                              PreviewView,
+                              {
+                                fileId: bgFileId,
+                                provider: bgProvider,
+                                sourceRef: { kind: "default" },
+                                theme,
+                                hidden: false,
+                                onSourceRefChange: () => {
+                                }
+                              }
+                            )
                           }
                         )
                       }
                     );
                   })(),
-                  activeTabObj ? /* @__PURE__ */ jsxRuntime.jsx("div", { style: { position: "relative", zIndex: 1, height: "100%" }, children: renderTabContent(activeTabObj, group.id, isShellActiveGroup) }) : /* @__PURE__ */ jsxRuntime.jsx(
+                  activeTabObj ? /* @__PURE__ */ jsxRuntime.jsx(
+                    "div",
+                    {
+                      "data-stave-code-panel": "true",
+                      "data-stave-backdrop": group.backgroundFileId ? "on" : "off",
+                      style: {
+                        position: "relative",
+                        zIndex: 1,
+                        height: "100%"
+                        // Blur / halo only kick in when the data attribute
+                        // flips to 'on' via the CSS rule in globals.css.
+                        // Shipping the rule on the wrapper (not on a global
+                        // selector) keeps the effect local to this group
+                        // so split panes with different backdrops stay
+                        // independent.
+                      },
+                      children: renderTabContent(activeTabObj, group.id, isShellActiveGroup)
+                    }
+                  ) : /* @__PURE__ */ jsxRuntime.jsx(
                     "div",
                     {
                       "data-testid": `group-empty-${group.id}`,
@@ -20675,6 +20772,7 @@ function registerPresetAsNamedViz(preset) {
 }
 
 exports.AUTO_SNAPSHOT_PREFIX = AUTO_SNAPSHOT_PREFIX;
+exports.BACKDROP_BLUR_VAR = BACKDROP_BLUR_VAR;
 exports.BUNDLED_PREFIX = BUNDLED_PREFIX;
 exports.BufferedScheduler = BufferedScheduler;
 exports.DARK_THEME_TOKENS = DARK_THEME_TOKENS;
@@ -20719,10 +20817,12 @@ exports.VizPicker = VizPicker;
 exports.VizPresetStore = VizPresetStore;
 exports.WavEncoder = WavEncoder;
 exports.WorkspaceShell = WorkspaceShell;
+exports.applyPersistedBackdropBlur = applyPersistedBackdropBlur;
 exports.applyPersistedInlineVizActionSize = applyPersistedInlineVizActionSize;
 exports.applyPersistedTheme = applyPersistedTheme;
 exports.applyPersistedUiIconSize = applyPersistedUiIconSize;
 exports.applyTheme = applyTheme;
+exports.backdropQualityFactor = backdropQualityFactor;
 exports.bumpEditorFontSize = bumpEditorFontSize;
 exports.bundledPresetId = bundledPresetId;
 exports.canRedo = canRedo;
@@ -20741,7 +20841,9 @@ exports.filter = filter;
 exports.flushToPreset = flushToPreset;
 exports.generateUniquePresetId = generateUniquePresetId;
 exports.getActiveProjectId = getActiveProjectId;
+exports.getBackdropQuality = getBackdropQuality;
 exports.getChildOrder = getChildOrder;
+exports.getEditorBackdropBlur = getEditorBackdropBlur;
 exports.getEditorFontSize = getEditorFontSize;
 exports.getEditorMinimap = getEditorMinimap;
 exports.getEditorTheme = getEditorTheme;
@@ -20779,6 +20881,7 @@ exports.merge = merge;
 exports.mountVizRenderer = mountVizRenderer;
 exports.normalizeStrudelHap = normalizeStrudelHap;
 exports.noteToMidi = noteToMidi;
+exports.onBackdropQualityChange = onBackdropQualityChange;
 exports.onInlineVizActionSizeChange = onInlineVizActionSizeChange;
 exports.onNamedVizChanged = onNamedVizChanged;
 exports.onThemeChange = onThemeChange;
@@ -20808,8 +20911,10 @@ exports.scaleGain = scaleGain;
 exports.seedFromPreset = seedFromPreset;
 exports.seedFromPresetId = seedFromPresetId;
 exports.seedWorkspaceFile = seedWorkspaceFile;
+exports.setBackdropQuality = setBackdropQuality;
 exports.setChildOrder = setChildOrder;
 exports.setContent = setContent;
+exports.setEditorBackdropBlur = setEditorBackdropBlur;
 exports.setEditorFontSize = setEditorFontSize;
 exports.setEditorTheme = setEditorTheme;
 exports.setEditorUiIconSize = setEditorUiIconSize;
