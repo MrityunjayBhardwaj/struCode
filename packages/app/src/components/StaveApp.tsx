@@ -20,6 +20,8 @@ import {
   canUndo,
   canRedo,
   subscribeToUndoState,
+  getEditorBreadcrumbs,
+  onBreadcrumbsChange,
   type ProjectMeta,
   type SnapshotMeta,
   type WorkspaceShellHandle,
@@ -107,6 +109,11 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [editorSettingsOpen, setEditorSettingsOpen] = useState(false);
+  const [breadcrumbsOn, setBreadcrumbsOn] = useState(false);
+  useEffect(() => {
+    setBreadcrumbsOn(getEditorBreadcrumbs());
+    return onBreadcrumbsChange(setBreadcrumbsOn);
+  }, []);
   const [cropTarget, setCropTarget] = useState<
     | { vizId: string; presetId: string; fileId: string; trackKey: string }
     | null
@@ -726,7 +733,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         )}
 
         <div style={styles.editorArea}>
-          {!zenMode && (
+          {!zenMode && breadcrumbsOn && (
             <Breadcrumbs
               path={
                 activeFileId

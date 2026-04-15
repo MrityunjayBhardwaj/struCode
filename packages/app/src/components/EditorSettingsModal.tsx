@@ -6,6 +6,8 @@ import {
   setEditorFontSize,
   getEditorMinimap,
   toggleEditorMinimap,
+  getEditorBreadcrumbs,
+  toggleEditorBreadcrumbs,
   getEditorTheme,
   setEditorTheme,
   type EditorTheme,
@@ -25,12 +27,14 @@ const THEME_OPTIONS: { value: EditorTheme; label: string }[] = [
 export function EditorSettingsModal({ open, onClose }: Props) {
   const [fontSize, setFontSize] = useState(14);
   const [minimap, setMinimap] = useState(false);
+  const [breadcrumbs, setBreadcrumbs] = useState(false);
   const [theme, setTheme] = useState<EditorTheme>("dark");
 
   useEffect(() => {
     if (!open) return;
     setFontSize(getEditorFontSize());
     setMinimap(getEditorMinimap());
+    setBreadcrumbs(getEditorBreadcrumbs());
     setTheme(getEditorTheme());
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
@@ -70,6 +74,16 @@ export function EditorSettingsModal({ open, onClose }: Props) {
                 onChange={() => { toggleEditorMinimap(); setMinimap((v) => !v); }}
               />
               <span>{minimap ? "Enabled" : "Disabled"}</span>
+            </label>
+          </Row>
+          <Row label="Breadcrumbs">
+            <label style={s.switchLabel}>
+              <input
+                type="checkbox"
+                checked={breadcrumbs}
+                onChange={() => { toggleEditorBreadcrumbs(); setBreadcrumbs((v) => !v); }}
+              />
+              <span>{breadcrumbs ? "Shown" : "Hidden"}</span>
             </label>
           </Row>
           <Row label="Theme">

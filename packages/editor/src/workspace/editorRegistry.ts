@@ -60,6 +60,7 @@ export function revealLineInFile(fileId: string, line: number): boolean {
 const DEFAULT_FONT_SIZE = 14
 const FONT_SIZE_STORAGE = 'stave:editorFontSize'
 const MINIMAP_STORAGE = 'stave:editorMinimap'
+const BREADCRUMBS_STORAGE = 'stave:editorBreadcrumbs'
 
 function safeLocalStorage(): Storage | null {
   try {
@@ -120,6 +121,34 @@ export function toggleEditorMinimap(): void {
   const next = !readMinimap()
   writeMinimap(next)
   for (const ed of editors.values()) ed.updateOptions?.({ minimap: { enabled: next } })
+}
+
+// ── Breadcrumbs (off by default; opt-in via editor settings) ───────
+const breadcrumbsListeners = new Set<(on: boolean) => void>()
+
+function readBreadcrumbs(): boolean {
+  const ls = safeLocalStorage()
+  return ls?.getItem(BREADCRUMBS_STORAGE) === '1'
+}
+
+function writeBreadcrumbs(on: boolean): void {
+  safeLocalStorage()?.setItem(BREADCRUMBS_STORAGE, on ? '1' : '0')
+}
+
+export function getEditorBreadcrumbs(): boolean { return readBreadcrumbs() }
+
+export function setEditorBreadcrumbs(on: boolean): void {
+  writeBreadcrumbs(on)
+  for (const cb of Array.from(breadcrumbsListeners)) cb(on)
+}
+
+export function toggleEditorBreadcrumbs(): void {
+  setEditorBreadcrumbs(!readBreadcrumbs())
+}
+
+export function onBreadcrumbsChange(cb: (on: boolean) => void): () => void {
+  breadcrumbsListeners.add(cb)
+  return () => { breadcrumbsListeners.delete(cb) }
 }
 
 /** Called by EditorView on mount to seed the editor with saved options. */

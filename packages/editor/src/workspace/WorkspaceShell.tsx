@@ -1626,9 +1626,6 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
                     userSelect: 'none',
                   }}
                 >
-                  <span style={{ fontSize: 9, opacity: 0.5 }}>
-                    {tab.kind === 'editor' ? '\u25A1' : '\u25CE'}
-                  </span>
                   <span>{tabFileName(tab)}</span>
                   <button
                     data-testid={`tab-close-${tab.id}`}
