@@ -54,7 +54,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--text-icon-muted)",
     padding: "8px 0",
     cursor: "pointer",
-    fontSize: "var(--ui-icon-size, 18px)",
+    fontSize: "var(--ui-icon-size, 25px)",
     lineHeight: 1,
     display: "flex",
     alignItems: "center",

@@ -30,7 +30,7 @@ export function EditorSettingsModal({ open, onClose }: Props) {
   const [fontSize, setFontSize] = useState(14);
   const [minimap, setMinimap] = useState(false);
   const [breadcrumbs, setBreadcrumbs] = useState(false);
-  const [iconSize, setIconSize] = useState(16);
+  const [iconSize, setIconSize] = useState(25);
   const [theme, setTheme] = useState<EditorTheme>("dark");
 
   useEffect(() => {

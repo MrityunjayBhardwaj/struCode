@@ -61,7 +61,7 @@ const DEFAULT_FONT_SIZE = 14
 const FONT_SIZE_STORAGE = 'stave:editorFontSize'
 const MINIMAP_STORAGE = 'stave:editorMinimap'
 const BREADCRUMBS_STORAGE = 'stave:editorBreadcrumbs'
-const DEFAULT_UI_ICON_SIZE = 16
+const DEFAULT_UI_ICON_SIZE = 25
 const UI_ICON_SIZE_STORAGE = 'stave:uiIconSize'
 /** CSS variable that scales every chrome-level icon glyph (menu gear,
  *  activity bar, inline viz bar, etc.). Applied to documentElement on
