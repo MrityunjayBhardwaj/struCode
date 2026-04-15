@@ -1070,20 +1070,26 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
       // the intuitive "add to target group" behavior without having to
       // mock getBoundingClientRect.
       if (rect.width <= 0 || rect.height <= 0) return 'center'
+      const y = (e.clientY - rect.top)
+      // VS Code parity: the top strip (tab bar + optional runtime chrome
+      // bar) is a "reorder / add as tab" zone — split quadrants only
+      // activate once the cursor moves past it. Tab bar is 30px, chrome
+      // bar (when present) is 40px → 70px. A small buffer (10px) keeps
+      // borderline drops predictable.
+      const SPLIT_ACTIVATE_Y = 80
+      if (y < SPLIT_ACTIVATE_Y) return 'center'
       const x = (e.clientX - rect.left) / rect.width
-      const y = (e.clientY - rect.top) / rect.height
-      // NaN guard — if clientX/Y are unreliable the division can
-      // produce NaN; treat that as center too.
-      if (Number.isNaN(x) || Number.isNaN(y)) return 'center'
+      const yFrac = y / rect.height
+      if (Number.isNaN(x) || Number.isNaN(yFrac)) return 'center'
       // Center: 30%..70% both dimensions.
-      if (x >= 0.3 && x <= 0.7 && y >= 0.3 && y <= 0.7) {
+      if (x >= 0.3 && x <= 0.7 && yFrac >= 0.3 && yFrac <= 0.7) {
         return 'center'
       }
       // Pick the nearest edge (smallest fractional distance).
       const distWest = x
       const distEast = 1 - x
-      const distNorth = y
-      const distSouth = 1 - y
+      const distNorth = yFrac
+      const distSouth = 1 - yFrac
       const min = Math.min(distWest, distEast, distNorth, distSouth)
       if (min === distWest) return 'west'
       if (min === distEast) return 'east'
@@ -1107,6 +1113,99 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
    * delegates to the pure `insertGroup` layout helper so the 2-D
    * arithmetic is tested in isolation.
    */
+  /**
+   * Tab bar drop — VS Code-style reorder / move-by-index. Computes the
+   * insertion point from the cursor X relative to each tab-header's
+   * rect, then either reorders within the same group or moves the tab
+   * across groups into the specific slot. Drops exactly on the original
+   * position are a no-op ("snap back").
+   */
+  const handleTabBarDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, targetGroupId: string) => {
+      if (!e.dataTransfer.types.includes(DRAG_MIME)) return
+      e.preventDefault()
+      e.stopPropagation()
+      setDragOverTarget(null)
+      const raw = e.dataTransfer.getData(DRAG_MIME)
+      if (!raw) return
+      let payload: DragPayload
+      try {
+        payload = JSON.parse(raw)
+      } catch {
+        return
+      }
+      const { sourceGroupId, tabId } = payload
+
+      // Find the target-tab index from the cursor X. Each rendered tab
+      // has a data-workspace-tab attr on its header node; left-half of
+      // the tab means "insert before", right-half means "insert after".
+      const tabNodes = (
+        e.currentTarget as HTMLElement
+      ).querySelectorAll<HTMLElement>('[data-workspace-tab]')
+      let insertionIndex = tabNodes.length
+      for (let i = 0; i < tabNodes.length; i++) {
+        const r = tabNodes[i].getBoundingClientRect()
+        if (e.clientX < r.left + r.width / 2) {
+          insertionIndex = i
+          break
+        }
+      }
+
+      setGroups((prev) => {
+        const source = prev.get(sourceGroupId)
+        const target = prev.get(targetGroupId)
+        if (!source || !target) return prev
+        const movingTab = source.tabs.find((t) => t.id === tabId)
+        if (!movingTab) return prev
+
+        if (sourceGroupId === targetGroupId) {
+          // Same-group reorder. Compute the actual destination index
+          // accounting for the removal of the moving tab from earlier
+          // in the list.
+          const fromIdx = source.tabs.findIndex((t) => t.id === tabId)
+          if (fromIdx === -1) return prev
+          let toIdx = insertionIndex
+          if (toIdx > fromIdx) toIdx -= 1
+          if (toIdx === fromIdx) return prev // snap back
+          const nextTabs = source.tabs.slice()
+          nextTabs.splice(fromIdx, 1)
+          nextTabs.splice(toIdx, 0, movingTab)
+          const next = new Map(prev)
+          next.set(targetGroupId, { ...source, tabs: nextTabs })
+          return next
+        }
+
+        // Cross-group move into a specific slot in the target tab bar.
+        const sourceTabs = source.tabs.filter((t) => t.id !== tabId)
+        let sourceActive: string | null = source.activeTabId
+        if (source.activeTabId === tabId) {
+          sourceActive = sourceTabs.length > 0 ? sourceTabs[0].id : null
+        }
+        const targetTabs = target.tabs.slice()
+        const clamped = Math.max(0, Math.min(insertionIndex, targetTabs.length))
+        targetTabs.splice(clamped, 0, movingTab)
+        const next = new Map(prev)
+        if (sourceTabs.length === 0 && prev.size > 1) {
+          next.delete(sourceGroupId)
+        } else {
+          next.set(sourceGroupId, {
+            ...source,
+            tabs: sourceTabs,
+            activeTabId: sourceActive,
+          })
+        }
+        next.set(targetGroupId, {
+          ...target,
+          tabs: targetTabs,
+          activeTabId: tabId,
+        })
+        return next
+      })
+      setActiveGroupId(targetGroupId)
+    },
+    [],
+  )
+
   const handleDropOnGroup = useCallback(
     (e: React.DragEvent<HTMLDivElement>, targetGroupId: string) => {
       e.preventDefault()
@@ -1554,6 +1653,13 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
           {/* Tab bar */}
           <div
             data-workspace-group-tabbar={group.id}
+            onDragOver={(e) => {
+              if (!e.dataTransfer.types.includes(DRAG_MIME)) return
+              e.preventDefault()
+              e.stopPropagation()
+              e.dataTransfer.dropEffect = 'move'
+            }}
+            onDrop={(e) => handleTabBarDrop(e, group.id)}
             style={{
               display: 'flex',
               alignItems: 'center',

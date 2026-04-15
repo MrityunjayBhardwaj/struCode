@@ -9943,21 +9943,96 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
     (e, el) => {
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return "center";
+      const y = e.clientY - rect.top;
+      const SPLIT_ACTIVATE_Y = 80;
+      if (y < SPLIT_ACTIVATE_Y) return "center";
       const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-      if (Number.isNaN(x) || Number.isNaN(y)) return "center";
-      if (x >= 0.3 && x <= 0.7 && y >= 0.3 && y <= 0.7) {
+      const yFrac = y / rect.height;
+      if (Number.isNaN(x) || Number.isNaN(yFrac)) return "center";
+      if (x >= 0.3 && x <= 0.7 && yFrac >= 0.3 && yFrac <= 0.7) {
         return "center";
       }
       const distWest = x;
       const distEast = 1 - x;
-      const distNorth = y;
-      const distSouth = 1 - y;
+      const distNorth = yFrac;
+      const distSouth = 1 - yFrac;
       const min = Math.min(distWest, distEast, distNorth, distSouth);
       if (min === distWest) return "west";
       if (min === distEast) return "east";
       if (min === distNorth) return "north";
       return "south";
+    },
+    []
+  );
+  const handleTabBarDrop = useCallback(
+    (e, targetGroupId) => {
+      if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOverTarget(null);
+      const raw = e.dataTransfer.getData(DRAG_MIME);
+      if (!raw) return;
+      let payload;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      const { sourceGroupId, tabId } = payload;
+      const tabNodes = e.currentTarget.querySelectorAll("[data-workspace-tab]");
+      let insertionIndex = tabNodes.length;
+      for (let i2 = 0; i2 < tabNodes.length; i2++) {
+        const r = tabNodes[i2].getBoundingClientRect();
+        if (e.clientX < r.left + r.width / 2) {
+          insertionIndex = i2;
+          break;
+        }
+      }
+      setGroups((prev) => {
+        const source = prev.get(sourceGroupId);
+        const target = prev.get(targetGroupId);
+        if (!source || !target) return prev;
+        const movingTab = source.tabs.find((t) => t.id === tabId);
+        if (!movingTab) return prev;
+        if (sourceGroupId === targetGroupId) {
+          const fromIdx = source.tabs.findIndex((t) => t.id === tabId);
+          if (fromIdx === -1) return prev;
+          let toIdx = insertionIndex;
+          if (toIdx > fromIdx) toIdx -= 1;
+          if (toIdx === fromIdx) return prev;
+          const nextTabs = source.tabs.slice();
+          nextTabs.splice(fromIdx, 1);
+          nextTabs.splice(toIdx, 0, movingTab);
+          const next2 = new Map(prev);
+          next2.set(targetGroupId, { ...source, tabs: nextTabs });
+          return next2;
+        }
+        const sourceTabs = source.tabs.filter((t) => t.id !== tabId);
+        let sourceActive = source.activeTabId;
+        if (source.activeTabId === tabId) {
+          sourceActive = sourceTabs.length > 0 ? sourceTabs[0].id : null;
+        }
+        const targetTabs = target.tabs.slice();
+        const clamped = Math.max(0, Math.min(insertionIndex, targetTabs.length));
+        targetTabs.splice(clamped, 0, movingTab);
+        const next = new Map(prev);
+        if (sourceTabs.length === 0 && prev.size > 1) {
+          next.delete(sourceGroupId);
+        } else {
+          next.set(sourceGroupId, {
+            ...source,
+            tabs: sourceTabs,
+            activeTabId: sourceActive
+          });
+        }
+        next.set(targetGroupId, {
+          ...target,
+          tabs: targetTabs,
+          activeTabId: tabId
+        });
+        return next;
+      });
+      setActiveGroupId(targetGroupId);
     },
     []
   );
@@ -10282,6 +10357,13 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
               "div",
               {
                 "data-workspace-group-tabbar": group.id,
+                onDragOver: (e) => {
+                  if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = "move";
+                },
+                onDrop: (e) => handleTabBarDrop(e, group.id),
                 style: {
                   display: "flex",
                   alignItems: "center",
