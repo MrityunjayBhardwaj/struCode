@@ -1,6 +1,7 @@
 import type { EngineComponents } from '../../engine/LiveCodingEngine'
 import type { HapStream, HapEvent } from '../../engine/HapStream'
 import type { IRPattern } from '../../ir/IRPattern'
+import type { IREvent } from '../../ir/IREvent'
 import type { VizRenderer } from '../types'
 import { getVizConfig } from '../vizConfig'
 
@@ -21,6 +22,19 @@ export interface HydraStaveBag {
   scheduler: IRPattern | null
   /** Per-track schedulers keyed by trackId (e.g. "$0", "drums"). */
   tracks: Map<string, IRPattern>
+  /**
+   * Strudel-style pattern-to-hydra sugar. Returns a function Hydra can
+   * call per frame:
+   *
+   *   osc(() => stave.H('drums')() * 10).out(o0)
+   *
+   * Equivalent Strudel idiom is `osc(H('drums')).out(o0)`. The outer
+   * call picks the track; the inner call samples the track's current
+   * event and reads `field` (default: `gain`). Returns `0` when no
+   * event is active or the track doesn't exist — so sketches never
+   * NaN a shader uniform even during silence.
+   */
+  H: (trackId: string, field?: keyof IREvent) => () => number
 }
 
 export type HydraPatternFn = (synth: any, stave: HydraStaveBag) => void
@@ -136,10 +150,38 @@ export class HydraVizRenderer implements VizRenderer {
    * capture `scheduler` or `tracks` in a per-frame closure observe the
    * latest refs without needing a re-compile. This is the same
    * live-ref idiom the p5 sketch bag uses.
+   *
+   * `H` closes over `this.staveBag` (the object, not the current field
+   * values) so each per-frame invocation reads the current scheduler
+   * / tracks — survives `update()` re-assignments. No rebuild needed
+   * when the pattern runtime swaps underneath.
    */
-  private staveBag: HydraStaveBag = { scheduler: null, tracks: new Map() }
-
-  constructor(private pattern?: HydraPatternFn) {}
+  private staveBag: HydraStaveBag
+  constructor(private pattern?: HydraPatternFn) {
+    const bag: HydraStaveBag = {
+      scheduler: null,
+      tracks: new Map(),
+      H: (trackId, field = 'gain') => {
+        return () => {
+          const sched = bag.tracks.get(trackId) ?? bag.scheduler
+          if (!sched) return 0
+          const now = sched.now()
+          // Tight window — one event at or just past `now`. Patterns
+          // fire at discrete moments; a wider window risks grabbing
+          // the previous event after it's ended, producing a stepped
+          // "stale" read. 1ms matches typical FFT pump cadence and
+          // is below one audio sample at 48kHz, so a correctly
+          // scheduled event is caught at least once.
+          const events = sched.query(now, now + 0.001)
+          const ev = events[0]
+          if (!ev) return 0
+          const raw = ev[field]
+          return typeof raw === 'number' ? raw : 0
+        }
+      },
+    }
+    this.staveBag = bag
+  }
 
   mount(
     container: HTMLDivElement,

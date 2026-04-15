@@ -909,6 +909,19 @@ interface HydraStaveBag {
     scheduler: IRPattern | null;
     /** Per-track schedulers keyed by trackId (e.g. "$0", "drums"). */
     tracks: Map<string, IRPattern>;
+    /**
+     * Strudel-style pattern-to-hydra sugar. Returns a function Hydra can
+     * call per frame:
+     *
+     *   osc(() => stave.H('drums')() * 10).out(o0)
+     *
+     * Equivalent Strudel idiom is `osc(H('drums')).out(o0)`. The outer
+     * call picks the track; the inner call samples the track's current
+     * event and reads `field` (default: `gain`). Returns `0` when no
+     * event is active or the track doesn't exist — so sketches never
+     * NaN a shader uniform even during silence.
+     */
+    H: (trackId: string, field?: keyof IREvent) => () => number;
 }
 type HydraPatternFn = (synth: any, stave: HydraStaveBag) => void;
 /**
@@ -973,6 +986,11 @@ declare class HydraVizRenderer implements VizRenderer {
      * capture `scheduler` or `tracks` in a per-frame closure observe the
      * latest refs without needing a re-compile. This is the same
      * live-ref idiom the p5 sketch bag uses.
+     *
+     * `H` closes over `this.staveBag` (the object, not the current field
+     * values) so each per-frame invocation reads the current scheduler
+     * / tracks — survives `update()` re-assignments. No rebuild needed
+     * when the pattern runtime swaps underneath.
      */
     private staveBag;
     constructor(pattern?: HydraPatternFn | undefined);

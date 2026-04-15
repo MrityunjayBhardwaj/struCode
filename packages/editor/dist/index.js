@@ -4779,14 +4779,6 @@ var HydraVizRenderer = class {
     this.envelope = null;
     this.hapHandler = null;
     this.useEnvelope = false;
-    /**
-     * Live `stave` bag handed to the user's sketch function. Built once
-     * per mount; `update()` mutates its fields in place so sketches that
-     * capture `scheduler` or `tracks` in a per-frame closure observe the
-     * latest refs without needing a re-compile. This is the same
-     * live-ref idiom the p5 sketch bag uses.
-     */
-    this.staveBag = { scheduler: null, tracks: /* @__PURE__ */ new Map() };
     this.pumpAudio = (now) => {
       if (this.paused || this.destroyed) {
         this.rafId = null;
@@ -4821,6 +4813,23 @@ var HydraVizRenderer = class {
       }
       this.rafId = requestAnimationFrame(this.pumpAudio);
     };
+    const bag = {
+      scheduler: null,
+      tracks: /* @__PURE__ */ new Map(),
+      H: (trackId, field = "gain") => {
+        return () => {
+          const sched = bag.tracks.get(trackId) ?? bag.scheduler;
+          if (!sched) return 0;
+          const now = sched.now();
+          const events = sched.query(now, now + 1e-3);
+          const ev = events[0];
+          if (!ev) return 0;
+          const raw = ev[field];
+          return typeof raw === "number" ? raw : 0;
+        };
+      }
+    };
+    this.staveBag = bag;
   }
   mount(container, components, size, onError) {
     try {

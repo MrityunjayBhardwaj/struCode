@@ -17,6 +17,11 @@ import { describe, it, expect } from 'vitest'
 import { HydraVizRenderer, type HydraStaveBag } from '../renderers/HydraVizRenderer'
 import type { EngineComponents } from '../../engine/LiveCodingEngine'
 import type { IRPattern } from '../../ir/IRPattern'
+import type { IREvent } from '../../ir/IREvent'
+
+// Minimal IREvent shape — tests don't need every optional field, and
+// TS's structural typing lets us spread from a partial.
+type IREventLike = IREvent
 
 function makeScheduler(): IRPattern {
   return {
@@ -93,6 +98,106 @@ describe('HydraVizRenderer — stave bag', () => {
       .staveBag
     expect(bag.scheduler).toBeNull()
     expect(bag.tracks.size).toBe(0)
+  })
+
+  describe('H() sugar helper (issue #36)', () => {
+    function makePointScheduler(events: Record<number, Partial<IREventLike>>) {
+      const now = () => 0
+      const query = (begin: number, end: number): IREventLike[] => {
+        const out: IREventLike[] = []
+        for (const [tStr, ev] of Object.entries(events)) {
+          const t = Number(tStr)
+          if (t >= begin && t < end) {
+            out.push({
+              begin: t,
+              end: t + 0.1,
+              endClipped: t + 0.1,
+              note: 0,
+              freq: 0,
+              s: null,
+              gain: 1,
+              velocity: 1,
+              color: null,
+              ...ev,
+            })
+          }
+        }
+        return out
+      }
+      return { now, query } as IRPattern
+    }
+
+    it('returns a function callable per-frame that reads the current event', () => {
+      const renderer = new HydraVizRenderer()
+      const drums = makePointScheduler({
+        0: { gain: 0.7, note: 60 },
+      })
+      renderer.update({
+        queryable: {
+          scheduler: null,
+          trackSchedulers: new Map([['drums', drums]]),
+        },
+      } as Partial<EngineComponents>)
+
+      const bag = (renderer as unknown as { staveBag: HydraStaveBag })
+        .staveBag
+      const sampler = bag.H('drums') // default field = 'gain'
+      expect(typeof sampler).toBe('function')
+      expect(sampler()).toBe(0.7)
+
+      const noteSampler = bag.H('drums', 'note')
+      expect(noteSampler()).toBe(60)
+    })
+
+    it('returns 0 when the track is absent or no event is active', () => {
+      const renderer = new HydraVizRenderer()
+      const bag = (renderer as unknown as { staveBag: HydraStaveBag })
+        .staveBag
+      // No scheduler bound yet.
+      expect(bag.H('nonexistent')()).toBe(0)
+
+      // Scheduler bound, but no event at now.
+      const empty = makePointScheduler({})
+      renderer.update({
+        queryable: {
+          scheduler: null,
+          trackSchedulers: new Map([['drums', empty]]),
+        },
+      } as Partial<EngineComponents>)
+      expect(bag.H('drums')()).toBe(0)
+    })
+
+    it('falls back to combined scheduler when named track is missing', () => {
+      const renderer = new HydraVizRenderer()
+      const combined = makePointScheduler({ 0: { gain: 0.3 } })
+      renderer.update({
+        queryable: { scheduler: combined, trackSchedulers: new Map() },
+      } as Partial<EngineComponents>)
+      const bag = (renderer as unknown as { staveBag: HydraStaveBag })
+        .staveBag
+      // 'anything' not in tracks -> falls back to combined
+      expect(bag.H('anything')()).toBe(0.3)
+    })
+
+    it('H sampler observes live-ref swaps without re-acquiring from the bag', () => {
+      const renderer = new HydraVizRenderer()
+      const bag = (renderer as unknown as { staveBag: HydraStaveBag })
+        .staveBag
+      const sampler = bag.H('bass')
+
+      // No scheduler yet -> 0
+      expect(sampler()).toBe(0)
+
+      // Bind scheduler mid-run — same sampler closure must pick it up.
+      const bass = makePointScheduler({ 0: { gain: 0.9 } })
+      renderer.update({
+        queryable: {
+          scheduler: null,
+          trackSchedulers: new Map([['bass', bass]]),
+        },
+      } as Partial<EngineComponents>)
+      expect(sampler()).toBe(0.9)
+    })
   })
 
   it('destroy() clears the bag fields', () => {
