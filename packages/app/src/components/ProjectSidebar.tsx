@@ -97,9 +97,6 @@ export function ProjectSidebar({
           <button onClick={onNewProject} style={styles.iconBtn} title="New project">
             +
           </button>
-          <button onClick={onToggleCollapse} style={styles.iconBtn} title="Collapse">
-            {"◂"}
-          </button>
         </div>
       </div>
 

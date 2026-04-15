@@ -976,13 +976,6 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
           >
             📁
           </button>
-          <button
-            style={styles.iconBtn}
-            title="Collapse sidebar"
-            onClick={onToggleCollapse}
-          >
-            {"◂"}
-          </button>
         </div>
       </div>
 
