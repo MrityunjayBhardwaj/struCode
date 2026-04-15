@@ -2538,14 +2538,14 @@ var require_tree_sitter = __commonJS({
                             }
                           }
                           captureName = steps[1].name;
-                          const values = steps.slice(2).map((s) => s.value);
+                          const values2 = steps.slice(2).map((s) => s.value);
                           textPredicates[i2].push((captures) => {
                             const nodes = [];
                             for (const c of captures) {
                               if (c.name === captureName) nodes.push(c.node.text);
                             }
                             if (nodes.length === 0) return !isPositive;
-                            return nodes.every((text) => values.includes(text)) === isPositive;
+                            return nodes.every((text) => values2.includes(text)) === isPositive;
                           });
                           break;
                         default:
@@ -4460,7 +4460,7 @@ var StrudelEngine = class {
       for (let j = i2 + 1; j < lines.length; j++) {
         const next = lines[j].trim();
         if (next.startsWith("$:") || next.startsWith("setcps")) break;
-        if (next !== "") lastLineIdx = j;
+        if (next !== "" && !next.startsWith("//")) lastLineIdx = j;
       }
       result.set(key, { vizId, afterLine: lastLineIdx + 1 });
     }
@@ -5936,9 +5936,9 @@ function ensureUndoManager() {
     }
   };
   files.observe(filesObserver);
-  const listeners2 = /* @__PURE__ */ new Set();
+  const listeners3 = /* @__PURE__ */ new Set();
   const notify2 = () => {
-    for (const l of listeners2) l();
+    for (const l of listeners3) l();
   };
   const onStackItemAdded = () => notify2();
   const onStackItemPopped = () => notify2();
@@ -5948,7 +5948,7 @@ function ensureUndoManager() {
   um.on("stack-cleared", onStackCleared);
   active = {
     um,
-    listeners: listeners2,
+    listeners: listeners3,
     cleanup: () => {
       um.off("stack-item-added", onStackItemAdded);
       um.off("stack-item-popped", onStackItemPopped);
@@ -5985,10 +5985,10 @@ function canRedo() {
 }
 function subscribeToUndoState(cb) {
   ensureUndoManager();
-  const listeners2 = active.listeners;
-  listeners2.add(cb);
+  const listeners3 = active.listeners;
+  listeners3.add(cb);
   return () => {
-    listeners2.delete(cb);
+    listeners3.delete(cb);
   };
 }
 
@@ -6279,6 +6279,7 @@ function notify(id) {
 }
 var zoneOverrideSubscribers = /* @__PURE__ */ new Map();
 var wiredZoneObservers = /* @__PURE__ */ new Set();
+var PRUNE_ZONE_OVERRIDES_ORIGIN = /* @__PURE__ */ Symbol("prune-zone-overrides");
 function ensureZoneOverridesMap(fileId) {
   const filesMap = getFilesMap();
   const fileMap = filesMap.get(fileId);
@@ -6289,7 +6290,8 @@ function ensureZoneOverridesMap(fileId) {
     fileMap.set("zoneOverrides", overrides);
   }
   if (!wiredZoneObservers.has(fileId)) {
-    overrides.observeDeep(() => {
+    overrides.observeDeep((events) => {
+      if (events[0]?.transaction.origin === PRUNE_ZONE_OVERRIDES_ORIGIN) return;
       const subs = zoneOverrideSubscribers.get(fileId);
       if (subs) for (const cb of subs) cb();
     });
@@ -6335,7 +6337,7 @@ function pruneZoneOverrides(fileId, currentViz) {
   if (stale.length === 0) return;
   doc.transact(() => {
     for (const key of stale) overrides.delete(key);
-  }, STRUCT_ORIGIN);
+  }, PRUNE_ZONE_OVERRIDES_ORIGIN);
 }
 function subscribeToZoneOverrides(fileId, cb) {
   ensureDoc();
@@ -7363,6 +7365,12 @@ function revealLineInFile(fileId, line2) {
 var DEFAULT_FONT_SIZE = 14;
 var FONT_SIZE_STORAGE = "stave:editorFontSize";
 var MINIMAP_STORAGE = "stave:editorMinimap";
+var DEFAULT_UI_ICON_SIZE = 25;
+var UI_ICON_SIZE_STORAGE = "stave:uiIconSize";
+var UI_ICON_SIZE_VAR = "--ui-icon-size";
+var DEFAULT_INLINE_VIZ_ACTION_SIZE = 11;
+var INLINE_VIZ_ACTION_SIZE_STORAGE = "stave:inlineVizActionSize";
+var INLINE_VIZ_ACTION_SIZE_VAR = "--inline-viz-action-size";
 function safeLocalStorage() {
   try {
     if (typeof window === "undefined") return null;
@@ -7411,6 +7419,73 @@ function toggleEditorMinimap() {
   const next = !readMinimap();
   writeMinimap(next);
   for (const ed of editors.values()) ed.updateOptions?.({ minimap: { enabled: next } });
+}
+var uiIconSizeListeners = /* @__PURE__ */ new Set();
+function readUiIconSize() {
+  const ls = safeLocalStorage();
+  if (!ls) return DEFAULT_UI_ICON_SIZE;
+  const saved = Number(ls.getItem(UI_ICON_SIZE_STORAGE));
+  return Number.isFinite(saved) && saved >= 10 && saved <= 40 ? saved : DEFAULT_UI_ICON_SIZE;
+}
+function writeUiIconSize(size) {
+  safeLocalStorage()?.setItem(UI_ICON_SIZE_STORAGE, String(size));
+}
+function applyUiIconSizeVar(size) {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty(UI_ICON_SIZE_VAR, `${size}px`);
+}
+function getEditorUiIconSize() {
+  return readUiIconSize();
+}
+function setEditorUiIconSize(size) {
+  const clamped = Math.max(10, Math.min(40, Math.round(size)));
+  writeUiIconSize(clamped);
+  applyUiIconSizeVar(clamped);
+  for (const cb of Array.from(uiIconSizeListeners)) cb(clamped);
+}
+function onUiIconSizeChange(cb) {
+  uiIconSizeListeners.add(cb);
+  return () => {
+    uiIconSizeListeners.delete(cb);
+  };
+}
+function applyPersistedUiIconSize() {
+  applyUiIconSizeVar(readUiIconSize());
+}
+var inlineVizActionSizeListeners = /* @__PURE__ */ new Set();
+function readInlineVizActionSize() {
+  const ls = safeLocalStorage();
+  if (!ls) return DEFAULT_INLINE_VIZ_ACTION_SIZE;
+  const saved = Number(ls.getItem(INLINE_VIZ_ACTION_SIZE_STORAGE));
+  return Number.isFinite(saved) && saved >= 8 && saved <= 28 ? saved : DEFAULT_INLINE_VIZ_ACTION_SIZE;
+}
+function writeInlineVizActionSize(size) {
+  safeLocalStorage()?.setItem(INLINE_VIZ_ACTION_SIZE_STORAGE, String(size));
+}
+function applyInlineVizActionSizeVar(size) {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty(
+    INLINE_VIZ_ACTION_SIZE_VAR,
+    `${size}px`
+  );
+}
+function getInlineVizActionSize() {
+  return readInlineVizActionSize();
+}
+function setInlineVizActionSize(size) {
+  const clamped = Math.max(8, Math.min(28, Math.round(size)));
+  writeInlineVizActionSize(clamped);
+  applyInlineVizActionSizeVar(clamped);
+  for (const cb of Array.from(inlineVizActionSizeListeners)) cb(clamped);
+}
+function onInlineVizActionSizeChange(cb) {
+  inlineVizActionSizeListeners.add(cb);
+  return () => {
+    inlineVizActionSizeListeners.delete(cb);
+  };
+}
+function applyPersistedInlineVizActionSize() {
+  applyInlineVizActionSizeVar(readInlineVizActionSize());
 }
 function applyPersistedEditorOptions(editor) {
   applyOptionsToEditor(editor);
@@ -7790,7 +7865,7 @@ function createFloatingActionBar(editorDom) {
     border:1px solid var(--border-strong,#3a3a5a);
     border-radius:3px;padding:2px 6px;
     color:var(--text-primary,#e8e8f0);
-    font-size:11px;cursor:pointer;
+    font-size:var(--inline-viz-action-size,11px);cursor:pointer;
     font-family:system-ui,sans-serif;
     pointer-events:auto;
   `;
@@ -7829,6 +7904,29 @@ function createFloatingActionBar(editorDom) {
   return bar;
 }
 var FULL_CROP = { x: 0, y: 0, w: 1, h: 1 };
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function findVizCallLineForBlock(code, vizId, targetAfterLine) {
+  const lines = code.split("\n");
+  const vizPattern = new RegExp(
+    `\\.viz\\s*\\(\\s*["\`']${escapeRegex(vizId)}["\`']\\s*\\)`
+  );
+  for (let i2 = 0; i2 < lines.length; i2++) {
+    if (!lines[i2].trim().startsWith("$:")) continue;
+    let blockEnd = i2;
+    for (let j = i2 + 1; j < lines.length; j++) {
+      const next = lines[j].trim();
+      if (next.startsWith("$:") || next.startsWith("setcps")) break;
+      if (next !== "" && !next.startsWith("//")) blockEnd = j;
+    }
+    if (blockEnd + 1 !== targetAfterLine) continue;
+    for (let k = i2; k <= blockEnd; k++) {
+      if (vizPattern.test(lines[k])) return k + 1;
+    }
+  }
+  return null;
+}
 function addInlineViewZones(editor, components, vizDescriptors, actions, fileId) {
   const vizRequests = components.inlineViz?.vizRequests;
   if (!vizRequests || vizRequests.size === 0) {
@@ -7892,6 +7990,29 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       requestAnimationFrame(() => {
         applyLayout(container, container.querySelector("canvas"), layout);
       });
+      let vizDecoration = null;
+      const modelForMount = editor.getModel?.();
+      if (modelForMount) {
+        const vizLine = findVizCallLineForBlock(
+          modelForMount.getValue(),
+          vizId,
+          afterLine
+        );
+        if (vizLine !== null) {
+          const maxCol = modelForMount.getLineMaxColumn?.(vizLine) ?? 1;
+          vizDecoration = editor.createDecorationsCollection([
+            {
+              range: {
+                startLineNumber: vizLine,
+                startColumn: 1,
+                endLineNumber: vizLine,
+                endColumn: maxCol
+              },
+              options: { stickiness: 1 }
+            }
+          ]);
+        }
+      }
       const entry = {
         zoneId,
         zoneDesc,
@@ -7902,7 +8023,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
         vizId,
         presetId: null,
         native,
-        crop
+        crop,
+        vizDecoration
       };
       zoneEntries.push(entry);
       let refineAttempts = 0;
@@ -7981,6 +8103,44 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   };
   const layoutChangeDisposable = editor.onDidLayoutChange?.(recomputeAllZones);
   const scrollDisposable = editor.onDidScrollChange?.(recomputeAllZones);
+  const reAnchorZones = () => {
+    const model = editor.getModel?.();
+    if (!model) return;
+    const lines = model.getValue().split("\n");
+    const changed = [];
+    for (const entry of zoneEntries) {
+      if (!entry.vizDecoration) continue;
+      const ranges = entry.vizDecoration.getRanges();
+      if (ranges.length === 0) continue;
+      const vizLineIdx = ranges[0].startLineNumber - 1;
+      if (vizLineIdx < 0 || vizLineIdx >= lines.length) continue;
+      let blockStart = vizLineIdx;
+      while (blockStart >= 0 && !lines[blockStart].trim().startsWith("$:")) {
+        blockStart--;
+      }
+      if (blockStart < 0) continue;
+      let blockEnd = blockStart;
+      for (let j = blockStart + 1; j < lines.length; j++) {
+        const next = lines[j].trim();
+        if (next.startsWith("$:") || next.startsWith("setcps")) break;
+        if (next !== "" && !next.startsWith("//")) blockEnd = j;
+      }
+      const newAfterLine = blockEnd + 1;
+      if (newAfterLine !== entry.afterLine) {
+        entry.afterLine = newAfterLine;
+        entry.zoneDesc.afterLineNumber = newAfterLine;
+        changed.push(entry);
+      }
+    }
+    if (changed.length === 0) return;
+    editor.changeViewZones((accessor) => {
+      for (const entry of changed) {
+        accessor.removeZone(entry.zoneId);
+        entry.zoneId = accessor.addZone(entry.zoneDesc);
+      }
+    });
+  };
+  const contentChangeDisposable = editor.onDidChangeModelContent?.(reAnchorZones);
   const editorDom = editor.getDomNode?.();
   let floatingBar = null;
   let mouseMoveDisposable = null;
@@ -8048,6 +8208,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       scrollHitTestDisposable?.dispose?.();
       layoutChangeDisposable?.dispose?.();
       scrollDisposable?.dispose?.();
+      contentChangeDisposable?.dispose?.();
       editorDom?.removeEventListener("mouseleave", mouseLeaveHandler);
       floatingBar?.remove();
       renderers.forEach((r) => r.destroy());
@@ -8055,6 +8216,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       editor.changeViewZones((accessor) => {
         zoneEntries.forEach((e) => accessor.removeZone(e.zoneId));
       });
+      zoneEntries.forEach((e) => e.vizDecoration?.clear());
     },
     pause() {
       renderers.forEach((r) => r.pause());
@@ -8275,6 +8437,55 @@ function EditorView({
     }
   );
 }
+
+// src/workspace/preview/vizLiveToggle.ts
+var STORAGE_PREFIX = "stave:vizLive:";
+function safeLocalStorage2() {
+  try {
+    if (typeof window === "undefined") return null;
+    if (typeof window.localStorage?.getItem !== "function") return null;
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+var values = /* @__PURE__ */ new Map();
+var listeners2 = /* @__PURE__ */ new Map();
+function keyFor(fileId) {
+  return `${STORAGE_PREFIX}${fileId}`;
+}
+function getVizLive(fileId) {
+  const cached = values.get(fileId);
+  if (cached !== void 0) return cached;
+  const ls = safeLocalStorage2();
+  const raw = ls?.getItem(keyFor(fileId));
+  const on = raw === "0" ? false : true;
+  values.set(fileId, on);
+  return on;
+}
+function setVizLive(fileId, on) {
+  const prev = getVizLive(fileId);
+  if (prev === on) return;
+  values.set(fileId, on);
+  safeLocalStorage2()?.setItem(keyFor(fileId), on ? "1" : "0");
+  const set = listeners2.get(fileId);
+  if (set) for (const cb of Array.from(set)) cb(on);
+}
+function toggleVizLive(fileId) {
+  setVizLive(fileId, !getVizLive(fileId));
+}
+function onVizLiveChange(fileId, cb) {
+  let set = listeners2.get(fileId);
+  if (!set) {
+    set = /* @__PURE__ */ new Set();
+    listeners2.set(fileId, set);
+  }
+  set.add(cb);
+  return () => {
+    set.delete(cb);
+    if (set.size === 0) listeners2.delete(fileId);
+  };
+}
 function payloadKey(ref, payload) {
   if (payload === null) return "none";
   if (ref.kind === "file") return `file:${ref.fileId}`;
@@ -8305,6 +8516,11 @@ function PreviewView({
   const [reloadTick, setReloadTick] = React.useState(0);
   const [, forceSourcesRerender] = React.useState(0);
   const catchUpNeededRef = React.useRef(false);
+  const [liveOn, setLiveOn] = React.useState(() => getVizLive(fileId));
+  React.useEffect(() => {
+    setLiveOn(getVizLive(fileId));
+    return onVizLiveChange(fileId, setLiveOn);
+  }, [fileId]);
   React.useEffect(() => {
     if (!containerRef.current) return;
     applyTheme(containerRef.current, theme);
@@ -8325,6 +8541,10 @@ function PreviewView({
   React.useEffect(() => {
     if (!file) return;
     if (provider.reload === "manual") return;
+    if (!liveOn) {
+      catchUpNeededRef.current = true;
+      return;
+    }
     if (effectivelyHidden) {
       catchUpNeededRef.current = true;
       return;
@@ -8345,6 +8565,7 @@ function PreviewView({
     provider.reload,
     provider.debounceMs,
     effectivelyHidden,
+    liveOn,
     file
   ]);
   const prevEffectivelyHiddenRef = React.useRef(effectivelyHidden);
@@ -8356,28 +8577,15 @@ function PreviewView({
       setReloadTick((n) => n + 1);
     }
   }, [effectivelyHidden]);
-  const handleSourceChange = React.useCallback(
-    (e) => {
-      const value = e.target.value;
-      if (value === "default") {
-        onSourceRefChange({ kind: "default" });
-        return;
-      }
-      if (value === "none") {
-        onSourceRefChange({ kind: "none" });
-        return;
-      }
-      const colonIdx = value.indexOf(":");
-      if (colonIdx !== -1 && value.slice(0, colonIdx) === "file") {
-        onSourceRefChange({
-          kind: "file",
-          fileId: value.slice(colonIdx + 1)
-        });
-      }
-    },
-    [onSourceRefChange]
-  );
-  const selectorValue = sourceRef.kind === "default" ? "default" : sourceRef.kind === "none" ? "none" : `file:${sourceRef.fileId}`;
+  const prevLiveOnRef = React.useRef(liveOn);
+  React.useEffect(() => {
+    const wasOff = !prevLiveOnRef.current;
+    prevLiveOnRef.current = liveOn;
+    if (wasOff && liveOn && catchUpNeededRef.current) {
+      catchUpNeededRef.current = false;
+      setReloadTick((n) => n + 1);
+    }
+  }, [liveOn]);
   const providerNode = React__default.default.useMemo(() => {
     if (!file) return null;
     return provider.render({
@@ -8388,7 +8596,7 @@ function PreviewView({
     });
   }, [file, provider, audioPayload, effectivelyHidden, paused, reloadTick]);
   const providerKey = `${sourceRefKey(sourceRef)}:${payloadKey(sourceRef, audioPayload)}:${reloadTick}`;
-  return /* @__PURE__ */ jsxRuntime.jsxs(
+  return /* @__PURE__ */ jsxRuntime.jsx(
     "div",
     {
       ref: containerRef,
@@ -8402,94 +8610,30 @@ function PreviewView({
         background: "var(--background)",
         color: "var(--foreground)"
       },
-      children: [
-        /* @__PURE__ */ jsxRuntime.jsxs(
-          "div",
-          {
-            "data-workspace-view-slot": "preview-chrome",
-            style: {
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "4px 8px",
-              flexShrink: 0,
-              borderBottom: "1px solid var(--border)",
-              background: "var(--surface)",
-              fontSize: 11,
-              color: "var(--foreground-muted)"
-            },
-            children: [
-              /* @__PURE__ */ jsxRuntime.jsx("label", { htmlFor: `preview-source-${fileId}`, children: "Source:" }),
-              /* @__PURE__ */ jsxRuntime.jsxs(
-                "select",
-                {
-                  id: `preview-source-${fileId}`,
-                  "data-testid": `preview-source-select-${fileId}`,
-                  value: selectorValue,
-                  onChange: handleSourceChange,
-                  style: {
-                    background: "var(--surface-elevated)",
-                    color: "var(--foreground)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 3,
-                    padding: "2px 4px",
-                    fontSize: 11
-                  },
-                  children: [
-                    /* @__PURE__ */ jsxRuntime.jsx("option", { value: "default", children: "default (follow most recent)" }),
-                    /* @__PURE__ */ jsxRuntime.jsx("option", { value: "none", children: "none (demo mode)" }),
-                    workspaceAudioBus.listSources().map((source) => /* @__PURE__ */ jsxRuntime.jsxs("option", { value: `file:${source.sourceId}`, children: [
-                      source.playing ? "\u25CF " : "\u25CB ",
-                      source.label
-                    ] }, source.sourceId))
-                  ]
-                }
-              ),
-              audioPayload === null ? /* @__PURE__ */ jsxRuntime.jsx(
-                "span",
-                {
-                  "data-testid": `preview-demo-badge-${fileId}`,
-                  style: {
-                    marginLeft: "auto",
-                    padding: "1px 4px",
-                    borderRadius: 2,
-                    background: "var(--accent-dim)",
-                    color: "var(--accent)",
-                    fontSize: 9,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.3
-                  },
-                  children: "demo"
-                }
-              ) : null
-            ]
-          }
-        ),
-        /* @__PURE__ */ jsxRuntime.jsx("div", { style: { flex: 1, minHeight: 0, position: "relative" }, children: file ? /* @__PURE__ */ jsxRuntime.jsx(
-          "div",
-          {
-            "data-testid": `preview-provider-mount-${fileId}`,
-            "data-provider-key": providerKey,
-            style: { width: "100%", height: "100%" },
-            children: providerNode
+      children: /* @__PURE__ */ jsxRuntime.jsx("div", { style: { flex: 1, minHeight: 0, position: "relative" }, children: file ? /* @__PURE__ */ jsxRuntime.jsx(
+        "div",
+        {
+          "data-testid": `preview-provider-mount-${fileId}`,
+          "data-provider-key": providerKey,
+          style: { width: "100%", height: "100%" },
+          children: providerNode
+        },
+        providerKey
+      ) : /* @__PURE__ */ jsxRuntime.jsx(
+        "div",
+        {
+          "data-workspace-view-state": "loading",
+          style: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+            color: "var(--foreground-muted)",
+            fontSize: 12
           },
-          providerKey
-        ) : /* @__PURE__ */ jsxRuntime.jsx(
-          "div",
-          {
-            "data-workspace-view-state": "loading",
-            style: {
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              height: "100%",
-              color: "var(--foreground-muted)",
-              fontSize: 12
-            },
-            children: "Loading\u2026"
-          }
-        ) })
-      ]
+          children: "Loading\u2026"
+        }
+      ) })
     }
   );
 }
@@ -9826,21 +9970,96 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
     (e, el) => {
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return "center";
+      const y = e.clientY - rect.top;
+      const SPLIT_ACTIVATE_Y = 80;
+      if (y < SPLIT_ACTIVATE_Y) return "center";
       const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-      if (Number.isNaN(x) || Number.isNaN(y)) return "center";
-      if (x >= 0.3 && x <= 0.7 && y >= 0.3 && y <= 0.7) {
+      const yFrac = y / rect.height;
+      if (Number.isNaN(x) || Number.isNaN(yFrac)) return "center";
+      if (x >= 0.3 && x <= 0.7 && yFrac >= 0.3 && yFrac <= 0.7) {
         return "center";
       }
       const distWest = x;
       const distEast = 1 - x;
-      const distNorth = y;
-      const distSouth = 1 - y;
+      const distNorth = yFrac;
+      const distSouth = 1 - yFrac;
       const min = Math.min(distWest, distEast, distNorth, distSouth);
       if (min === distWest) return "west";
       if (min === distEast) return "east";
       if (min === distNorth) return "north";
       return "south";
+    },
+    []
+  );
+  const handleTabBarDrop = React.useCallback(
+    (e, targetGroupId) => {
+      if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOverTarget(null);
+      const raw = e.dataTransfer.getData(DRAG_MIME);
+      if (!raw) return;
+      let payload;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      const { sourceGroupId, tabId } = payload;
+      const tabNodes = e.currentTarget.querySelectorAll("[data-workspace-tab]");
+      let insertionIndex = tabNodes.length;
+      for (let i2 = 0; i2 < tabNodes.length; i2++) {
+        const r = tabNodes[i2].getBoundingClientRect();
+        if (e.clientX < r.left + r.width / 2) {
+          insertionIndex = i2;
+          break;
+        }
+      }
+      setGroups((prev) => {
+        const source = prev.get(sourceGroupId);
+        const target = prev.get(targetGroupId);
+        if (!source || !target) return prev;
+        const movingTab = source.tabs.find((t) => t.id === tabId);
+        if (!movingTab) return prev;
+        if (sourceGroupId === targetGroupId) {
+          const fromIdx = source.tabs.findIndex((t) => t.id === tabId);
+          if (fromIdx === -1) return prev;
+          let toIdx = insertionIndex;
+          if (toIdx > fromIdx) toIdx -= 1;
+          if (toIdx === fromIdx) return prev;
+          const nextTabs = source.tabs.slice();
+          nextTabs.splice(fromIdx, 1);
+          nextTabs.splice(toIdx, 0, movingTab);
+          const next2 = new Map(prev);
+          next2.set(targetGroupId, { ...source, tabs: nextTabs });
+          return next2;
+        }
+        const sourceTabs = source.tabs.filter((t) => t.id !== tabId);
+        let sourceActive = source.activeTabId;
+        if (source.activeTabId === tabId) {
+          sourceActive = sourceTabs.length > 0 ? sourceTabs[0].id : null;
+        }
+        const targetTabs = target.tabs.slice();
+        const clamped = Math.max(0, Math.min(insertionIndex, targetTabs.length));
+        targetTabs.splice(clamped, 0, movingTab);
+        const next = new Map(prev);
+        if (sourceTabs.length === 0 && prev.size > 1) {
+          next.delete(sourceGroupId);
+        } else {
+          next.set(sourceGroupId, {
+            ...source,
+            tabs: sourceTabs,
+            activeTabId: sourceActive
+          });
+        }
+        next.set(targetGroupId, {
+          ...target,
+          tabs: targetTabs,
+          activeTabId: tabId
+        });
+        return next;
+      });
+      setActiveGroupId(targetGroupId);
     },
     []
   );
@@ -10165,6 +10384,13 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
               "div",
               {
                 "data-workspace-group-tabbar": group.id,
+                onDragOver: (e) => {
+                  if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = "move";
+                },
+                onDrop: (e) => handleTabBarDrop(e, group.id),
                 style: {
                   display: "flex",
                   alignItems: "center",
@@ -10229,8 +10455,10 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
                           userSelect: "none"
                         },
                         children: [
-                          /* @__PURE__ */ jsxRuntime.jsx("span", { style: { fontSize: 9, opacity: 0.5 }, children: tab.kind === "editor" ? "\u25A1" : "\u25CE" }),
-                          /* @__PURE__ */ jsxRuntime.jsx("span", { children: tabFileName(tab) }),
+                          /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+                            tab.kind === "preview" ? "\u{1F3A5} " : "",
+                            tabFileName(tab)
+                          ] }),
                           /* @__PURE__ */ jsxRuntime.jsx(
                             "button",
                             {
@@ -10754,6 +10982,7 @@ var LiveCodingRuntime = class {
     this.isPlayingState = false;
     this.errorListeners = /* @__PURE__ */ new Set();
     this.playingChangedListeners = /* @__PURE__ */ new Set();
+    this.evaluateSuccessListeners = /* @__PURE__ */ new Set();
     /**
      * Unregister callback from the playback coordinator. Called in
      * `dispose()` to remove this runtime from the registry so its
@@ -10877,6 +11106,7 @@ var LiveCodingRuntime = class {
     this.firePlayingChanged(true);
     notifyPlaybackStarted(this.fileId);
     this.reconcileAutoRefresh();
+    this.fireEvaluateSuccess();
     return { error: null };
   }
   stop() {
@@ -10912,6 +11142,7 @@ var LiveCodingRuntime = class {
     this.isDisposed = true;
     this.errorListeners.clear();
     this.playingChangedListeners.clear();
+    this.evaluateSuccessListeners.clear();
     this.autoRefreshChangedListeners.clear();
     try {
       this.unregisterFromPlaybackCoordinator();
@@ -11039,6 +11270,15 @@ var LiveCodingRuntime = class {
       this.playingChangedListeners.delete(cb);
     };
   }
+  onEvaluateSuccess(cb) {
+    this.evaluateSuccessListeners.add(cb);
+    let unsubscribed = false;
+    return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      this.evaluateSuccessListeners.delete(cb);
+    };
+  }
   getBpm() {
     return this.currentBpm;
   }
@@ -11062,6 +11302,16 @@ var LiveCodingRuntime = class {
     for (const cb of snapshot) {
       try {
         cb(playing);
+      } catch {
+      }
+    }
+  }
+  fireEvaluateSuccess() {
+    if (this.evaluateSuccessListeners.size === 0) return;
+    const snapshot = Array.from(this.evaluateSuccessListeners);
+    for (const cb of snapshot) {
+      try {
+        cb();
       } catch {
       }
     }
@@ -12219,8 +12469,8 @@ var Ring = class _Ring {
     return this.items[Symbol.iterator]();
   }
 };
-function ring(...values) {
-  return new Ring(values);
+function ring(...values2) {
+  return new Ring(values2);
 }
 function knit(...args2) {
   const result = [];
@@ -12746,10 +12996,10 @@ var ProgramBuilder = class _ProgramBuilder {
     this.steps.push({ tag: "thread", body: inner.build() });
     return this;
   }
-  at(times, values, buildFn) {
+  at(times, values2, buildFn) {
     for (let i2 = 0; i2 < times.length; i2++) {
       const offset = times[i2];
-      const val = values ? values[i2 % values.length] : i2;
+      const val = values2 ? values2[i2 % values2.length] : i2;
       const inner = new _ProgramBuilder(this.rng.next() * 4294967295);
       inner.currentSynth = this.currentSynth;
       inner.densityFactor = this.densityFactor;
@@ -13012,8 +13262,8 @@ var ProgramBuilder = class _ProgramBuilder {
    * Create a ring of booleans from 0/1 values.
    * `bools(1,0,1,0)` → Ring([true, false, true, false])
    */
-  bools(...values) {
-    return new Ring(values.map((v) => v !== 0));
+  bools(...values2) {
+    return new Ring(values2.map((v) => v !== 0));
   }
   /**
    * Play a sequence of notes with timed intervals.
@@ -18229,10 +18479,10 @@ var SonicPiEngine = class {
           b.stop();
         });
       };
-      const topLevelAt = (times, values, fn) => {
+      const topLevelAt = (times, values2, fn) => {
         for (let i2 = 0; i2 < times.length; i2++) {
           const t = times[i2];
-          const v = values ? values[i2] : void 0;
+          const v = values2 ? values2[i2] : void 0;
           const name2 = `__at_${Date.now()}_${i2}_${randomSuffix()}`;
           fxAwareWrappedLiveLoop(name2, (b) => {
             if (t > 0) b.sleep(t);
@@ -19984,29 +20234,6 @@ var SONICPI_RUNTIME = {
   createEngine: () => new SonicPiEngine2(),
   renderChrome: (ctx) => /* @__PURE__ */ jsxRuntime.jsx(SonicPiChrome, { ...ctx })
 };
-var btnStyle = {
-  background: "none",
-  border: "1px solid var(--border)",
-  borderRadius: 3,
-  color: "var(--foreground-muted)",
-  cursor: "pointer",
-  padding: "2px 8px",
-  fontSize: 10,
-  fontFamily: "inherit"
-};
-var primaryBtnStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: 4,
-  padding: "4px 10px",
-  borderRadius: 4,
-  border: "none",
-  cursor: "pointer",
-  fontSize: 11,
-  fontFamily: "var(--font-mono)",
-  background: "var(--accent)",
-  color: "#fff"
-};
 function refToString(ref) {
   if (ref.kind === "default") return "default";
   if (ref.kind === "none") return "none";
@@ -20020,27 +20247,59 @@ function stringToRef(value) {
   }
   return { kind: "default" };
 }
+var primaryBtnStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+  padding: "4px 10px",
+  borderRadius: 4,
+  border: "none",
+  cursor: "pointer",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  background: "var(--accent)",
+  color: "#fff"
+};
 function VizEditorChrome({
   file,
   onOpenPreview,
-  onToggleBackground,
-  onSave,
   previewOpen,
   previewPaused,
   onTogglePausePreview,
   onChangePreviewSource
 }) {
-  const ext = file.language === "p5js" ? "p5" : file.language;
+  const [liveOn, setLiveOn] = React.useState(() => getVizLive(file.id));
+  React.useEffect(() => {
+    setLiveOn(getVizLive(file.id));
+    return onVizLiveChange(file.id, setLiveOn);
+  }, [file.id]);
   const [selectedSource, setSelectedSource] = React.useState({
     kind: "default"
   });
   const [, forceSourcesRerender] = React.useState(0);
   React.useEffect(() => {
-    const unsub = workspaceAudioBus.onSourcesChanged(() => {
+    return workspaceAudioBus.onSourcesChanged(() => {
       forceSourcesRerender((n) => n + 1);
     });
-    return unsub;
   }, []);
+  const handleSourceChange = React.useCallback(
+    (e) => {
+      const next = stringToRef(e.target.value);
+      const prevBuiltin = selectedSource.kind === "file" ? findBuiltinExampleSource(selectedSource.fileId) : void 0;
+      const nextBuiltin = next.kind === "file" ? findBuiltinExampleSource(next.fileId) : void 0;
+      setSelectedSource(next);
+      if (previewOpen && onChangePreviewSource) {
+        if (nextBuiltin && !previewPaused) {
+          nextBuiltin.startIfIdle();
+        }
+        if (prevBuiltin && prevBuiltin !== nextBuiltin) {
+          prevBuiltin.stopIfRunning();
+        }
+        onChangePreviewSource(next);
+      }
+    },
+    [previewOpen, previewPaused, onChangePreviewSource, selectedSource]
+  );
   const handlePrimaryButtonClick = React.useCallback(() => {
     if (previewOpen && onTogglePausePreview) {
       onTogglePausePreview();
@@ -20055,28 +20314,6 @@ function VizEditorChrome({
   const buttonState = !previewOpen ? "closed" : previewPaused ? "paused" : "running";
   const buttonLabel = buttonState === "closed" ? "\u25B6 Preview" : buttonState === "paused" ? "\u25B6 Play" : "\u25A0 Stop";
   const buttonTitle = buttonState === "closed" ? "Open preview to side (Cmd+K V)" : buttonState === "paused" ? "Resume preview rendering" : "Pause preview rendering (tab stays open)";
-  const busSources = workspaceAudioBus.listSources();
-  const patternSources = busSources.filter(
-    (s) => !BUILTIN_SOURCE_IDS.has(s.sourceId)
-  );
-  const handleSourceChange = React.useCallback(
-    (e) => {
-      const ref = stringToRef(e.target.value);
-      const prevBuiltin = selectedSource.kind === "file" ? findBuiltinExampleSource(selectedSource.fileId) : void 0;
-      const nextBuiltin = ref.kind === "file" ? findBuiltinExampleSource(ref.fileId) : void 0;
-      setSelectedSource(ref);
-      if (previewOpen && onChangePreviewSource) {
-        if (nextBuiltin && !previewPaused) {
-          nextBuiltin.startIfIdle();
-        }
-        if (prevBuiltin && prevBuiltin !== nextBuiltin) {
-          prevBuiltin.stopIfRunning();
-        }
-        onChangePreviewSource(ref);
-      }
-    },
-    [previewOpen, previewPaused, onChangePreviewSource, selectedSource]
-  );
   return /* @__PURE__ */ jsxRuntime.jsxs(
     "div",
     {
@@ -20105,23 +20342,6 @@ function VizEditorChrome({
           }
         ),
         /* @__PURE__ */ jsxRuntime.jsx(
-          "span",
-          {
-            style: {
-              background: "rgba(117,186,255,0.1)",
-              color: "#75baff",
-              padding: "1px 6px",
-              borderRadius: 3,
-              fontSize: 10,
-              fontWeight: 600,
-              textTransform: "uppercase",
-              letterSpacing: 0.5
-            },
-            children: ext
-          }
-        ),
-        /* @__PURE__ */ jsxRuntime.jsx("div", { style: { width: 1, height: 14, background: "var(--border)" } }),
-        /* @__PURE__ */ jsxRuntime.jsx(
           "label",
           {
             htmlFor: `viz-chrome-source-${file.id}`,
@@ -20148,78 +20368,42 @@ function VizEditorChrome({
             },
             children: [
               /* @__PURE__ */ jsxRuntime.jsx("option", { value: "default", children: "default (follow most recent)" }),
-              /* @__PURE__ */ jsxRuntime.jsx("optgroup", { label: "built-in examples", children: BUILTIN_EXAMPLE_SOURCES.map((src) => /* @__PURE__ */ jsxRuntime.jsx(
-                "option",
-                {
-                  value: `file:${src.sourceId}`,
-                  children: src.label
-                },
-                src.sourceId
-              )) }),
-              patternSources.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("optgroup", { label: "playing patterns", children: patternSources.map((source) => /* @__PURE__ */ jsxRuntime.jsxs(
-                "option",
-                {
-                  value: `file:${source.sourceId}`,
-                  children: [
-                    source.playing ? "\u25CF " : "\u25CB ",
-                    source.label
-                  ]
-                },
-                source.sourceId
-              )) }),
+              /* @__PURE__ */ jsxRuntime.jsx("optgroup", { label: "built-in examples", children: BUILTIN_EXAMPLE_SOURCES.map((src) => /* @__PURE__ */ jsxRuntime.jsx("option", { value: `file:${src.sourceId}`, children: src.label }, src.sourceId)) }),
+              (() => {
+                const patternSources = workspaceAudioBus.listSources().filter((s) => !BUILTIN_SOURCE_IDS.has(s.sourceId));
+                if (patternSources.length === 0) return null;
+                return /* @__PURE__ */ jsxRuntime.jsx("optgroup", { label: "playing patterns", children: patternSources.map((source) => /* @__PURE__ */ jsxRuntime.jsxs("option", { value: `file:${source.sourceId}`, children: [
+                  source.playing ? "\u25CF " : "\u25CB ",
+                  source.label
+                ] }, source.sourceId)) });
+              })(),
               /* @__PURE__ */ jsxRuntime.jsx("option", { value: "none", children: "none (demo mode)" })
             ]
           }
         ),
-        /* @__PURE__ */ jsxRuntime.jsx("div", { style: { width: 1, height: 14, background: "var(--border)" } }),
-        /* @__PURE__ */ jsxRuntime.jsxs(
+        /* @__PURE__ */ jsxRuntime.jsx("div", { style: { flex: 1 } }),
+        /* @__PURE__ */ jsxRuntime.jsx(
           "button",
           {
-            "data-testid": "viz-chrome-background",
-            onClick: onToggleBackground,
-            title: "Toggle background preview (Cmd+K B)",
-            style: btnStyle,
-            children: [
-              "\u25A2",
-              " Background"
-            ]
-          }
-        ),
-        /* @__PURE__ */ jsxRuntime.jsx("div", { style: { flex: 1 } }),
-        /* @__PURE__ */ jsxRuntime.jsxs(
-          "span",
-          {
-            "data-testid": "viz-chrome-live-indicator",
-            title: "Hot reload is on \u2014 preview updates as you type",
+            "data-testid": "viz-chrome-live-toggle",
+            "data-live-mode": liveOn ? "on" : "off",
+            onClick: () => toggleVizLive(file.id),
+            title: liveOn ? "Live mode ON \u2014 preview re-renders on edit" : "Live mode OFF \u2014 click to resume live updates",
             style: {
               display: "inline-flex",
               alignItems: "center",
               gap: 4,
-              padding: "2px 8px",
+              padding: "3px 8px",
               borderRadius: 3,
               fontSize: 10,
               fontFamily: "inherit",
-              background: "var(--accent-dim)",
-              color: "var(--accent-strong, var(--accent))",
-              border: "1px solid var(--accent-dim)",
-              userSelect: "none"
+              cursor: "pointer",
+              userSelect: "none",
+              background: liveOn ? "var(--accent-dim)" : "none",
+              color: liveOn ? "var(--accent-strong, var(--accent))" : "var(--foreground-muted)",
+              border: `1px solid ${liveOn ? "var(--accent-dim)" : "var(--border)"}`
             },
-            children: [
-              "\u27F3",
-              " live"
-            ]
-          }
-        ),
-        /* @__PURE__ */ jsxRuntime.jsxs(
-          "button",
-          {
-            onClick: onSave,
-            title: "Save (Cmd+S)",
-            style: btnStyle,
-            children: [
-              "\u2318",
-              "S"
-            ]
+            children: liveOn ? "\u27F3 live" : "\u27F3"
           }
         )
       ]
@@ -20450,6 +20634,7 @@ exports.EditorView = EditorView;
 exports.HYDRA_VIZ = HYDRA_VIZ;
 exports.HapStream = HapStream;
 exports.HydraVizRenderer = HydraVizRenderer;
+exports.INLINE_VIZ_ACTION_SIZE_VAR = INLINE_VIZ_ACTION_SIZE_VAR;
 exports.IR = IR;
 exports.IREventCollectSystem = IREventCollectSystem;
 exports.LIGHT_THEME_TOKENS = LIGHT_THEME_TOKENS;
@@ -20475,6 +20660,7 @@ exports.SplitPane = SplitPane;
 exports.StrudelEditor = StrudelEditor;
 exports.StrudelEngine = StrudelEngine;
 exports.StrudelParseSystem = StrudelParseSystem;
+exports.UI_ICON_SIZE_VAR = UI_ICON_SIZE_VAR;
 exports.VizDropdown = VizDropdown;
 exports.VizEditor = VizEditor;
 exports.VizPanel = VizPanel;
@@ -20482,7 +20668,9 @@ exports.VizPicker = VizPicker;
 exports.VizPresetStore = VizPresetStore;
 exports.WavEncoder = WavEncoder;
 exports.WorkspaceShell = WorkspaceShell;
+exports.applyPersistedInlineVizActionSize = applyPersistedInlineVizActionSize;
 exports.applyPersistedTheme = applyPersistedTheme;
+exports.applyPersistedUiIconSize = applyPersistedUiIconSize;
 exports.applyTheme = applyTheme;
 exports.bumpEditorFontSize = bumpEditorFontSize;
 exports.bundledPresetId = bundledPresetId;
@@ -20506,8 +20694,10 @@ exports.getChildOrder = getChildOrder;
 exports.getEditorFontSize = getEditorFontSize;
 exports.getEditorMinimap = getEditorMinimap;
 exports.getEditorTheme = getEditorTheme;
+exports.getEditorUiIconSize = getEditorUiIconSize;
 exports.getFile = getFile;
 exports.getFolderOrder = getFolderOrder;
+exports.getInlineVizActionSize = getInlineVizActionSize;
 exports.getLastOpenedProject = getLastOpenedProject;
 exports.getNamedViz = getNamedViz;
 exports.getPresetIdForFile = getPresetIdForFile;
@@ -20538,8 +20728,10 @@ exports.merge = merge;
 exports.mountVizRenderer = mountVizRenderer;
 exports.normalizeStrudelHap = normalizeStrudelHap;
 exports.noteToMidi = noteToMidi;
+exports.onInlineVizActionSizeChange = onInlineVizActionSizeChange;
 exports.onNamedVizChanged = onNamedVizChanged;
 exports.onThemeChange = onThemeChange;
+exports.onUiIconSizeChange = onUiIconSizeChange;
 exports.parseMini = parseMini;
 exports.parseStrudel = parseStrudel;
 exports.patternFromJSON = patternFromJSON;
@@ -20569,7 +20761,9 @@ exports.setChildOrder = setChildOrder;
 exports.setContent = setContent;
 exports.setEditorFontSize = setEditorFontSize;
 exports.setEditorTheme = setEditorTheme;
+exports.setEditorUiIconSize = setEditorUiIconSize;
 exports.setFolderOrder = setFolderOrder;
+exports.setInlineVizActionSize = setInlineVizActionSize;
 exports.setSubfolderOrder = setSubfolderOrder;
 exports.setVizConfig = setVizConfig;
 exports.setZoneCropOverride = setZoneCropOverride;

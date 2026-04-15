@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Icon } from "./Icon";
 
 interface MenuBarProps {
   projectName: string;
@@ -15,6 +16,8 @@ interface MenuBarProps {
   onVersionHistory: () => void;
   onToggleSidebar: () => void;
   sidebarCollapsed: boolean;
+  onToggleZenMode: () => void;
+  zenMode: boolean;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -36,6 +39,8 @@ export function MenuBar({
   onVersionHistory,
   onToggleSidebar,
   sidebarCollapsed,
+  onToggleZenMode,
+  zenMode,
   onUndo,
   onRedo,
   canUndo,
@@ -96,6 +101,11 @@ export function MenuBar({
           shortcut="⌘B"
           onClick={() => clickItem(onToggleSidebar)}
         />
+        <MenuItem
+          label={zenMode ? "Exit Zen Mode" : "Zen Mode (Fullscreen)"}
+          shortcut="⌘K Z"
+          onClick={() => clickItem(onToggleZenMode)}
+        />
       </MenuButton>
 
       <MenuButton label="Help" open={openMenu === "help"} onClick={() => setOpenMenu(openMenu === "help" ? null : "help")}>
@@ -110,7 +120,9 @@ export function MenuBar({
           onClick={() => setOpenMenu(openMenu === "settings" ? null : "settings")}
           title="Settings"
           aria-label="Settings"
-        >⚙</button>
+        >
+          <Icon name="settings-gear" size="var(--ui-icon-size, 25px)" />
+        </button>
         {openMenu === "settings" && (
           <div style={{ ...styles.dropdown, right: 0, left: "auto" }}>
             <MenuItem label="Editor Settings..." onClick={() => clickItem(onOpenEditorSettings)} />
@@ -247,7 +259,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     color: "var(--text-icon)",
     cursor: "pointer",
-    fontSize: 16,
+    fontSize: "var(--ui-icon-size, 25px)",
     padding: "0 12px",
     height: "100%",
     lineHeight: 1,

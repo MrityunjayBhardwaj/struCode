@@ -46,6 +46,8 @@ import {
   toggleEditorMinimap,
   cycleEditorTheme,
   applyPersistedTheme,
+  applyPersistedUiIconSize,
+  applyPersistedInlineVizActionSize,
 } from "@stave/editor";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { EditorSettingsModal } from "./EditorSettingsModal";
@@ -56,7 +58,6 @@ import { CommandPalette, type PaletteRow } from "./CommandPalette";
 import { WorkspaceSearchView, type WorkspaceSearchViewHandle } from "./WorkspaceSearchView";
 import { ActivityBar } from "./ActivityBar";
 import { StatusBar, type StatusBarRuntimeState } from "./StatusBar";
-import { Breadcrumbs } from "./Breadcrumbs";
 import { registerCommand } from "../commands/registry";
 import { installKeybindingDispatcher } from "../commands/keybindings";
 import { registerPanel } from "../panels/registry";
@@ -114,7 +115,11 @@ export function StaveApp({ initialProject }: StaveAppProps) {
 
   // Apply persisted theme on first mount so the user's choice survives
   // reloads. Runs once — later theme changes go through toggleEditorTheme.
-  useEffect(() => { applyPersistedTheme(); }, []);
+  useEffect(() => {
+    applyPersistedTheme();
+    applyPersistedUiIconSize();
+    applyPersistedInlineVizActionSize();
+  }, []);
   const [zenMode, setZenMode] = useState(false);
   const searchViewRef = useRef<WorkspaceSearchViewHandle | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -208,6 +213,28 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [zenMode]);
+
+  // Drive the browser's Fullscreen API alongside zen mode so the URL
+  // bar / tab strip / window chrome all disappear. Browsers require a
+  // user gesture to enter fullscreen, which this effect inherits because
+  // zenMode is only ever flipped by a click or shortcut. If the user
+  // exits fullscreen via the browser's own affordance (F11, Esc on
+  // some browsers), keep the React state in sync via fullscreenchange.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const fsEl = () => document.fullscreenElement;
+    if (zenMode && !fsEl()) {
+      // Best-effort — Safari throws if the gesture isn't trusted.
+      void document.documentElement.requestFullscreen?.().catch(() => {});
+    } else if (!zenMode && fsEl()) {
+      void document.exitFullscreen?.().catch(() => {});
+    }
+    const sync = () => {
+      if (!fsEl() && zenMode) setZenMode(false);
+    };
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
   }, [zenMode]);
 
   // Subscribe to the structural undo manager so Edit menu items can
@@ -591,28 +618,28 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     unregs.push(registerPanel({
       id: "explorer",
       title: "Explorer",
-      icon: "▢",
+      icon: "files",
       order: 10,
       render: () => null,
     }));
     unregs.push(registerPanel({
       id: "search",
       title: "Search",
-      icon: "⌕",
+      icon: "search",
       order: 20,
       render: () => null,
     }));
     unregs.push(registerPanel({
       id: "snapshots",
       title: "Version History",
-      icon: "⟳",
+      icon: "history",
       order: 30,
       render: () => null,
     }));
     unregs.push(registerPanel({
       id: "outline",
       title: "Outline",
-      icon: "≡",
+      icon: "symbol-class",
       order: 40,
       render: () => null,
     }));
@@ -641,31 +668,31 @@ export function StaveApp({ initialProject }: StaveAppProps) {
 
   return (
     <div style={styles.root}>
-      {!zenMode && (
-        <MenuBar
-          projectName={activeProject.name}
-          onOpenEditorSettings={() => setEditorSettingsOpen(true)}
-          onOpenShortcuts={() => setShortcutsOpen(true)}
-          onNewProject={() => setTemplateModalOpen(true)}
-          onOpenProject={() => setSwitcherModalOpen(true)}
-          onRenameProject={handleRenameActiveProject}
-          onExportProject={() => {
-            exportProjectAsZip(activeProject).catch((err) => {
-              console.error("[stave] export failed:", err);
-              showToast("Export failed — see console for details.", "error");
-            });
-          }}
-          onImportProject={triggerImportPicker}
-          onShareProject={handleShareProject}
-          onVersionHistory={openSnapshotPanel}
-          onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-          sidebarCollapsed={sidebarCollapsed}
-          onUndo={() => { undo(); }}
-          onRedo={() => { redo(); }}
-          canUndo={undoState.canUndo}
-          canRedo={undoState.canRedo}
-        />
-      )}
+      <MenuBar
+        projectName={activeProject.name}
+        onOpenEditorSettings={() => setEditorSettingsOpen(true)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+        onNewProject={() => setTemplateModalOpen(true)}
+        onOpenProject={() => setSwitcherModalOpen(true)}
+        onRenameProject={handleRenameActiveProject}
+        onExportProject={() => {
+          exportProjectAsZip(activeProject).catch((err) => {
+            console.error("[stave] export failed:", err);
+            showToast("Export failed — see console for details.", "error");
+          });
+        }}
+        onImportProject={triggerImportPicker}
+        onShareProject={handleShareProject}
+        onVersionHistory={openSnapshotPanel}
+        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleZenMode={() => setZenMode((z) => !z)}
+        zenMode={zenMode}
+        onUndo={() => { undo(); }}
+        onRedo={() => { redo(); }}
+        canUndo={undoState.canUndo}
+        canRedo={undoState.canRedo}
+      />
 
       <div style={styles.main}>
         {!zenMode && (
@@ -726,15 +753,6 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         )}
 
         <div style={styles.editorArea}>
-          {!zenMode && (
-            <Breadcrumbs
-              path={
-                activeFileId
-                  ? listWorkspaceFiles().find((f) => f.id === activeFileId)?.path ?? null
-                  : null
-              }
-            />
-          )}
           <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
             {switching ? (
               <div style={styles.switchingOverlay}>Loading project...</div>

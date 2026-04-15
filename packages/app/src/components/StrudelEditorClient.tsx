@@ -228,6 +228,19 @@ export default function StrudelEditorClient({
         return next;
       });
     });
+    // Live-mode re-eval has no user-driven play() to clear the error state,
+    // so a transient syntax error stays visible until stop+play. Clearing on
+    // every successful evaluate gives the "fix-and-continue" flow its natural
+    // feedback: marker appears while broken, disappears the moment it parses.
+    runtime.onEvaluateSuccess(() => {
+      setRuntimeStates(prev => {
+        const next = new Map(prev);
+        const cur = next.get(fileId) ?? { isPlaying: false, error: null, autoRefresh: false };
+        if (cur.error === null) return prev;
+        next.set(fileId, { ...cur, error: null });
+        return next;
+      });
+    });
     runtime.onAutoRefreshChanged((enabled: boolean) => {
       setRuntimeStates(prev => {
         const next = new Map(prev);

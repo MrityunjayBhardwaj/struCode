@@ -395,6 +395,50 @@ describe('LiveCodingRuntime', () => {
       engine.triggerRuntimeError(new Error('boom'))
       expect(errorListener).not.toHaveBeenCalled()
     })
+
+    // Regression for #26 — live-mode clears error after a fix.
+    it('fires onEvaluateSuccess when play() evaluates cleanly so clients can clear stale error state', async () => {
+      const engine = createMockEngine()
+      engine.setComponents({
+        streaming: makeStreamingComponent(),
+        audio: makeAudioComponent(),
+      })
+      const runtime = new LiveCodingRuntime('file-1', engine, () => 'code')
+      const successListener = vi.fn()
+      runtime.onEvaluateSuccess(successListener)
+
+      // First play: clean eval → fires success.
+      const r1 = await runtime.play()
+      expect(r1.error).toBeNull()
+      expect(successListener).toHaveBeenCalledTimes(1)
+
+      // Simulate live-mode re-eval with a syntax error.
+      engine.setEvalResult({ error: new Error('parse error') })
+      const r2 = await runtime.play()
+      expect(r2.error).not.toBeNull()
+      expect(successListener).toHaveBeenCalledTimes(1) // not re-fired on failure
+
+      // User fixes the syntax — next re-eval succeeds → fires again.
+      engine.setEvalResult({ error: undefined })
+      const r3 = await runtime.play()
+      expect(r3.error).toBeNull()
+      expect(successListener).toHaveBeenCalledTimes(2)
+    })
+
+    it('onEvaluateSuccess unsubscribe is idempotent', async () => {
+      const engine = createMockEngine()
+      engine.setComponents({
+        streaming: makeStreamingComponent(),
+        audio: makeAudioComponent(),
+      })
+      const runtime = new LiveCodingRuntime('file-1', engine, () => 'code')
+      const listener = vi.fn()
+      const off = runtime.onEvaluateSuccess(listener)
+      off()
+      off()
+      await runtime.play()
+      expect(listener).not.toHaveBeenCalled()
+    })
   })
 
   // -------------------------------------------------------------------------

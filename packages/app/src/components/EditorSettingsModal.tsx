@@ -6,6 +6,10 @@ import {
   setEditorFontSize,
   getEditorMinimap,
   toggleEditorMinimap,
+  getEditorUiIconSize,
+  setEditorUiIconSize,
+  getInlineVizActionSize,
+  setInlineVizActionSize,
   getEditorTheme,
   setEditorTheme,
   type EditorTheme,
@@ -25,12 +29,16 @@ const THEME_OPTIONS: { value: EditorTheme; label: string }[] = [
 export function EditorSettingsModal({ open, onClose }: Props) {
   const [fontSize, setFontSize] = useState(14);
   const [minimap, setMinimap] = useState(false);
+  const [iconSize, setIconSize] = useState(25);
+  const [vizActionSize, setVizActionSize] = useState(11);
   const [theme, setTheme] = useState<EditorTheme>("dark");
 
   useEffect(() => {
     if (!open) return;
     setFontSize(getEditorFontSize());
     setMinimap(getEditorMinimap());
+    setIconSize(getEditorUiIconSize());
+    setVizActionSize(getInlineVizActionSize());
     setTheme(getEditorTheme());
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
@@ -71,6 +79,36 @@ export function EditorSettingsModal({ open, onClose }: Props) {
               />
               <span>{minimap ? "Enabled" : "Disabled"}</span>
             </label>
+          </Row>
+          <Row label="Icon size">
+            <input
+              type="range"
+              min={10}
+              max={32}
+              value={iconSize}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setIconSize(v);
+                setEditorUiIconSize(v);
+              }}
+              style={s.range}
+            />
+            <span style={s.value}>{iconSize}px</span>
+          </Row>
+          <Row label="Inline viz buttons">
+            <input
+              type="range"
+              min={8}
+              max={28}
+              value={vizActionSize}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setVizActionSize(v);
+                setInlineVizActionSize(v);
+              }}
+              style={s.range}
+            />
+            <span style={s.value}>{vizActionSize}px</span>
           </Row>
           <Row label="Theme">
             <select

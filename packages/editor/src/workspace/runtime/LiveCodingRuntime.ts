@@ -204,6 +204,7 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
 
   private readonly errorListeners = new Set<(err: Error) => void>()
   private readonly playingChangedListeners = new Set<(playing: boolean) => void>()
+  private readonly evaluateSuccessListeners = new Set<() => void>()
 
   /**
    * Unregister callback from the playback coordinator. Called in
@@ -390,6 +391,12 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     // installs now; if not, this is a no-op.
     this.reconcileAutoRefresh()
 
+    // Signal successful evaluate so clients can clear any lingering error
+    // state from a previous failed attempt — especially during live-mode
+    // re-evals where the client otherwise has no signal that the syntax
+    // error is gone.
+    this.fireEvaluateSuccess()
+
     return { error: null }
   }
 
@@ -448,6 +455,7 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     this.isDisposed = true
     this.errorListeners.clear()
     this.playingChangedListeners.clear()
+    this.evaluateSuccessListeners.clear()
     this.autoRefreshChangedListeners.clear()
     // Remove from the playback coordinator so a future
     // `notifyPlaybackStarted` from another source doesn't try to
@@ -601,6 +609,16 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     }
   }
 
+  onEvaluateSuccess(cb: () => void): () => void {
+    this.evaluateSuccessListeners.add(cb)
+    let unsubscribed = false
+    return () => {
+      if (unsubscribed) return
+      unsubscribed = true
+      this.evaluateSuccessListeners.delete(cb)
+    }
+  }
+
   getBpm(): number | undefined {
     return this.currentBpm
   }
@@ -628,6 +646,18 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     for (const cb of snapshot) {
       try {
         cb(playing)
+      } catch {
+        // Listener exceptions never break the dispatch loop.
+      }
+    }
+  }
+
+  private fireEvaluateSuccess(): void {
+    if (this.evaluateSuccessListeners.size === 0) return
+    const snapshot = Array.from(this.evaluateSuccessListeners)
+    for (const cb of snapshot) {
+      try {
+        cb()
       } catch {
         // Listener exceptions never break the dispatch loop.
       }
