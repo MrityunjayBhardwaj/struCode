@@ -20010,6 +20010,17 @@ async function touchProject(id) {
   }
   db.close();
 }
+async function setProjectBackgroundFileId(id, fileId) {
+  const db = await openDb3();
+  const store = tx2(db, "readwrite");
+  const existing = await wrap3(store.get(id));
+  if (existing) {
+    const { backgroundFileId: _unused, ...rest } = existing;
+    const next = fileId == null ? rest : { ...rest, backgroundFileId: fileId };
+    await wrap3(store.put(next));
+  }
+  db.close();
+}
 async function renameProject(id, name2) {
   const db = await openDb3();
   const store = tx2(db, "readwrite");
@@ -20804,6 +20815,7 @@ exports.setEditorTheme = setEditorTheme;
 exports.setEditorUiIconSize = setEditorUiIconSize;
 exports.setFolderOrder = setFolderOrder;
 exports.setInlineVizActionSize = setInlineVizActionSize;
+exports.setProjectBackgroundFileId = setProjectBackgroundFileId;
 exports.setSubfolderOrder = setSubfolderOrder;
 exports.setVizConfig = setVizConfig;
 exports.setZoneCropOverride = setZoneCropOverride;

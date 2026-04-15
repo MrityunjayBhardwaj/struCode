@@ -168,6 +168,7 @@ export {
   renameProject,
   deleteProject,
   duplicateProject,
+  setProjectBackgroundFileId,
   type ProjectMeta,
 } from './workspace/projectRegistry'
 

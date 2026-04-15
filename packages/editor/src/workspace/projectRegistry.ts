@@ -16,6 +16,14 @@ export interface ProjectMeta {
   readonly name: string
   readonly createdAt: number
   readonly lastOpenedAt: number
+  /**
+   * File id of the viz file pinned as this project's backdrop
+   * (promote-to-backdrop, #38). Absent when no backdrop is set. Kept
+   * on project metadata (not in the Y.Doc) because the backdrop is a
+   * per-user view preference rather than authored content — shouldn't
+   * sync across collaborators when multi-user arrives.
+   */
+  readonly backgroundFileId?: string
 }
 
 // ── IDB helpers ──────────────────────────────────────────────────────
@@ -94,6 +102,32 @@ export async function touchProject(id: string): Promise<void> {
   const existing = await wrap<ProjectMeta | undefined>(store.get(id))
   if (existing) {
     await wrap(store.put({ ...existing, lastOpenedAt: Date.now() }))
+  }
+  db.close()
+}
+
+/**
+ * Pin or clear this project's backdrop file id. `null` removes the
+ * field (project has no backdrop). No-op when the project doesn't
+ * exist — caller is expected to have resolved a real project id.
+ */
+export async function setProjectBackgroundFileId(
+  id: string,
+  fileId: string | null,
+): Promise<void> {
+  const db = await openDb()
+  const store = tx(db, 'readwrite')
+  const existing = await wrap<ProjectMeta | undefined>(store.get(id))
+  if (existing) {
+    // Using a rest-strip so the field disappears when cleared —
+    // keeping the on-disk shape minimal and making "no backdrop"
+    // interchangeable with "never set a backdrop."
+    const { backgroundFileId: _unused, ...rest } = existing
+    const next: ProjectMeta =
+      fileId == null
+        ? (rest as ProjectMeta)
+        : { ...rest, backgroundFileId: fileId }
+    await wrap(store.put(next))
   }
   db.close()
 }

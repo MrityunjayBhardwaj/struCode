@@ -93,6 +93,46 @@ test.describe('Backdrop context menu', () => {
     ).toHaveCount(0)
   })
 
+  test('Backdrop persists across page reload (#38)', async ({ page }) => {
+    await gotoApp(page)
+
+    // Pin a hydra file as backdrop.
+    const hydraRow = page.locator('text=.hydra').first()
+    await hydraRow.click({ button: 'right' })
+    await page
+      .getByRole('button', { name: /Set as Background/i })
+      .click()
+
+    const backdrop = page.locator('[data-workspace-background]').first()
+    await expect(backdrop).toBeVisible({ timeout: 5000 })
+    const fileIdBefore = await backdrop.getAttribute(
+      'data-background-file-id',
+    )
+    expect(fileIdBefore).toBeTruthy()
+
+    // Reload — IDB persists, the restore effect should re-pin.
+    await page.reload()
+    await page.locator('[data-workspace-shell="root"]').waitFor({
+      timeout: 15000,
+    })
+    await page.locator('.monaco-editor').waitFor({ timeout: 15000 })
+
+    const backdropAfter = page
+      .locator('[data-workspace-background]')
+      .first()
+    await expect(backdropAfter).toBeVisible({ timeout: 5000 })
+    const fileIdAfter = await backdropAfter.getAttribute(
+      'data-background-file-id',
+    )
+    expect(fileIdAfter).toBe(fileIdBefore)
+
+    // Cleanup — clear so subsequent tests start fresh.
+    await hydraRow.click({ button: 'right' })
+    await page
+      .getByRole('button', { name: /Clear Background/i })
+      .click()
+  })
+
   test('Backdrop survives tab switches (file-pinned, not tab-mirrored)', async ({
     page,
   }) => {
