@@ -103,28 +103,6 @@ test.describe('Code surface blur (#39)', () => {
 
     await btn.click()
   })
-
-  test('--stave-backdrop-blur persists to localStorage', async ({ page }) => {
-    await gotoApp(page)
-
-    // Seed a value via page evaluate (simulates the settings
-    // modal's write path without depending on its DOM shape).
-    await page.evaluate(() => {
-      window.localStorage.setItem('stave:backdropBlur', '16')
-    })
-    await page.reload()
-    await page.locator('[data-workspace-shell="root"]').waitFor({
-      timeout: 15000,
-    })
-
-    const value = await page.evaluate(
-      () =>
-        getComputedStyle(document.documentElement).getPropertyValue(
-          '--stave-backdrop-blur',
-        ),
-    )
-    expect(value.trim()).toBe('16px')
-  })
 })
 
 test.describe('Backdrop quality ladder (#41)', () => {

@@ -34,6 +34,7 @@ export function defineStrudelMonacoTheme(monaco: typeof Monaco): void {
       'editorWidget.background':        '#0f0f1e',
       'editorSuggestWidget.background': '#0f0f1e',
       'editorSuggestWidget.border':     '#6a6ac840',
+      'minimap.background':             '#00000000',
     },
   })
 
@@ -59,6 +60,7 @@ export function defineStrudelMonacoTheme(monaco: typeof Monaco): void {
       'editorCursor.foreground':        '#4a4ae0',
       'editor.selectionBackground':     '#5555b830',
       'editor.lineHighlightBackground': '#5555b808',
+      'minimap.background':             '#00000000',
     },
   })
 }

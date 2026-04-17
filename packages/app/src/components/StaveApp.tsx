@@ -50,7 +50,6 @@ import {
   applyPersistedTheme,
   applyPersistedUiIconSize,
   applyPersistedInlineVizActionSize,
-  applyPersistedBackdropBlur,
 } from "@stave/editor";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { EditorSettingsModal } from "./EditorSettingsModal";
@@ -123,7 +122,6 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     applyPersistedTheme();
     applyPersistedUiIconSize();
     applyPersistedInlineVizActionSize();
-    applyPersistedBackdropBlur();
   }, []);
   const [zenMode, setZenMode] = useState(false);
   const searchViewRef = useRef<WorkspaceSearchViewHandle | null>(null);

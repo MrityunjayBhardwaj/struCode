@@ -5835,7 +5835,8 @@ function defineStrudelMonacoTheme(monaco) {
       "editorIndentGuide.background": "#ffffff10",
       "editorWidget.background": "#0f0f1e",
       "editorSuggestWidget.background": "#0f0f1e",
-      "editorSuggestWidget.border": "#6a6ac840"
+      "editorSuggestWidget.border": "#6a6ac840",
+      "minimap.background": "#00000000"
     }
   });
   monaco.editor.defineTheme("stave-light", {
@@ -5859,7 +5860,8 @@ function defineStrudelMonacoTheme(monaco) {
       "editorLineNumber.foreground": "#a0a0b4",
       "editorCursor.foreground": "#4a4ae0",
       "editor.selectionBackground": "#5555b830",
-      "editor.lineHighlightBackground": "#5555b808"
+      "editor.lineHighlightBackground": "#5555b808",
+      "minimap.background": "#00000000"
     }
   });
 }

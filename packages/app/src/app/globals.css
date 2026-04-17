@@ -146,23 +146,12 @@ body {
   background: var(--danger-hover) !important;
 }
 
-/* Code surface blur — applied when a backdrop is pinned (#39).
-   Targets the shell group wrapper flagged with
-   data-stave-backdrop="on". The blur reads --stave-backdrop-blur
-   (default 8px) so the Editor Settings slider can override at
-   runtime. The halo softens the edge where the code panel meets
-   the viz, keeping text legible without hiding the backdrop. */
+/* Code panel over backdrop — transparent so the backdrop viz
+   shows through at full fidelity. Legibility is controlled by
+   the backdrop opacity slider (user-facing dim), not by an
+   additional wash layer. */
 [data-stave-code-panel][data-stave-backdrop="on"] {
-  /* Translucent wash so the viz behind shows through while keeping
-     syntax-highlighted text legible. 45% app-bg is the legibility
-     vs. visibility compromise. Tunable via
-     --stave-backdrop-surface-opacity for future user control. */
-  background: color-mix(
-    in srgb,
-    var(--bg-app) var(--stave-backdrop-surface-opacity, 45%),
-    transparent
-  );
-  box-shadow: 0 0 var(--stave-backdrop-halo, 40px) var(--bg-app);
+  background: transparent;
 }
 
 /* EditorView's wrapper paints `var(--background)` opaque so the
@@ -180,9 +169,10 @@ body {
    descendant bg to transparent when backdrop is active, EXCEPT
    selection / highlight decorations which paint via background-color. */
 [data-stave-code-panel][data-stave-backdrop="on"] .monaco-editor,
-[data-stave-code-panel][data-stave-backdrop="on"] .monaco-editor *:not(.selected-text):not(.selectionHighlight):not(.current-line-margin):not(.current-line) {
+[data-stave-code-panel][data-stave-backdrop="on"] .monaco-editor *:not(.selected-text):not(.selectionHighlight):not(.current-line-margin):not(.current-line):not(.minimap-slider-horizontal) {
   background-color: transparent !important;
 }
+
 
 /* Viz chrome + pattern runtime chrome + tab bar sit inside the same
    code-panel. Keep them SEMI-opaque so buttons stay legible while
