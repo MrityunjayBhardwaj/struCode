@@ -1004,6 +1004,7 @@ export const FileTree = React.forwardRef<FileTreeHandle, FileTreeProps>(function
   return (
     <div
       ref={sidebarRef}
+      data-sidebar
       onMouseEnter={() => setSidebarHover(true)}
       onMouseLeave={() => setSidebarHover(false)}
       style={{
@@ -1528,6 +1529,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--text-chrome)",
     userSelect: "none" as const,
     position: "relative" as const,
+    zIndex: 1,
   },
   resizeHandle: {
     position: "absolute" as const,

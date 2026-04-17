@@ -931,7 +931,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         canRedo={undoState.canRedo}
       />
 
-      <div style={styles.main}>
+      <div style={styles.main} data-stave-main-backdrop={backgroundFileId ? "on" : "off"}>
         {!zenMode && (
           <ActivityBar
             activePanelId={activePanelId}
@@ -949,7 +949,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           />
         )}
         {!zenMode && activePanelId === "search" && (
-          <div style={styles.panelRoot}>
+          <div style={styles.panelRoot} data-sidebar>
             <div style={styles.panelHeader}>SEARCH</div>
             <WorkspaceSearchView
               ref={searchViewRef}
@@ -959,7 +959,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           </div>
         )}
         {!zenMode && activePanelId === "snapshots" && (
-          <div style={styles.panelRoot}>
+          <div style={styles.panelRoot} data-sidebar>
             <div style={styles.panelHeader}>VERSION HISTORY</div>
             <SnapshotView
               snapshots={snapshots}
@@ -970,7 +970,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           </div>
         )}
         {!zenMode && activePanelId === "outline" && (
-          <div style={styles.panelRoot}>
+          <div style={styles.panelRoot} data-sidebar>
             <div style={styles.panelHeader}>OUTLINE</div>
             <OutlineView
               activeFileId={activeFileId}
@@ -1228,6 +1228,7 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     height: "100%",
     position: "relative",
+    zIndex: 0,
     display: "flex",
     flexDirection: "column" as const,
   },

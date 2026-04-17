@@ -146,10 +146,11 @@ body {
   background: var(--danger-hover) !important;
 }
 
-/* Code panel over backdrop — transparent so the backdrop viz
-   shows through at full fidelity. Legibility is controlled by
-   the backdrop opacity slider (user-facing dim), not by an
-   additional wash layer. */
+/* Code panel — sits above the absolutely-positioned backdrop
+   canvas (both children of group-content). Only the code panel
+   and its descendants need transparent backgrounds; the shell,
+   group, and sidebar keep their opaque paints — the backdrop
+   canvas is a sibling that paints above the parent bg anyway. */
 [data-stave-code-panel][data-stave-backdrop="on"] {
   background: transparent;
 }
@@ -174,9 +175,9 @@ body {
 }
 
 
-/* Viz chrome + pattern runtime chrome + tab bar sit inside the same
-   code-panel. Keep them SEMI-opaque so buttons stay legible while
-   the viz subtly shows through the edges. */
+/* Viz chrome, runtime chrome, and tab bar sit inside the code
+   panel. Make them semi-opaque so buttons stay legible while
+   the viz subtly shows through. */
 [data-stave-code-panel][data-stave-backdrop="on"] [data-workspace-chrome="viz"],
 [data-stave-code-panel][data-stave-backdrop="on"] [data-strudel-runtime-chrome="root"] {
   background: color-mix(in srgb, var(--surface) 85%, transparent) !important;

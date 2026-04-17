@@ -10704,14 +10704,8 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
                       "data-stave-backdrop": group.backgroundFileId ? "on" : "off",
                       style: {
                         position: "relative",
-                        zIndex: 1,
+                        zIndex: 0,
                         height: "100%"
-                        // Blur / halo only kick in when the data attribute
-                        // flips to 'on' via the CSS rule in globals.css.
-                        // Shipping the rule on the wrapper (not on a global
-                        // selector) keeps the effect local to this group
-                        // so split panes with different backdrops stay
-                        // independent.
                       },
                       children: renderTabContent(activeTabObj, group.id, isShellActiveGroup)
                     }
