@@ -261,7 +261,8 @@ export function addInlineViewZones(
   const audioCtx = components.audio?.audioCtx
 
   editor.changeViewZones((accessor) => {
-    for (const [trackKey, { vizId, afterLine }] of vizRequests) {
+    for (const [trackKey, { vizId, afterLine, ...reqExtra }] of vizRequests) {
+      const contentHash: string = (reqExtra as any).contentHash ?? ''
       const descriptor = resolveDescriptor(vizId, vizDescriptors)
       if (!descriptor) {
         console.warn(`[stave] Unknown viz "${vizId}". Available: ${vizDescriptors.map(d => d.id).join(', ')}`)
@@ -312,6 +313,7 @@ export function addInlineViewZones(
       container.setAttribute('data-viz-zone', '')
       container.setAttribute('data-viz-zone-track', trackKey)
       container.setAttribute('data-viz-zone-id', vizId)
+      if (contentHash) container.setAttribute('data-viz-zone-hash', contentHash)
       container.style.cssText = `overflow:hidden;height:${initH}px;position:relative;`
 
       const zoneDesc = {
@@ -441,7 +443,8 @@ export function addInlineViewZones(
           resizeHandle.style.background = 'transparent'
           resizeHandle.style.opacity = '1'
           if (fileId) {
-            setZoneHeightOverride(fileId, entry.trackKey, entry.zoneDesc.heightInPx)
+            const hash = entry.container.getAttribute('data-viz-zone-hash') ?? undefined
+            setZoneHeightOverride(fileId, entry.trackKey, entry.zoneDesc.heightInPx, hash)
           }
           // Keep resizing flag ON during changeViewZones so the
           // triggered recomputeAllZones skips this zone. Clear after.
@@ -485,9 +488,9 @@ export function addInlineViewZones(
   // Remove overrides for trackKeys that no longer exist in vizRequests
   // (block removed / anonymous keys shifted) or whose vizId changed.
   if (fileId) {
-    const currentViz = new Map<string, string>()
-    for (const [trackKey, { vizId }] of vizRequests) {
-      currentViz.set(trackKey, vizId)
+    const currentViz = new Map<string, { vizId: string; contentHash?: string }>()
+    for (const [trackKey, req] of vizRequests) {
+      currentViz.set(trackKey, { vizId: req.vizId, contentHash: (req as any).contentHash })
     }
     pruneZoneOverrides(fileId, currentViz)
   }

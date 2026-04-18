@@ -537,6 +537,11 @@ export interface ZoneOverride {
   /** User-set zone height in pixels (drag-to-resize). Overrides the
    *  layout-computed height. Cleared when the user resets the crop. */
   heightPx?: number
+  /** Content hash of the block (first ~120 chars, whitespace-normalized).
+   *  Used by pruneZoneOverrides to detect block reordering — when the
+   *  content at a trackKey changes, the override no longer belongs to
+   *  the same block and should be pruned. */
+  contentHash?: string
 }
 
 const zoneOverrideSubscribers = new Map<string, Set<Subscriber>>()
@@ -598,6 +603,7 @@ export function setZoneCropOverride(
   trackKey: string,
   cropRegion: { x: number; y: number; w: number; h: number } | null,
   vizId?: string,
+  contentHash?: string,
 ): void {
   ensureDoc()
   const overrides = ensureZoneOverridesMap(fileId)
@@ -607,7 +613,8 @@ export function setZoneCropOverride(
     if (cropRegion === null) {
       overrides.delete(trackKey)
     } else {
-      overrides.set(trackKey, { cropRegion, vizId })
+      const existing = (overrides.get(trackKey) as ZoneOverride | undefined) ?? {}
+      overrides.set(trackKey, { ...existing, cropRegion, vizId, contentHash })
     }
   }, STRUCT_ORIGIN)
 }
@@ -627,6 +634,7 @@ export function setZoneHeightOverride(
   fileId: string,
   trackKey: string,
   heightPx: number | null,
+  contentHash?: string,
 ): void {
   ensureDoc()
   const overrides = ensureZoneOverridesMap(fileId)
@@ -639,7 +647,7 @@ export function setZoneHeightOverride(
       if (Object.keys(rest).length === 0) overrides.delete(trackKey)
       else overrides.set(trackKey, rest)
     } else {
-      overrides.set(trackKey, { ...existing, heightPx })
+      overrides.set(trackKey, { ...existing, heightPx, ...(contentHash ? { contentHash } : {}) })
     }
   }, HEIGHT_RESIZE_ORIGIN)
 }
@@ -655,7 +663,7 @@ export function setZoneHeightOverride(
  */
 export function pruneZoneOverrides(
   fileId: string,
-  currentViz: Map<string, string>,
+  currentViz: Map<string, { vizId: string; contentHash?: string }>,
 ): void {
   ensureDoc()
   const overrides = ensureZoneOverridesMap(fileId)
@@ -663,13 +671,17 @@ export function pruneZoneOverrides(
   const doc = ensureDoc()
   const stale: string[] = []
   for (const [trackKey, value] of overrides.entries()) {
-    const entry = value as ZoneOverride & { vizId?: string }
-    const currentVizId = currentViz.get(trackKey)
-    if (!currentVizId) {
+    const entry = value as ZoneOverride
+    const current = currentViz.get(trackKey)
+    if (!current) {
       // trackKey gone — $: block removed or anonymous keys shifted
       stale.push(trackKey)
-    } else if (entry.vizId && entry.vizId !== currentVizId) {
+    } else if (entry.vizId && entry.vizId !== current.vizId) {
       // vizId changed — old crop aspect doesn't match new viz
+      stale.push(trackKey)
+    } else if (entry.contentHash && current.contentHash && entry.contentHash !== current.contentHash) {
+      // Content at this trackKey changed — block was reordered or
+      // replaced. The override belongs to a different block now.
       stale.push(trackKey)
     }
   }

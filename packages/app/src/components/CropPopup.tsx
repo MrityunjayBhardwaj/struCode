@@ -95,7 +95,8 @@ export function createInlineCropAdapter(opts: {
       h: 1,
     },
     saveCrop: (crop) => {
-      setZoneCropOverride(fileId, trackKey, crop, vizId);
+      const hash = document.querySelector(`[data-viz-zone-track="${trackKey}"]`)?.getAttribute('data-viz-zone-hash') ?? undefined;
+      setZoneCropOverride(fileId, trackKey, crop, vizId, hash);
       showToast(`Crop saved for "${vizId}"`, "info");
     },
     clearCrop: () => {

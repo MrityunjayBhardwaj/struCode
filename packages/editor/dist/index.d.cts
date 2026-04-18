@@ -2934,9 +2934,9 @@ declare function setZoneCropOverride(fileId: string, trackKey: string, cropRegio
     y: number;
     w: number;
     h: number;
-} | null, vizId?: string): void;
+} | null, vizId?: string, contentHash?: string): void;
 declare function getZoneHeightOverride(fileId: string, trackKey: string): number | undefined;
-declare function setZoneHeightOverride(fileId: string, trackKey: string, heightPx: number | null): void;
+declare function setZoneHeightOverride(fileId: string, trackKey: string, heightPx: number | null, contentHash?: string): void;
 /**
  * Prune stale zone overrides. Called on every evaluate — removes overrides
  * whose trackKey is no longer in the current `vizRequests` or whose vizId
@@ -2946,7 +2946,10 @@ declare function setZoneHeightOverride(fileId: string, trackKey: string, heightP
  * the latest evaluate result (same Map shape as `inlineViz.vizRequests`
  * but values are just the vizId string, not the full {vizId, afterLine}).
  */
-declare function pruneZoneOverrides(fileId: string, currentViz: Map<string, string>): void;
+declare function pruneZoneOverrides(fileId: string, currentViz: Map<string, {
+    vizId: string;
+    contentHash?: string;
+}>): void;
 /**
  * Subscribe to ANY zone-override change within a file. Fires after each
  * committed mutation.

@@ -4462,7 +4462,9 @@ var StrudelEngine = class {
         if (next.startsWith("$:") || next.startsWith("setcps")) break;
         if (next !== "" && !next.startsWith("//")) lastLineIdx = j;
       }
-      result.set(key, { vizId, afterLine: lastLineIdx + 1 });
+      const blockLines = lines.slice(i2, lastLineIdx + 1).join(" ").replace(/\s+/g, " ").trim();
+      const contentHash = blockLines.slice(0, 120);
+      result.set(key, { vizId, afterLine: lastLineIdx + 1, contentHash });
     }
     return result;
   }
@@ -6333,7 +6335,7 @@ function getZoneCropOverride(fileId, trackKey) {
   const entry = overrides.get(trackKey);
   return entry?.cropRegion;
 }
-function setZoneCropOverride(fileId, trackKey, cropRegion, vizId) {
+function setZoneCropOverride(fileId, trackKey, cropRegion, vizId, contentHash) {
   ensureDoc();
   const overrides = ensureZoneOverridesMap(fileId);
   if (!overrides) return;
@@ -6342,7 +6344,8 @@ function setZoneCropOverride(fileId, trackKey, cropRegion, vizId) {
     if (cropRegion === null) {
       overrides.delete(trackKey);
     } else {
-      overrides.set(trackKey, { cropRegion, vizId });
+      const existing = overrides.get(trackKey) ?? {};
+      overrides.set(trackKey, { ...existing, cropRegion, vizId, contentHash });
     }
   }, STRUCT_ORIGIN);
 }
@@ -6353,7 +6356,7 @@ function getZoneHeightOverride(fileId, trackKey) {
   const entry = overrides.get(trackKey);
   return entry?.heightPx;
 }
-function setZoneHeightOverride(fileId, trackKey, heightPx) {
+function setZoneHeightOverride(fileId, trackKey, heightPx, contentHash) {
   ensureDoc();
   const overrides = ensureZoneOverridesMap(fileId);
   if (!overrides) return;
@@ -6365,7 +6368,7 @@ function setZoneHeightOverride(fileId, trackKey, heightPx) {
       if (Object.keys(rest).length === 0) overrides.delete(trackKey);
       else overrides.set(trackKey, rest);
     } else {
-      overrides.set(trackKey, { ...existing, heightPx });
+      overrides.set(trackKey, { ...existing, heightPx, ...contentHash ? { contentHash } : {} });
     }
   }, HEIGHT_RESIZE_ORIGIN);
 }
@@ -6377,10 +6380,12 @@ function pruneZoneOverrides(fileId, currentViz) {
   const stale = [];
   for (const [trackKey, value] of overrides.entries()) {
     const entry = value;
-    const currentVizId = currentViz.get(trackKey);
-    if (!currentVizId) {
+    const current = currentViz.get(trackKey);
+    if (!current) {
       stale.push(trackKey);
-    } else if (entry.vizId && entry.vizId !== currentVizId) {
+    } else if (entry.vizId && entry.vizId !== current.vizId) {
+      stale.push(trackKey);
+    } else if (entry.contentHash && current.contentHash && entry.contentHash !== current.contentHash) {
       stale.push(trackKey);
     }
   }
@@ -8073,7 +8078,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   const zoneEntries = [];
   const audioCtx = components.audio?.audioCtx;
   editor.changeViewZones((accessor) => {
-    for (const [trackKey, { vizId, afterLine }] of vizRequests) {
+    for (const [trackKey, { vizId, afterLine, ...reqExtra }] of vizRequests) {
+      const contentHash = reqExtra.contentHash ?? "";
       const descriptor = resolveDescriptor(vizId, vizDescriptors);
       if (!descriptor) {
         console.warn(`[stave] Unknown viz "${vizId}". Available: ${vizDescriptors.map((d) => d.id).join(", ")}`);
@@ -8107,6 +8113,7 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       container.setAttribute("data-viz-zone", "");
       container.setAttribute("data-viz-zone-track", trackKey);
       container.setAttribute("data-viz-zone-id", vizId);
+      if (contentHash) container.setAttribute("data-viz-zone-hash", contentHash);
       container.style.cssText = `overflow:hidden;height:${initH}px;position:relative;`;
       const zoneDesc = {
         afterLineNumber: afterLine,
@@ -8216,7 +8223,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
           resizeHandle.style.background = "transparent";
           resizeHandle.style.opacity = "1";
           if (fileId) {
-            setZoneHeightOverride(fileId, entry.trackKey, entry.zoneDesc.heightInPx);
+            const hash = entry.container.getAttribute("data-viz-zone-hash") ?? void 0;
+            setZoneHeightOverride(fileId, entry.trackKey, entry.zoneDesc.heightInPx, hash);
           }
           editor.changeViewZones((acc) => acc.layoutZone(entry.zoneId));
           delete entry.container.dataset.resizing;
@@ -8249,8 +8257,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   });
   if (fileId) {
     const currentViz = /* @__PURE__ */ new Map();
-    for (const [trackKey, { vizId }] of vizRequests) {
-      currentViz.set(trackKey, vizId);
+    for (const [trackKey, req] of vizRequests) {
+      currentViz.set(trackKey, { vizId: req.vizId, contentHash: req.contentHash });
     }
     pruneZoneOverrides(fileId, currentViz);
   }
