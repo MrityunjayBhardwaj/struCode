@@ -35,40 +35,55 @@ export function registerSonicPiLanguage(monaco: typeof Monaco): void {
         // Ruby symbols :name
         [/:\w+/, 'sonicpi.symbol'],
 
+        // Keyword args (release:, amp:, rate:) — BEFORE the fn rule so
+        // `amp:` doesn't get classified as the `amp` function.
+        [/\b[a-z_]\w*:/, 'sonicpi.kwarg'],
+
+        // Keywords first — `end` / `do` would otherwise match the function
+        // list (Sonic Pi has many fns named alike, but these are lexical).
+        [/\b(do|end|if|else|elsif|unless|loop|while|until|for|in|true|false|nil|and|or|not|begin|rescue|ensure|return|yield|then|when|case|break|next|redo|retry|module|class|def|lambda|proc|self)\b/, 'keyword'],
+
         // Sonic Pi language + music functions (derived from docs index)
         [new RegExp(`\\b(${sonicPiFns})\\b`), 'sonicpi.function'],
-
-        // Keywords
-        [/\b(do|end|if|else|elsif|unless|loop|while|until|for|in|true|false|nil)\b/, 'keyword'],
 
         // Note names: c3, eb4, f#2
         [/\b[a-gA-G][bs#]?\d\b/, 'sonicpi.note'],
 
+        // Identifier fallthrough — user variables, iterator names, etc.
+        [/[a-zA-Z_][\w]*/, 'identifier'],
+
         // Numbers
-        [/\b\d+(\.\d+)?\b/, 'number'],
+        [/0x[\da-fA-F]+/, 'number.hex'],
+        [/\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
 
         // Strings
-        [/"/, 'string', '@string_double'],
-        [/'/, 'string', '@string_single'],
+        [/"/, { token: 'string.quote', next: '@string_double' }],
+        [/'/, { token: 'string.quote', next: '@string_single' }],
 
-        // Keyword args (release:, amp:, rate:)
-        [/\b(\w+):/, 'sonicpi.kwarg'],
+        // Operators + delimiters
+        [/=>|<=>|==|!=|<=|>=|&&|\|\||\.\.\.?/, 'keyword.operator'],
+        [/[=!<>]=?/, 'keyword.operator'],
+        [/[+\-*/%&|^~]=?/, 'keyword.operator'],
+        [/[{}()[\]]/, '@brackets'],
+        [/[;,.]/, 'delimiter'],
       ],
 
       string_double: [
-        [/#\{/, 'string.interpolation', '@interpolation'],
-        [/"/, 'string', '@pop'],
-        [/[^"#]+/, 'string'],
-        [/./, 'string'],
+        [/#\{/, { token: 'string.interpolation', next: '@interpolation' }],
+        [/\\./, 'string.escape'],
+        [/[^"#\\]+/, 'string'],
+        [/#/, 'string'],
+        [/"/, { token: 'string.quote', next: '@pop' }],
       ],
 
       string_single: [
-        [/'/, 'string', '@pop'],
-        [/[^']+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/[^'\\]+/, 'string'],
+        [/'/, { token: 'string.quote', next: '@pop' }],
       ],
 
       interpolation: [
-        [/\}/, 'string.interpolation', '@pop'],
+        [/\}/, { token: 'string.interpolation', next: '@pop' }],
         { include: 'root' },
       ],
     },
