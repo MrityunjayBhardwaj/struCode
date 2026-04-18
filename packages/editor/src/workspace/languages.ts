@@ -51,6 +51,14 @@ import {
   registerStrudelNoteCompletions,
 } from '../monaco/strudelCompletions'
 import { registerStrudelHover } from '../monaco/strudelDocs'
+import { registerP5Providers, P5_DOCS_INDEX } from '../monaco/docs/p5'
+import { registerHydraProviders, HYDRA_DOCS_INDEX } from '../monaco/docs/hydra'
+import { registerSonicPiProviders } from '../monaco/docs/sonicpi'
+import {
+  buildIdentifierAlternation,
+  keywordRule,
+  methodRule,
+} from '../monaco/docs/tokenizer-utils'
 import type { WorkspaceLanguage } from './types'
 
 /**
@@ -71,34 +79,108 @@ function registerHydraLanguage(monaco: typeof Monaco): void {
   }
   hydraRegistered = true
   monaco.languages.register({ id: 'hydra' })
+  // Keyword / method / variable sets derived from HYDRA_DOCS_INDEX so every
+  // newly-documented symbol is also coloured. `kind: 'function'` captures
+  // sources (osc, noise, shape, …); `kind: 'method'` captures chainable
+  // transforms (rotate, kaleid, modulate, …); `kind: 'variable'` captures
+  // the IO buffers + globals (s0..s3, o0..o3, time, mouse).
+  const sources = buildIdentifierAlternation(HYDRA_DOCS_INDEX, {
+    includeKinds: ['function'],
+  })
+  const methods = buildIdentifierAlternation(HYDRA_DOCS_INDEX, {
+    includeKinds: ['method'],
+  })
+  const globals = buildIdentifierAlternation(HYDRA_DOCS_INDEX, {
+    includeKinds: ['variable', 'constant'],
+    extra: ['Math', 'PI', 'sin', 'cos', 'tan', 'abs', 'floor', 'ceil', 'round', 'max', 'min', 'random', 'pow', 'sqrt'],
+  })
+  // Same comprehensive shape as the p5 tokenizer — operators, brackets,
+  // delimiters, identifier fallthrough, template-string interpolation.
+  // Previous Hydra tokenizer had only keyword/method/variable + simple
+  // strings + the `=>` operator, so arithmetic (`+`, `*`, `-`), brackets,
+  // property access, and user variables all fell through to the
+  // undifferentiated `source.hydra` catch-all.
   monaco.languages.setMonarchTokensProvider('hydra', {
+    defaultToken: '',
+    tokenPostfix: '.hydra',
     tokenizer: {
       root: [
         [/\/\/.*$/, 'comment'],
         [/\/\*/, 'comment', '@comment'],
+        // `.foo` property access → colored as method if it's a known Hydra
+        // transform, else as property identifier. Method rule runs first.
+        ...methodRule(methods, 'type'),
+        [/\.([a-zA-Z_$][\w$]*)/, 'identifier.property'],
+        ...keywordRule(sources, 'keyword'),
+        ...keywordRule(globals, 'variable.predefined'),
+        [/\ba\b/, 'variable.predefined'],
         [
-          /\b(osc|noise|shape|gradient|solid|voronoi|src|s0|s1|s2|s3|o0|o1|o2|o3)\b/,
+          /\b(let|const|var|function|for|while|if|else|return|class|new|typeof|instanceof|of|in|break|continue|do|switch|case|default|throw|try|catch|finally|async|await|yield|this|super|import|export|from|as|void|delete|null|undefined|true|false)\b/,
           'keyword',
         ],
-        [
-          /\.(color|rotate|scale|modulate|blend|add|diff|layer|mask|luma|thresh|posterize|shift|kaleid|scroll|scrollX|scrollY|pixelate|repeat|repeatX|repeatY|out|brightness|contrast|saturate|hue|invert)\b/,
-          'type',
-        ],
-        [
-          /\b(Math|PI|sin|cos|tan|abs|floor|ceil|round|max|min|random|pow|sqrt)\b/,
-          'variable',
-        ],
-        [/\ba\b/, 'variable.predefined'],
-        [/\b\d+\.?\d*\b/, 'number'],
-        [/"[^"]*"/, 'string'],
-        [/'[^']*'/, 'string'],
+        [/[a-zA-Z_$][\w$]*/, 'identifier'],
+        [/0[xX][\da-fA-F]+n?/, 'number.hex'],
+        [/0[bB][01]+n?/, 'number.binary'],
+        [/\d+(\.\d+)?([eE][+-]?\d+)?n?/, 'number'],
+        [/\.\d+([eE][+-]?\d+)?/, 'number.float'],
+        [/"/, { token: 'string.quote', next: '@string_double' }],
+        [/'/, { token: 'string.quote', next: '@string_single' }],
+        [/`/, { token: 'string.quote', next: '@string_template' }],
         [/=>/, 'keyword.operator'],
+        [/(\?\?|\?\.|\?|:)/, 'keyword.operator'],
+        [/===|!==|==|!=|<=|>=|<<|>>>|>>|&&|\|\|/, 'keyword.operator'],
+        [/[=!<>]=?/, 'keyword.operator'],
+        [/[+\-*/%&|^~]=?/, 'keyword.operator'],
+        [/[{}()[\]]/, '@brackets'],
+        [/[;,.]/, 'delimiter'],
       ],
       comment: [
+        [/[^/*]+/, 'comment'],
         [/\*\//, 'comment', '@pop'],
         [/./, 'comment'],
       ],
+      string_double: [
+        [/[^\\"]+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/"/, { token: 'string.quote', next: '@pop' }],
+      ],
+      string_single: [
+        [/[^\\']+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/'/, { token: 'string.quote', next: '@pop' }],
+      ],
+      string_template: [
+        [/[^\\`$]+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/\$\{/, { token: 'delimiter.bracket', next: '@template_interp' }],
+        [/\$/, 'string'],
+        [/`/, { token: 'string.quote', next: '@pop' }],
+      ],
+      template_interp: [
+        [/\}/, { token: 'delimiter.bracket', next: '@pop' }],
+        { include: 'root' },
+      ],
     },
+  })
+  monaco.languages.setLanguageConfiguration('hydra', {
+    comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+    brackets: [['{', '}'], ['[', ']'], ['(', ')']],
+    autoClosingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: '`', close: '`' },
+    ],
+    surroundingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: '`', close: '`' },
+    ],
   })
 }
 
@@ -111,33 +193,118 @@ function registerP5JsLanguage(monaco: typeof Monaco): void {
   }
   p5jsRegistered = true
   monaco.languages.register({ id: 'p5js' })
+  // Functions/constants/variables derived from P5_DOCS_INDEX so every
+  // documented p5 identifier is also syntax-coloured. Stave-specific
+  // globals (`scheduler`, `analyser`, `hapStream`) stay in `extra` since
+  // they come from the host, not from p5.
+  const fns = buildIdentifierAlternation(P5_DOCS_INDEX, {
+    includeKinds: ['function'],
+  })
+  const variables = buildIdentifierAlternation(P5_DOCS_INDEX, {
+    includeKinds: ['variable', 'constant'],
+  })
+  // Stave-specific host globals — injected into every p5 sketch by the
+  // runtime. `stave` is the umbrella object; its properties are accessed
+  // as `stave.scheduler`, `stave.analyser`, `stave.hapStream`, etc. The
+  // property-access rule below colours the `.xxx` portion; this alternation
+  // covers the bare `stave` identifier and direct-exposed aliases.
+  const HOST_GLOBALS = 'stave|scheduler|analyser|hapStream'
+  // Covers: JS keywords, p5 identifiers (from docs), literals, operators,
+  // brackets, delimiters, numbers, strings (single / double / template
+  // with ${} interpolation), comments. Previously the tokenizer only
+  // matched docs-sourced identifiers + JS keywords + numbers + simple
+  // strings, leaving operators / brackets / property accesses / local
+  // variables rendered as undifferentiated `source.p5js` — the user-
+  // visible gap in syntax colour.
   monaco.languages.setMonarchTokensProvider('p5js', {
+    defaultToken: '',
+    tokenPostfix: '.p5js',
     tokenizer: {
       root: [
         [/\/\/.*$/, 'comment'],
         [/\/\*/, 'comment', '@comment'],
+        // Host-global bare identifier (e.g. `stave` → colour as predefined
+        // even when accessed as `stave.foo`). Must come before the
+        // property-access rule so `.stave` stays as identifier.property.
+        [new RegExp(`\\b(${HOST_GLOBALS})\\b`), 'variable.predefined'],
+        // Property access: `.foo` — color the name so `obj.prop` reads as
+        // property, not the same colour as bare identifiers. Must come
+        // before the keyword rule so p5 names accessed as `.foo` don't
+        // get mis-highlighted as top-level functions.
+        [/\.([a-zA-Z_$][\w$]*)/, 'identifier.property'],
+        ...keywordRule(fns, 'keyword'),
+        ...keywordRule(variables, 'variable.predefined'),
         [
-          /\b(background|fill|stroke|noFill|noStroke|rect|ellipse|line|point|arc|triangle|quad|beginShape|endShape|vertex|text|textSize|textAlign|image|loadImage|createCanvas|resizeCanvas|push|pop|translate|rotate|scale)\b/,
+          /\b(let|const|var|function|for|while|if|else|return|class|new|typeof|instanceof|of|in|break|continue|do|switch|case|default|throw|try|catch|finally|async|await|yield|this|super|import|export|from|as|void|delete|null|undefined|true|false)\b/,
           'keyword',
         ],
-        [
-          /\b(width|height|mouseX|mouseY|frameCount|millis|hapStream|analyser|scheduler)\b/,
-          'variable.predefined',
-        ],
-        [
-          /\b(let|const|var|function|for|while|if|else|return|class|new|typeof|of|in)\b/,
-          'keyword',
-        ],
-        [/\b\d+\.?\d*\b/, 'number'],
-        [/"[^"]*"/, 'string'],
-        [/'[^']*'/, 'string'],
-        [/`[^`]*`/, 'string'],
+        // Identifier fallthrough — anything left that looks like a name.
+        [/[a-zA-Z_$][\w$]*/, 'identifier'],
+        // Numbers: 0x…, 0b…, scientific, decimals starting with `.`.
+        [/0[xX][\da-fA-F]+n?/, 'number.hex'],
+        [/0[bB][01]+n?/, 'number.binary'],
+        [/\d+(\.\d+)?([eE][+-]?\d+)?n?/, 'number'],
+        [/\.\d+([eE][+-]?\d+)?/, 'number.float'],
+        // Strings
+        [/"/, { token: 'string.quote', next: '@string_double' }],
+        [/'/, { token: 'string.quote', next: '@string_single' }],
+        [/`/, { token: 'string.quote', next: '@string_template' }],
+        // Operators + delimiters
+        [/=>/, 'keyword.operator'],
+        [/(\?\?|\?\.|\?|:)/, 'keyword.operator'],
+        [/===|!==|==|!=|<=|>=|<<|>>>|>>|&&|\|\|/, 'keyword.operator'],
+        [/[=!<>]=?/, 'keyword.operator'],
+        [/[+\-*/%&|^~]=?/, 'keyword.operator'],
+        [/[{}()[\]]/, '@brackets'],
+        [/[;,.]/, 'delimiter'],
       ],
       comment: [
+        [/[^/*]+/, 'comment'],
         [/\*\//, 'comment', '@pop'],
         [/./, 'comment'],
       ],
+      string_double: [
+        [/[^\\"]+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/"/, { token: 'string.quote', next: '@pop' }],
+      ],
+      string_single: [
+        [/[^\\']+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/'/, { token: 'string.quote', next: '@pop' }],
+      ],
+      string_template: [
+        [/[^\\`$]+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/\$\{/, { token: 'delimiter.bracket', next: '@template_interp' }],
+        [/\$/, 'string'],
+        [/`/, { token: 'string.quote', next: '@pop' }],
+      ],
+      template_interp: [
+        [/\}/, { token: 'delimiter.bracket', next: '@pop' }],
+        { include: 'root' },
+      ],
     },
+  })
+  monaco.languages.setLanguageConfiguration('p5js', {
+    comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+    brackets: [['{', '}'], ['[', ']'], ['(', ')']],
+    autoClosingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: '`', close: '`' },
+    ],
+    surroundingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: '`', close: '`' },
+    ],
   })
 }
 
@@ -159,26 +326,38 @@ export function ensureWorkspaceLanguages(monaco: typeof Monaco): void {
   registerSonicPiLanguage(monaco)
   registerHydraLanguage(monaco)
   registerP5JsLanguage(monaco)
-  ensureStrudelProviders(monaco)
+  ensureProviders('strudel', monaco, (m) => {
+    registerStrudelDotCompletions(m)
+    registerStrudelNoteCompletions(m)
+    registerStrudelHover(m)
+  })
+  ensureProviders('p5js', monaco, registerP5Providers)
+  ensureProviders('hydra', monaco, registerHydraProviders)
+  ensureProviders('sonicpi', monaco, registerSonicPiProviders)
 }
 
-// Completion + hover providers for strudel. Monaco's provider registry
-// is append-only per invocation, so we guard with a module-level flag
-// to avoid fan-out when multiple EditorView instances mount. Tests use
-// a thin Monaco mock — skip when the required APIs are absent.
-let strudelProvidersRegistered = false
-function ensureStrudelProviders(monaco: typeof Monaco): void {
-  if (strudelProvidersRegistered) return
+// Per-runtime idempotency flags so `ensureWorkspaceLanguages` is safe on
+// every EditorView mount. Monaco's provider registry is append-only per
+// invocation — without the guard, mounting N editors would register N
+// copies of each provider.
+const providersRegistered: Record<string, boolean> = {}
+
+function ensureProviders(
+  key: string,
+  monaco: typeof Monaco,
+  register: (m: typeof Monaco) => void,
+): void {
+  if (providersRegistered[key]) return
+  // Tests use a thin Monaco mock — skip when the required APIs are
+  // absent rather than crashing on `undefined is not a function`.
   if (
     typeof monaco.languages?.registerCompletionItemProvider !== 'function' ||
     typeof monaco.languages?.registerHoverProvider !== 'function'
   ) {
     return
   }
-  strudelProvidersRegistered = true
-  registerStrudelDotCompletions(monaco)
-  registerStrudelNoteCompletions(monaco)
-  registerStrudelHover(monaco)
+  providersRegistered[key] = true
+  register(monaco)
 }
 
 /**
@@ -213,4 +392,7 @@ export function toMonacoLanguage(lang: WorkspaceLanguage): string {
 export function __resetWorkspaceLanguagesForTests(): void {
   hydraRegistered = false
   p5jsRegistered = false
+  for (const k of Object.keys(providersRegistered)) {
+    providersRegistered[k] = false
+  }
 }

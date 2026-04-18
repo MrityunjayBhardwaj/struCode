@@ -455,8 +455,8 @@ export class StrudelEngine implements LiveCodingEngine {
   private buildVizRequestsWithLines(
     requests: Map<string, string>,
     code: string,
-  ): Map<string, { vizId: string; afterLine: number }> {
-    const result = new Map<string, { vizId: string; afterLine: number }>()
+  ): Map<string, { vizId: string; afterLine: number; contentHash: string }> {
+    const result = new Map<string, { vizId: string; afterLine: number; contentHash: string }>()
     const lines = code.split('\n')
     let anonIndex = 0
 
@@ -476,15 +476,16 @@ export class StrudelEngine implements LiveCodingEngine {
       let lastLineIdx = i
       for (let j = i + 1; j < lines.length; j++) {
         const next = lines[j].trim()
-        // New block starts — stop here
         if (next.startsWith('$:') || next.startsWith('setcps')) break
-        // Track the last non-empty, non-comment line as the block end.
-        // `//` lines count as empty so a trailing comment block doesn't
-        // pull the zone anchor past the real end of the pattern.
         if (next !== '' && !next.startsWith('//')) lastLineIdx = j
       }
 
-      result.set(key, { vizId, afterLine: lastLineIdx + 1 }) // 1-indexed
+      // Content hash — first 120 chars of the block, whitespace-normalized.
+      // Used by pruneZoneOverrides to detect block reordering.
+      const blockLines = lines.slice(i, lastLineIdx + 1).join(' ').replace(/\s+/g, ' ').trim()
+      const contentHash = blockLines.slice(0, 120)
+
+      result.set(key, { vizId, afterLine: lastLineIdx + 1, contentHash })
     }
 
     return result

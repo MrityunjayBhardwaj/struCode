@@ -6,6 +6,9 @@ import {
   BackdropPopover,
   type BackdropPopoverVizFile,
 } from "./BackdropPopover";
+import { showToast } from "../dialogs/host";
+
+const GITHUB_REPO_URL = "https://github.com/MrityunjayBhardwaj/stave-code";
 
 interface MenuBarProps {
   projectName: string;
@@ -22,8 +25,6 @@ interface MenuBarProps {
   sidebarCollapsed: boolean;
   onToggleZenMode: () => void;
   zenMode: boolean;
-  onToggleCinemaMode: () => void;
-  cinemaMode: boolean;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -42,7 +43,7 @@ interface MenuBarProps {
   onRevealBackground?: () => void;
 }
 
-type MenuId = "file" | "edit" | "view" | "help" | "settings" | null;
+type MenuId = "file" | "edit" | "view" | "settings" | null;
 
 export function MenuBar({
   projectName: _projectName,
@@ -59,8 +60,6 @@ export function MenuBar({
   sidebarCollapsed,
   onToggleZenMode,
   zenMode,
-  onToggleCinemaMode,
-  cinemaMode,
   onUndo,
   onRedo,
   canUndo,
@@ -154,17 +153,11 @@ export function MenuBar({
           shortcut="⌘K Z"
           onClick={() => clickItem(onToggleZenMode)}
         />
-        <MenuItem
-          label={cinemaMode ? "Exit Cinema Mode" : "Cinema Mode"}
-          shortcut="⌘K F"
-          onClick={() => clickItem(onToggleCinemaMode)}
-        />
       </MenuButton>
 
-      <MenuButton label="Help" open={openMenu === "help"} onClick={() => setOpenMenu(openMenu === "help" ? null : "help")}>
-        <MenuItem label="Documentation" onClick={() => { window.open("https://github.com/MrityunjayBhardwaj/stave", "_blank"); setOpenMenu(null); }} />
-        <MenuItem label="Report Issue" onClick={() => { window.open("https://github.com/MrityunjayBhardwaj/stave/issues", "_blank"); setOpenMenu(null); }} />
-      </MenuButton>
+      <div data-stave-brand style={styles.brand} aria-hidden="true">
+        Stave Code
+      </div>
 
       <div style={styles.spacer} />
 
@@ -221,6 +214,35 @@ export function MenuBar({
           )}
         </div>
       )}
+      <div style={styles.cornerCluster} data-stave-corner>
+        <CornerButton
+          testid="docs"
+          variant="text"
+          title="Documentation"
+          ariaLabel="Open documentation"
+          onClick={() => { window.location.href = "/docs/"; }}
+        >
+          Docs
+        </CornerButton>
+        <CornerButton
+          testid="github"
+          variant="icon"
+          title="GitHub repository"
+          ariaLabel="GitHub repository"
+          onClick={() => { window.open(GITHUB_REPO_URL, "_blank", "noopener,noreferrer"); }}
+        >
+          <Icon name="github-inverted" size={16} />
+        </CornerButton>
+        <CornerButton
+          testid="signin"
+          variant="primary"
+          title="Sign in (coming soon)"
+          ariaLabel="Sign in — coming soon"
+          onClick={() => showToast("Sign-in coming soon", "info")}
+        >
+          Sign in
+        </CornerButton>
+      </div>
       <div style={styles.menuButtonWrap}>
         <button
           style={{ ...styles.gearBtn, ...(openMenu === "settings" ? styles.menuButtonOpen : {}) }}
@@ -242,6 +264,58 @@ export function MenuBar({
 }
 
 // ── Sub-components ────────────────────────────────────────────────
+
+/**
+ * Top-bar corner button (Docs / GitHub / Sign in). Accent-tinted
+ * `primary` variant for sign-in; `text` for prose actions; `icon` for
+ * icon-only buttons. All variants share a subtle hover background so
+ * the cluster feels clickable — MenuButton has the same treatment via
+ * `menuButtonOpen`.
+ */
+function CornerButton({
+  testid,
+  variant,
+  title,
+  ariaLabel,
+  onClick,
+  children,
+}: {
+  testid: string;
+  variant: "text" | "icon" | "primary";
+  title: string;
+  ariaLabel: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const [hover, setHover] = useState(false);
+  const base =
+    variant === "text"
+      ? styles.cornerTextBtn
+      : variant === "icon"
+      ? styles.cornerIconBtn
+      : styles.cornerSignInBtn;
+  const hoverStyle =
+    hover && variant === "primary"
+      ? styles.cornerSignInBtnHover
+      : hover
+      ? styles.cornerHover
+      : undefined;
+  return (
+    <button
+      data-stave-corner-item={testid}
+      style={{ ...base, ...(hoverStyle ?? {}) }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+      onClick={onClick}
+      title={title}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </button>
+  );
+}
 
 function MenuButton({
   label, open, onClick, children,
@@ -293,6 +367,7 @@ function MenuDivider() {
 
 const styles: Record<string, React.CSSProperties> = {
   bar: {
+    position: "relative" as const,
     display: "flex",
     alignItems: "center",
     height: 28,
@@ -303,6 +378,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     userSelect: "none",
     paddingLeft: 6,
+  },
+  brand: {
+    position: "absolute" as const,
+    left: "50%",
+    top: "50%",
+    transform: "translate(-50%, -50%)",
+    pointerEvents: "none" as const,
+    color: "var(--text-secondary)",
+    fontSize: 11,
+    fontWeight: 500,
+    letterSpacing: 0.4,
+    whiteSpace: "nowrap" as const,
   },
   menuButtonWrap: {
     position: "relative" as const,
@@ -427,5 +514,56 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 4,
     height: "calc(100% - 8px)",
     margin: "4px 4px 4px 0",
+  },
+  cornerCluster: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 2,
+    height: "100%",
+    marginRight: 4,
+  },
+  cornerTextBtn: {
+    background: "none",
+    border: "none",
+    color: "var(--text-chrome)",
+    cursor: "pointer",
+    fontSize: 12,
+    fontFamily: "inherit",
+    padding: "4px 10px",
+    borderRadius: 3,
+    lineHeight: 1,
+  },
+  cornerIconBtn: {
+    background: "none",
+    border: "none",
+    color: "var(--text-icon, var(--text-chrome))",
+    cursor: "pointer",
+    padding: "4px 8px",
+    borderRadius: 3,
+    lineHeight: 1,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: "inherit",
+  },
+  cornerSignInBtn: {
+    background: "var(--accent, #8b5cf6)",
+    border: "1px solid var(--accent, #8b5cf6)",
+    color: "#ffffff",
+    cursor: "pointer",
+    fontSize: 11,
+    fontWeight: 500,
+    fontFamily: "inherit",
+    padding: "4px 10px",
+    borderRadius: 3,
+    lineHeight: 1,
+    marginLeft: 4,
+    transition: "filter 80ms ease, background 80ms ease",
+  },
+  cornerHover: {
+    background: "var(--bg-hover)",
+  },
+  cornerSignInBtnHover: {
+    filter: "brightness(1.15)",
   },
 };

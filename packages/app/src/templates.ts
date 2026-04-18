@@ -105,6 +105,261 @@ s.osc(() => 10 + s.a.fft[0] * 50, -0.3, 0)
   .scrollX(() => s.a.fft[0] * 0.02)
   .out()`;
 
+export const SCOPE_P5_CODE = `// Stave p5 viz — Scope (oscilloscope / event pulses)
+function setup() {
+  createCanvas(stave.width, stave.height)
+  noFill()
+}
+function draw() {
+  background(9, 9, 18)
+  stroke(40, 50, 70); strokeWeight(0.5)
+  line(0, height * 0.75, width, height * 0.75)
+  if (stave.analyser) {
+    const buf = stave.analyser.frequencyBinCount
+    const data = new Float32Array(buf)
+    stave.analyser.getFloatTimeDomainData(data)
+    let trig = 0
+    for (let i = 1; i < buf; i++) { if (data[i-1] > 0 && data[i] <= 0) { trig = i; break } }
+    stroke('#75baff'); strokeWeight(2); beginShape()
+    for (let i = trig; i < buf; i++) vertex((i - trig) * width / (buf - trig), (0.75 - 0.25 * data[i]) * height)
+    endShape()
+  } else if (stave.scheduler) {
+    const now = stave.scheduler.now()
+    const haps = stave.scheduler.query(now - 4, now + 0.1)
+    noStroke()
+    for (const h of haps) {
+      const age = now - h.begin, decay = max(0, 1 - age / 4)
+      const x = ((h.begin - now + 4) / 4) * width
+      const w = max(3, ((h.end - h.begin) / 4) * width)
+      const pH = height * 0.6 * decay * (h.gain ?? 1)
+      fill(117, 186, 255, decay * 200)
+      rect(x, height * 0.75 - pH / 2, w, pH, 2)
+    }
+  }
+}`;
+
+export const FSCOPE_P5_CODE = `// Stave p5 viz — Frequency Scope (FFT bars / note bars)
+function setup() {
+  createCanvas(stave.width, stave.height)
+  noStroke()
+}
+function draw() {
+  background(9, 9, 18)
+  stroke(40, 50, 70); strokeWeight(0.5); noFill()
+  line(0, height * 0.75, width, height * 0.75); noStroke()
+  if (stave.analyser) {
+    const buf = stave.analyser.frequencyBinCount
+    const data = new Float32Array(buf)
+    stave.analyser.getFloatFrequencyData(data)
+    fill('#75baff')
+    const sw = width / buf
+    for (let i = 0; i < buf; i++) {
+      const n = constrain((data[i] + 100) / 100, 0, 1), v = n * 0.25
+      rect(i * sw, (0.75 - v * 0.5) * height, max(sw, 1), v * height)
+    }
+  } else if (stave.scheduler) {
+    const now = stave.scheduler.now()
+    const haps = stave.scheduler.query(now - 0.2, now + 0.05)
+    const bins = new Float32Array(64)
+    for (const h of haps) {
+      const note = typeof h.note === 'string' ? 60 : (h.note ?? 60)
+      const freq = 440 * pow(2, (note - 69) / 12)
+      if (freq < 30) continue
+      const idx = constrain(floor(log(freq / 30) / log(4000 / 30) * 64), 0, 63)
+      bins[idx] = max(bins[idx], max(0, 1 - (now - h.begin) / 0.5) * (h.gain ?? 1))
+    }
+    const sw = width / 64
+    for (let i = 0; i < 64; i++) {
+      if (bins[i] <= 0) continue
+      const v = bins[i] * 0.25
+      fill(117, 186, 255, bins[i] * 220)
+      rect(i * sw, (0.75 - v * 0.5) * height, max(sw - 1, 1), v * height)
+    }
+  }
+}`;
+
+export const SPECTRUM_P5_CODE = `// Stave p5 viz — Spectrum (scrolling waterfall)
+function setup() {
+  createCanvas(stave.width, stave.height)
+  pixelDensity(1); noStroke()
+}
+function draw() {
+  const ctx = drawingContext
+  if (stave.analyser) {
+    const buf = stave.analyser.frequencyBinCount
+    const data = new Float32Array(buf)
+    stave.analyser.getFloatFrequencyData(data)
+    const img = ctx.getImageData(0, 0, width, height)
+    ctx.clearRect(0, 0, width, height)
+    ctx.putImageData(img, -2, 0)
+    ctx.fillStyle = '#75baff'
+    for (let i = 0; i < buf; i++) {
+      const n = constrain((data[i] + 80) / 80, 0, 1)
+      if (n <= 0) continue
+      ctx.globalAlpha = n
+      const yEnd = (log(i + 1) / log(buf)) * height
+      const yStart = i > 0 ? (log(i) / log(buf)) * height : 0
+      ctx.fillRect(width - 2, height - yEnd, 2, max(2, yEnd - yStart))
+    }
+    ctx.globalAlpha = 1
+  } else if (stave.scheduler) {
+    const now = stave.scheduler.now()
+    const img = ctx.getImageData(0, 0, width, height)
+    ctx.clearRect(0, 0, width, height)
+    ctx.putImageData(img, -2, 0)
+    const haps = stave.scheduler.query(now - 0.3, now + 0.05)
+    for (const h of haps) {
+      const note = typeof h.note === 'string' ? 60 : (h.note ?? 60)
+      const freq = 440 * pow(2, (note - 69) / 12)
+      if (freq < 20) continue
+      const logPos = log(freq / 20) / log(4000 / 20)
+      const y = height - logPos * height
+      const alpha = max(0.1, 1 - (now - h.begin) / 0.5) * (h.gain ?? 1)
+      ctx.fillStyle = h.color ?? '#75baff'
+      ctx.globalAlpha = alpha
+      ctx.fillRect(width - 2, y - 2, 2, max(4, height * 0.03))
+    }
+    ctx.globalAlpha = 1
+  } else { background(9, 9, 18) }
+}`;
+
+export const SPIRAL_P5_CODE = `// Stave p5 viz — Spiral
+function setup() {
+  createCanvas(300, 200)
+  pixelDensity(window.devicePixelRatio || 1)
+  noFill()
+}
+function xySpiral(rot, margin, cx, cy, rotate) {
+  const a = ((rot + rotate) * 360 - 90) * PI / 180
+  return [cx + cos(a) * margin * rot, cy + sin(a) * margin * rot]
+}
+function draw() {
+  background(9, 9, 18)
+  if (!stave.scheduler) return
+  const now = stave.scheduler.now()
+  const haps = stave.scheduler.query(now - 2, now + 1)
+  const cx = width / 2, cy = height / 2
+  const sz = min(width, height) * 0.38, mg = sz / 3
+  for (const h of haps) {
+    const active = h.begin <= now && h.end > now
+    const from = h.begin - now + 3, to = h.end - now + 3 - 0.005
+    const op = max(0, 1 - abs((h.begin - now) / 2))
+    const c = color(h.color ?? (active ? '#75baff' : '#8a919966'))
+    c.setAlpha(op * 255)
+    stroke(c); strokeWeight(mg / 2); strokeCap(ROUND)
+    beginShape()
+    for (let a = from; a <= to; a += 1/60) {
+      const [x, y] = xySpiral(a, mg, cx, cy, now)
+      vertex(x, y)
+    }
+    endShape()
+  }
+  stroke(255); strokeWeight(mg / 2)
+  beginShape()
+  for (let a = 2.98; a <= 3; a += 1/60) {
+    const [x, y] = xySpiral(a, mg, cx, cy, now)
+    vertex(x, y)
+  }
+  endShape()
+}`;
+
+export const PITCHWHEEL_P5_CODE = `// Stave p5 viz — Pitchwheel
+const ROOT_FREQ = 440 * pow(2, (36 - 69) / 12)
+function setup() {
+  createCanvas(300, 200)
+  pixelDensity(window.devicePixelRatio || 1)
+}
+function freq2angle(f) { return 0.5 - (log(f / ROOT_FREQ) / log(2) % 1) }
+function circPos(cx, cy, r, a) {
+  const rad = a * TWO_PI
+  return [sin(rad) * r + cx, cos(rad) * r + cy]
+}
+function draw() {
+  background(9, 9, 18)
+  if (!stave.scheduler) return
+  const now = stave.scheduler.now()
+  let haps = stave.scheduler.query(now - 0.01, now + 0.01)
+  haps = haps.filter(h => h.begin <= now && h.end > now)
+  const sz = min(width, height), r = sz / 2 - 12
+  const cx = width / 2, cy = height / 2
+  noStroke(); fill(117, 186, 255, 64)
+  for (let i = 0; i < 12; i++) {
+    const a = freq2angle(ROOT_FREQ * pow(2, i / 12))
+    const [x, y] = circPos(cx, cy, r, a)
+    circle(x, y, 7)
+  }
+  noFill(); stroke(117, 186, 255, 48); strokeWeight(1)
+  circle(cx, cy, r * 2)
+  for (const h of haps) {
+    const note = typeof h.note === 'string' ? 60 : (h.note ?? 60)
+    const freq = 440 * pow(2, (note - 69) / 12)
+    const a = freq2angle(freq)
+    const [x, y] = circPos(cx, cy, r, a)
+    const c = h.color ?? '#75baff'
+    stroke(c); strokeWeight(2)
+    line(cx, cy, x, y)
+    fill(c); noStroke()
+    circle(x, y, 12)
+  }
+}`;
+
+export const WORDFALL_P5_CODE = `// Stave p5 viz — Wordfall (vertical pianoroll with labels)
+function setup() {
+  createCanvas(stave.width, stave.height)
+  pixelDensity(window.devicePixelRatio || 1)
+}
+function draw() {
+  background(9, 9, 18)
+  if (!stave.scheduler) return
+  const now = stave.scheduler.now()
+  const CYCLES = 4, PH = 0.5
+  const haps = stave.scheduler.query(now - CYCLES * PH, now + CYCLES * (1 - PH))
+  const vals = [...new Set(haps.map(h => h.note ?? h.s ?? 0))].sort()
+  if (!vals.length) return
+  const bw = width / vals.length
+  for (const h of haps) {
+    const active = h.begin <= now && h.end > now
+    const dur = h.end - h.begin
+    const yOff = h.begin - now
+    const y = height * PH - (yOff / CYCLES) * height
+    const dH = (dur / CYCLES) * height
+    const v = h.note ?? h.s ?? 0
+    const x = vals.indexOf(v) * bw
+    noStroke()
+    if (active) fill(255)
+    else { const c = color(h.color ?? '#75baff'); c.setAlpha(160); fill(c) }
+    rect(x + 1, y + 1, bw - 2, dH - 2)
+    if (dH > 10 && bw > 16) {
+      const label = h.note != null ? String(h.note) : (h.s ?? '')
+      textSize(min(bw * 0.55, dH * 0.7, 11))
+      textAlign(LEFT, TOP); fill(active ? 0 : 255); noStroke()
+      text(label, x + 3, y + 3)
+    }
+  }
+  stroke(255, 255, 255, 128); strokeWeight(1)
+  line(0, height * PH, width, height * PH)
+}`;
+
+export const HYDRA_SCOPE_CODE = `// Hydra Scope — audio-reactive oscilloscope
+s.osc(() => 20 + s.a.fft[0] * 80, 0.1, 0)
+  .color(0.2, 0.8, 1.0)
+  .rotate(() => s.a.fft[1] * 0.5)
+  .modulate(s.osc(3, 0, 0), () => s.a.fft[2] * 0.1)
+  .diff(s.osc(2, 0.1, 0).rotate(0.5))
+  .out()`;
+
+export const HYDRA_KALEIDOSCOPE_CODE = `// Hydra Kaleidoscope — mirrored fractal audio patterns
+s.osc(6, 0.1, () => s.a.fft[0] * 3)
+  .kaleid(() => 3 + Math.floor(s.a.fft[1] * 8))
+  .color(
+    () => 0.5 + s.a.fft[0] * 0.5,
+    () => 0.3 + s.a.fft[1] * 0.7,
+    () => 0.8 + s.a.fft[2] * 0.2
+  )
+  .rotate(() => s.a.fft[3] * 3.14)
+  .modulate(s.noise(3), () => s.a.fft[0] * 0.05)
+  .out()`;
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface TemplateFile {
@@ -136,33 +391,63 @@ const hydraPresetId = () => bundledPresetId("Piano Roll Hydra", "hydra");
 function makeStarterFiles(): TemplateFile[] {
   const p5Id = p5PresetId();
   const hydraId = hydraPresetId();
+
+  // Helper — create a viz preset workspace file with the right id/meta
+  // so the preset bridge picks it up on mount.
+  const vizFile = (
+    name: string,
+    ext: "p5" | "hydra",
+    code: string,
+  ): TemplateFile => {
+    const lang: WorkspaceLanguage = ext === "hydra" ? "hydra" : "p5js";
+    const presetId = bundledPresetId(name, ext === "hydra" ? "hydra" : "p5");
+    return {
+      id: workspaceFileIdForPreset(presetId),
+      path: `preset/viz/${name}.${ext}`,
+      content: code,
+      language: lang,
+      meta: { presetId },
+    };
+  };
+
   return [
+    // Music presets
     {
       id: "pattern.strudel",
-      path: "pattern.strudel",
+      path: "preset/music/pattern.strudel",
       content: STRUDEL_CODE,
       language: "strudel",
     },
     {
       id: "pattern.sonicpi",
-      path: "pattern.sonicpi",
+      path: "preset/music/pattern.sonicpi",
       content: SONIC_PI_CODE,
       language: "sonicpi",
     },
+    // Viz presets — p5
     {
       id: workspaceFileIdForPreset(p5Id),
-      path: "Piano Roll.p5",
+      path: "preset/viz/Piano Roll.p5",
       content: PIANOROLL_P5_CODE,
       language: "p5js",
       meta: { presetId: p5Id },
     },
+    vizFile("scope", "p5", SCOPE_P5_CODE),
+    vizFile("fscope", "p5", FSCOPE_P5_CODE),
+    vizFile("spectrum", "p5", SPECTRUM_P5_CODE),
+    vizFile("spiral", "p5", SPIRAL_P5_CODE),
+    vizFile("pitchwheel", "p5", PITCHWHEEL_P5_CODE),
+    vizFile("wordfall", "p5", WORDFALL_P5_CODE),
+    // Viz presets — Hydra
     {
       id: workspaceFileIdForPreset(hydraId),
-      path: "Piano Roll (Hydra).hydra",
+      path: "preset/viz/Piano Roll (Hydra).hydra",
       content: PIANOROLL_HYDRA_CODE,
       language: "hydra",
       meta: { presetId: hydraId },
     },
+    vizFile("scope", "hydra", HYDRA_SCOPE_CODE),
+    vizFile("kaleidoscope", "hydra", HYDRA_KALEIDOSCOPE_CODE),
   ];
 }
 
@@ -266,5 +551,20 @@ export function seedProjectFromTemplate(templateId: string): void {
   const files = getTemplateFiles(templateId);
   for (const f of files) {
     seedWorkspaceFile(f.id, f.path, f.content, f.language, f.meta);
+  }
+}
+
+/**
+ * Seed any missing viz preset workspace files into the current project.
+ * Idempotent — seedWorkspaceFile skips files that already exist.
+ * Call on mount so older projects get the new preset files without
+ * requiring a project re-creation.
+ */
+export function seedMissingPresetFiles(): void {
+  const starterFiles = makeStarterFiles();
+  for (const f of starterFiles) {
+    if (f.language === "p5js" || f.language === "hydra") {
+      seedWorkspaceFile(f.id, f.path, f.content, f.language, f.meta);
+    }
   }
 }
