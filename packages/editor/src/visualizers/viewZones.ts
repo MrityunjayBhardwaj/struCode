@@ -643,11 +643,25 @@ export function addInlineViewZones(
       if (blockStart < 0) continue // decoration sits above any $:, bail
 
       // Scan forward for the block's last non-empty, non-comment line.
+      // Stop at the .viz() call — anything typed after it is new content,
+      // not a block continuation. Without this, gibberish typed after
+      // .viz() extends blockEnd and the zone drops below the gibberish.
       let blockEnd = blockStart
-      for (let j = blockStart + 1; j < lines.length; j++) {
+      let foundViz = false
+      for (let j = blockStart; j < lines.length; j++) {
         const next = lines[j].trim()
-        if (next.startsWith('$:') || next.startsWith('setcps')) break
+        if (j > blockStart && (next.startsWith('$:') || next.startsWith('setcps'))) break
         if (next !== '' && !next.startsWith('//')) blockEnd = j
+        if (/\.viz\s*\(/.test(next)) { foundViz = true; blockEnd = j; break }
+      }
+      // If no .viz() found (deleted?), fall back to last non-empty line.
+      if (!foundViz) {
+        blockEnd = blockStart
+        for (let j = blockStart + 1; j < lines.length; j++) {
+          const next = lines[j].trim()
+          if (next.startsWith('$:') || next.startsWith('setcps')) break
+          if (next !== '' && !next.startsWith('//')) blockEnd = j
+        }
       }
 
       const newAfterLine = blockEnd + 1

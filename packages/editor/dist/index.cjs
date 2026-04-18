@@ -8369,10 +8369,24 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       }
       if (blockStart < 0) continue;
       let blockEnd = blockStart;
-      for (let j = blockStart + 1; j < lines.length; j++) {
+      let foundViz = false;
+      for (let j = blockStart; j < lines.length; j++) {
         const next = lines[j].trim();
-        if (next.startsWith("$:") || next.startsWith("setcps")) break;
+        if (j > blockStart && (next.startsWith("$:") || next.startsWith("setcps"))) break;
         if (next !== "" && !next.startsWith("//")) blockEnd = j;
+        if (/\.viz\s*\(/.test(next)) {
+          foundViz = true;
+          blockEnd = j;
+          break;
+        }
+      }
+      if (!foundViz) {
+        blockEnd = blockStart;
+        for (let j = blockStart + 1; j < lines.length; j++) {
+          const next = lines[j].trim();
+          if (next.startsWith("$:") || next.startsWith("setcps")) break;
+          if (next !== "" && !next.startsWith("//")) blockEnd = j;
+        }
       }
       const newAfterLine = blockEnd + 1;
       if (newAfterLine !== entry.afterLine) {
