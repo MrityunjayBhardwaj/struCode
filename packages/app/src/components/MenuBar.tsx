@@ -215,31 +215,33 @@ export function MenuBar({
         </div>
       )}
       <div style={styles.cornerCluster} data-stave-corner>
-        <button
-          data-stave-corner-item="docs"
-          style={styles.cornerTextBtn}
-          onClick={() => { window.location.href = "/docs/"; }}
+        <CornerButton
+          testid="docs"
+          variant="text"
           title="Documentation"
+          ariaLabel="Open documentation"
+          onClick={() => { window.location.href = "/docs/"; }}
         >
           Docs
-        </button>
-        <button
-          data-stave-corner-item="github"
-          style={styles.cornerIconBtn}
-          onClick={() => { window.open(GITHUB_REPO_URL, "_blank", "noopener,noreferrer"); }}
+        </CornerButton>
+        <CornerButton
+          testid="github"
+          variant="icon"
           title="GitHub repository"
-          aria-label="GitHub repository"
+          ariaLabel="GitHub repository"
+          onClick={() => { window.open(GITHUB_REPO_URL, "_blank", "noopener,noreferrer"); }}
         >
           <Icon name="github-inverted" size={16} />
-        </button>
-        <button
-          data-stave-corner-item="signin"
-          style={styles.cornerSignInBtn}
-          onClick={() => showToast("Sign-in coming soon", "info")}
+        </CornerButton>
+        <CornerButton
+          testid="signin"
+          variant="primary"
           title="Sign in (coming soon)"
+          ariaLabel="Sign in — coming soon"
+          onClick={() => showToast("Sign-in coming soon", "info")}
         >
           Sign in
-        </button>
+        </CornerButton>
       </div>
       <div style={styles.menuButtonWrap}>
         <button
@@ -262,6 +264,58 @@ export function MenuBar({
 }
 
 // ── Sub-components ────────────────────────────────────────────────
+
+/**
+ * Top-bar corner button (Docs / GitHub / Sign in). Accent-tinted
+ * `primary` variant for sign-in; `text` for prose actions; `icon` for
+ * icon-only buttons. All variants share a subtle hover background so
+ * the cluster feels clickable — MenuButton has the same treatment via
+ * `menuButtonOpen`.
+ */
+function CornerButton({
+  testid,
+  variant,
+  title,
+  ariaLabel,
+  onClick,
+  children,
+}: {
+  testid: string;
+  variant: "text" | "icon" | "primary";
+  title: string;
+  ariaLabel: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const [hover, setHover] = useState(false);
+  const base =
+    variant === "text"
+      ? styles.cornerTextBtn
+      : variant === "icon"
+      ? styles.cornerIconBtn
+      : styles.cornerSignInBtn;
+  const hoverStyle =
+    hover && variant === "primary"
+      ? styles.cornerSignInBtnHover
+      : hover
+      ? styles.cornerHover
+      : undefined;
+  return (
+    <button
+      data-stave-corner-item={testid}
+      style={{ ...base, ...(hoverStyle ?? {}) }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+      onClick={onClick}
+      title={title}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </button>
+  );
+}
 
 function MenuButton({
   label, open, onClick, children,
@@ -500,9 +554,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 500,
     fontFamily: "inherit",
-    padding: "3px 10px",
+    padding: "4px 10px",
     borderRadius: 3,
     lineHeight: 1,
     marginLeft: 4,
+    transition: "filter 80ms ease, background 80ms ease",
+  },
+  cornerHover: {
+    background: "var(--bg-hover)",
+  },
+  cornerSignInBtnHover: {
+    filter: "brightness(1.15)",
   },
 };
