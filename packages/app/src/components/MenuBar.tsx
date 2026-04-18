@@ -6,6 +6,9 @@ import {
   BackdropPopover,
   type BackdropPopoverVizFile,
 } from "./BackdropPopover";
+import { showToast } from "../dialogs/host";
+
+const GITHUB_REPO_URL = "https://github.com/MrityunjayBhardwaj/stave-code";
 
 interface MenuBarProps {
   projectName: string;
@@ -40,7 +43,7 @@ interface MenuBarProps {
   onRevealBackground?: () => void;
 }
 
-type MenuId = "file" | "edit" | "view" | "help" | "settings" | null;
+type MenuId = "file" | "edit" | "view" | "settings" | null;
 
 export function MenuBar({
   projectName: _projectName,
@@ -152,11 +155,6 @@ export function MenuBar({
         />
       </MenuButton>
 
-      <MenuButton label="Help" open={openMenu === "help"} onClick={() => setOpenMenu(openMenu === "help" ? null : "help")}>
-        <MenuItem label="Documentation" onClick={() => { window.open("https://github.com/MrityunjayBhardwaj/stave", "_blank"); setOpenMenu(null); }} />
-        <MenuItem label="Report Issue" onClick={() => { window.open("https://github.com/MrityunjayBhardwaj/stave/issues", "_blank"); setOpenMenu(null); }} />
-      </MenuButton>
-
       <div data-stave-brand style={styles.brand} aria-hidden="true">
         Stave Code
       </div>
@@ -216,6 +214,33 @@ export function MenuBar({
           )}
         </div>
       )}
+      <div style={styles.cornerCluster} data-stave-corner>
+        <button
+          data-stave-corner-item="docs"
+          style={styles.cornerTextBtn}
+          onClick={() => { window.location.href = "/docs/"; }}
+          title="Documentation"
+        >
+          Docs
+        </button>
+        <button
+          data-stave-corner-item="github"
+          style={styles.cornerIconBtn}
+          onClick={() => { window.open(GITHUB_REPO_URL, "_blank", "noopener,noreferrer"); }}
+          title="GitHub repository"
+          aria-label="GitHub repository"
+        >
+          <Icon name="github-inverted" size={16} />
+        </button>
+        <button
+          data-stave-corner-item="signin"
+          style={styles.cornerSignInBtn}
+          onClick={() => showToast("Sign-in coming soon", "info")}
+          title="Sign in (coming soon)"
+        >
+          Sign in
+        </button>
+      </div>
       <div style={styles.menuButtonWrap}>
         <button
           style={{ ...styles.gearBtn, ...(openMenu === "settings" ? styles.menuButtonOpen : {}) }}
@@ -435,5 +460,49 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 4,
     height: "calc(100% - 8px)",
     margin: "4px 4px 4px 0",
+  },
+  cornerCluster: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 2,
+    height: "100%",
+    marginRight: 4,
+  },
+  cornerTextBtn: {
+    background: "none",
+    border: "none",
+    color: "var(--text-chrome)",
+    cursor: "pointer",
+    fontSize: 12,
+    fontFamily: "inherit",
+    padding: "4px 10px",
+    borderRadius: 3,
+    lineHeight: 1,
+  },
+  cornerIconBtn: {
+    background: "none",
+    border: "none",
+    color: "var(--text-icon, var(--text-chrome))",
+    cursor: "pointer",
+    padding: "4px 8px",
+    borderRadius: 3,
+    lineHeight: 1,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: "inherit",
+  },
+  cornerSignInBtn: {
+    background: "var(--accent, #8b5cf6)",
+    border: "1px solid var(--accent, #8b5cf6)",
+    color: "#ffffff",
+    cursor: "pointer",
+    fontSize: 11,
+    fontWeight: 500,
+    fontFamily: "inherit",
+    padding: "3px 10px",
+    borderRadius: 3,
+    lineHeight: 1,
+    marginLeft: 4,
   },
 };
