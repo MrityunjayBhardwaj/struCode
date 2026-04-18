@@ -187,6 +187,10 @@ export const STRUDEL_DOCS_INDEX: DocsIndex = {
   docs: STRUDEL_DOCS,
   meta: {
     source: 'hand-curated',
+    // Strudel's jsdoc isn't published with per-function permalinks, so
+    // hovers fall back to the main function reference page — the user
+    // lands inside the searchable function browser.
+    docsBaseUrl: 'https://strudel.cc/functions/',
   },
 }
 

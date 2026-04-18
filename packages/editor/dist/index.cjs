@@ -6498,20 +6498,21 @@ function createHoverProvider(monaco, index) {
           position.lineNumber,
           word.endColumn
         ),
-        contents: renderHoverContents(hit.name, hit.doc)
+        contents: renderHoverContents(hit.doc, index.meta?.docsBaseUrl)
       };
     }
   });
 }
-function renderHoverContents(name2, doc) {
+function renderHoverContents(doc, fallbackUrl) {
   const out2 = [];
   out2.push({ value: "```typescript\n" + doc.signature + "\n```" });
   if (doc.description) out2.push({ value: doc.description });
   if (doc.example) out2.push({ value: "**Example:** `" + doc.example + "`" });
   if (doc.returns) out2.push({ value: "**Returns:** " + doc.returns });
-  if (doc.sourceUrl) {
+  const href = doc.sourceUrl ?? fallbackUrl;
+  if (href) {
     out2.push({
-      value: "[Reference \u2192](" + doc.sourceUrl + ")",
+      value: "[Reference \u2192](" + href + ")",
       isTrusted: true
     });
   }
@@ -9034,7 +9035,12 @@ var sonicpi_default = {
       category: "fx",
       sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
     }
-  }};
+  },
+  meta: {
+    fetchedAt: "2026-04-18",
+    source: "https://raw.githubusercontent.com/sonic-pi-net/sonic-pi/stable"
+  }
+};
 
 // src/monaco/docs/sonicpi.ts
 var SONICPI_DOCS_INDEX = sonicpi_default;
@@ -9206,7 +9212,15 @@ var STRUDEL_DOCS = {
 };
 var STRUDEL_DOCS_INDEX = {
   runtime: "strudel",
-  docs: STRUDEL_DOCS};
+  docs: STRUDEL_DOCS,
+  meta: {
+    source: "hand-curated",
+    // Strudel's jsdoc isn't published with per-function permalinks, so
+    // hovers fall back to the main function reference page — the user
+    // lands inside the searchable function browser.
+    docsBaseUrl: "https://strudel.cc/functions/"
+  }
+};
 function registerStrudelHover(monaco) {
   return createHoverProvider(monaco, STRUDEL_DOCS_INDEX);
 }
@@ -13318,7 +13332,13 @@ var p5_default = {
       category: "p5.sound",
       sourceUrl: "https://p5js.org/reference/#/p5/setBPM"
     }
-  }};
+  },
+  meta: {
+    version: "1.11.13",
+    fetchedAt: "2026-04-18",
+    source: "https://p5js.org/reference/data.json"
+  }
+};
 
 // src/monaco/docs/p5.ts
 var P5_DOCS_INDEX = p5_default;
@@ -13830,7 +13850,12 @@ var hydra_default = {
       kind: "variable",
       sourceUrl: "https://hydra.ojack.xyz/api/"
     }
-  }};
+  },
+  meta: {
+    fetchedAt: "2026-04-18",
+    source: "https://raw.githubusercontent.com/hydra-synth/hydra-synth/main/src/glsl/glsl-functions.js"
+  }
+};
 
 // src/monaco/docs/hydra.ts
 var HYDRA_DOCS_INDEX = hydra_default;

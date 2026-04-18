@@ -45,6 +45,12 @@ export interface DocsIndex {
     version?: string
     fetchedAt?: string
     source?: string
+    /**
+     * Fallback URL for the hover "Reference →" link when an entry has no
+     * `sourceUrl` of its own. Useful for runtimes whose docs don't carry
+     * stable per-function permalinks (e.g. Strudel).
+     */
+    docsBaseUrl?: string
   }
 }
 

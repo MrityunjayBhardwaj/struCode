@@ -33,28 +33,28 @@ export function createHoverProvider(
           position.lineNumber,
           word.endColumn,
         ),
-        contents: renderHoverContents(hit.name, hit.doc),
+        contents: renderHoverContents(hit.doc, index.meta?.docsBaseUrl),
       }
     },
   })
 }
 
 function renderHoverContents(
-  name: string,
   doc: RuntimeDoc,
+  fallbackUrl: string | undefined,
 ): Monaco.IMarkdownString[] {
   const out: Monaco.IMarkdownString[] = []
   out.push({ value: '```typescript\n' + doc.signature + '\n```' })
   if (doc.description) out.push({ value: doc.description })
   if (doc.example) out.push({ value: '**Example:** `' + doc.example + '`' })
   if (doc.returns) out.push({ value: '**Returns:** ' + doc.returns })
-  if (doc.sourceUrl) {
+  const href = doc.sourceUrl ?? fallbackUrl
+  if (href) {
     out.push({
-      value: '[Reference →](' + doc.sourceUrl + ')',
+      value: '[Reference →](' + href + ')',
       isTrusted: true,
     })
   }
-  void name
   return out
 }
 
