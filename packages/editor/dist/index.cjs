@@ -10965,6 +10965,518 @@ function registerP5Providers(monaco) {
   });
 }
 
+// src/monaco/docs/data/hydra.json
+var hydra_default = {
+  runtime: "hydra",
+  docs: {
+    noise: {
+      signature: "noise(scale: float = 10, offset: float = 0.1)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: scale (float, default 10), offset (float, default 0.1).",
+      example: "noise().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    voronoi: {
+      signature: "voronoi(scale: float = 5, speed: float = 0.3, blending: float = 0.3)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: scale (float, default 5), speed (float, default 0.3), blending (float, default 0.3).",
+      example: "voronoi().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    osc: {
+      signature: "osc(frequency: float = 60, sync: float = 0.1, offset: float = 0)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: frequency (float, default 60), sync (float, default 0.1), offset (float, default 0).",
+      example: "osc().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    shape: {
+      signature: "shape(sides: float = 3, radius: float = 0.3, smoothing: float = 0.01)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: sides (float, default 3), radius (float, default 0.3), smoothing (float, default 0.01).",
+      example: "shape().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    gradient: {
+      signature: "gradient(speed: float = 0)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: speed (float, default 0).",
+      example: "gradient().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    src: {
+      signature: "src(tex: sampler2D = null)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: tex (sampler2D, default null).",
+      example: "src().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    solid: {
+      signature: "solid(r: float = 0, g: float = 0, b: float = 0, a: float = 1)",
+      description: "Solid colour source \u2014 paints the whole frame one colour.",
+      example: "solid(1, 0, 0).out()",
+      kind: "function",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    rotate: {
+      signature: ".rotate(angle: float = 10, speed: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: angle (float, default 10), speed (float, default 0).",
+      example: "osc().rotate().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    scale: {
+      signature: ".scale(amount: float = 1.5, xMult: float = 1, yMult: float = 1, offsetX: float = 0.5, offsetY: float = 0.5)",
+      description: "Coordinate transform warping sampler input. Inputs: amount (float, default 1.5), xMult (float, default 1), yMult (float, default 1), offsetX (float, default 0.5), offsetY (float, default 0.5).",
+      example: "osc().scale().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    pixelate: {
+      signature: ".pixelate(pixelX: float = 20, pixelY: float = 20)",
+      description: "Coordinate transform warping sampler input. Inputs: pixelX (float, default 20), pixelY (float, default 20).",
+      example: "osc().pixelate().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    posterize: {
+      signature: ".posterize(bins: float = 3, gamma: float = 0.6)",
+      description: "Colour transform applied to the previous output. Inputs: bins (float, default 3), gamma (float, default 0.6).",
+      example: "osc().posterize().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    shift: {
+      signature: ".shift(r: float = 0.5, g: float = 0, b: float = 0, a: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: r (float, default 0.5), g (float, default 0), b (float, default 0), a (float, default 0).",
+      example: "osc().shift().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    repeat: {
+      signature: ".repeat(repeatX: float = 3, repeatY: float = 3, offsetX: float = 0, offsetY: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: repeatX (float, default 3), repeatY (float, default 3), offsetX (float, default 0), offsetY (float, default 0).",
+      example: "osc().repeat().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateRepeat: {
+      signature: ".modulateRepeat(repeatX: float = 3, repeatY: float = 3, offsetX: float = 0.5, offsetY: float = 0.5)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: repeatX (float, default 3), repeatY (float, default 3), offsetX (float, default 0.5), offsetY (float, default 0.5).",
+      example: "osc().modulateRepeat(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    repeatX: {
+      signature: ".repeatX(reps: float = 3, offset: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: reps (float, default 3), offset (float, default 0).",
+      example: "osc().repeatX().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateRepeatX: {
+      signature: ".modulateRepeatX(reps: float = 3, offset: float = 0.5)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: reps (float, default 3), offset (float, default 0.5).",
+      example: "osc().modulateRepeatX(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    repeatY: {
+      signature: ".repeatY(reps: float = 3, offset: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: reps (float, default 3), offset (float, default 0).",
+      example: "osc().repeatY().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateRepeatY: {
+      signature: ".modulateRepeatY(reps: float = 3, offset: float = 0.5)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: reps (float, default 3), offset (float, default 0.5).",
+      example: "osc().modulateRepeatY(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    kaleid: {
+      signature: ".kaleid(nSides: float = 4)",
+      description: "Coordinate transform warping sampler input. Inputs: nSides (float, default 4).",
+      example: "osc().kaleid().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateKaleid: {
+      signature: ".modulateKaleid(nSides: float = 4)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: nSides (float, default 4).",
+      example: "osc().modulateKaleid(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    scroll: {
+      signature: ".scroll(scrollX: float = 0.5, scrollY: float = 0.5, speedX: float = 0, speedY: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: scrollX (float, default 0.5), scrollY (float, default 0.5), speedX (float, default 0), speedY (float, default 0).",
+      example: "osc().scroll().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    scrollX: {
+      signature: ".scrollX(scrollX: float = 0.5, speed: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: scrollX (float, default 0.5), speed (float, default 0).",
+      example: "osc().scrollX().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateScrollX: {
+      signature: ".modulateScrollX(scrollX: float = 0.5, speed: float = 0)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: scrollX (float, default 0.5), speed (float, default 0).",
+      example: "osc().modulateScrollX(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    scrollY: {
+      signature: ".scrollY(scrollY: float = 0.5, speed: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: scrollY (float, default 0.5), speed (float, default 0).",
+      example: "osc().scrollY().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateScrollY: {
+      signature: ".modulateScrollY(scrollY: float = 0.5, speed: float = 0)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: scrollY (float, default 0.5), speed (float, default 0).",
+      example: "osc().modulateScrollY(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    add: {
+      signature: ".add(amount: float = 1)",
+      description: "Combine two textures into one. Inputs: amount (float, default 1).",
+      example: "osc().add(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    sub: {
+      signature: ".sub(amount: float = 1)",
+      description: "Combine two textures into one. Inputs: amount (float, default 1).",
+      example: "osc().sub(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    layer: {
+      signature: ".layer()",
+      description: "Combine two textures into one.",
+      example: "osc().layer(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    blend: {
+      signature: ".blend(amount: float = 0.5)",
+      description: "Combine two textures into one. Inputs: amount (float, default 0.5).",
+      example: "osc().blend(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    mult: {
+      signature: ".mult(amount: float = 1)",
+      description: "Combine two textures into one. Inputs: amount (float, default 1).",
+      example: "osc().mult(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    diff: {
+      signature: ".diff()",
+      description: "Combine two textures into one.",
+      example: "osc().diff(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulate: {
+      signature: ".modulate(amount: float = 0.1)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: amount (float, default 0.1).",
+      example: "osc().modulate(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateScale: {
+      signature: ".modulateScale(multiple: float = 1, offset: float = 1)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: multiple (float, default 1), offset (float, default 1).",
+      example: "osc().modulateScale(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulatePixelate: {
+      signature: ".modulatePixelate(multiple: float = 10, offset: float = 3)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: multiple (float, default 10), offset (float, default 3).",
+      example: "osc().modulatePixelate(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateRotate: {
+      signature: ".modulateRotate(multiple: float = 1, offset: float = 0)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: multiple (float, default 1), offset (float, default 0).",
+      example: "osc().modulateRotate(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateHue: {
+      signature: ".modulateHue(amount: float = 1)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: amount (float, default 1).",
+      example: "osc().modulateHue(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    invert: {
+      signature: ".invert(amount: float = 1)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 1).",
+      example: "osc().invert().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    contrast: {
+      signature: ".contrast(amount: float = 1.6)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 1.6).",
+      example: "osc().contrast().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    brightness: {
+      signature: ".brightness(amount: float = 0.4)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 0.4).",
+      example: "osc().brightness().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    mask: {
+      signature: ".mask()",
+      description: "Combine two textures into one.",
+      example: "osc().mask(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    luma: {
+      signature: ".luma(threshold: float = 0.5, tolerance: float = 0.1)",
+      description: "Colour transform applied to the previous output. Inputs: threshold (float, default 0.5), tolerance (float, default 0.1).",
+      example: "osc().luma().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    thresh: {
+      signature: ".thresh(threshold: float = 0.5, tolerance: float = 0.04)",
+      description: "Colour transform applied to the previous output. Inputs: threshold (float, default 0.5), tolerance (float, default 0.04).",
+      example: "osc().thresh().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    color: {
+      signature: ".color(r: float = 1, g: float = 1, b: float = 1, a: float = 1)",
+      description: "Colour transform applied to the previous output. Inputs: r (float, default 1), g (float, default 1), b (float, default 1), a (float, default 1).",
+      example: "osc().color().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    saturate: {
+      signature: ".saturate(amount: float = 2)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 2).",
+      example: "osc().saturate().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    hue: {
+      signature: ".hue(hue: float = 0.4)",
+      description: "Colour transform applied to the previous output. Inputs: hue (float, default 0.4).",
+      example: "osc().hue().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    colorama: {
+      signature: ".colorama(amount: float = 0.005)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 0.005).",
+      example: "osc().colorama().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    prev: {
+      signature: "prev()",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour.",
+      example: "prev().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    sum: {
+      signature: ".sum(scale: vec4 = 1)",
+      description: "Colour transform applied to the previous output. Inputs: scale (vec4, default 1).",
+      example: "osc().sum().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    r: {
+      signature: ".r(scale: float = 1, offset: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: scale (float, default 1), offset (float, default 0).",
+      example: "osc().r().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    g: {
+      signature: ".g(scale: float = 1, offset: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: scale (float, default 1), offset (float, default 0).",
+      example: "osc().g().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    b: {
+      signature: ".b(scale: float = 1, offset: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: scale (float, default 1), offset (float, default 0).",
+      example: "osc().b().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    a: {
+      signature: ".a(scale: float = 1, offset: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: scale (float, default 1), offset (float, default 0).",
+      example: "osc().a().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    out: {
+      signature: ".out(buffer?: o0|o1|o2|o3)",
+      description: "Render the chain to an output buffer (default o0).",
+      example: "osc().out(o0)",
+      kind: "method",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    render: {
+      signature: "render(buffer?: o0|o1|o2|o3)",
+      description: "Show a single buffer fullscreen (default: show all four).",
+      example: "render(o0)",
+      kind: "function",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    hush: {
+      signature: "hush()",
+      description: "Stop all currently-playing Hydra chains.",
+      example: "hush()",
+      kind: "function",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    time: {
+      signature: "time",
+      description: "Seconds elapsed since the Hydra instance started.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    mouse: {
+      signature: "mouse",
+      description: "Object with `x` / `y` fields (pixel coordinates of the cursor).",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    s0: {
+      signature: "s0",
+      description: "External texture source 0. Bind with `s0.initCam()` / `s0.initImage()` / `s0.initVideo()`.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    s1: {
+      signature: "s1",
+      description: "External texture source 1.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    s2: {
+      signature: "s2",
+      description: "External texture source 2.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    s3: {
+      signature: "s3",
+      description: "External texture source 3.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    o0: {
+      signature: "o0",
+      description: "Output buffer 0 \u2014 the default display buffer.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    o1: {
+      signature: "o1",
+      description: "Output buffer 1.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    o2: {
+      signature: "o2",
+      description: "Output buffer 2.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    o3: {
+      signature: "o3",
+      description: "Output buffer 3.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    }
+  }};
+
+// src/monaco/docs/hydra.ts
+var HYDRA_DOCS_INDEX = hydra_default;
+function registerHydraProviders(monaco) {
+  return registerRuntimeProviders(monaco, HYDRA_DOCS_INDEX, {
+    hover: true,
+    dotCompletion: true,
+    identifierCompletion: true
+  });
+}
+
 // src/workspace/languages.ts
 var hydraRegistered = false;
 var p5jsRegistered = false;
@@ -11052,6 +11564,7 @@ function ensureWorkspaceLanguages(monaco) {
   registerP5JsLanguage(monaco);
   ensureStrudelProviders(monaco);
   ensureP5Providers(monaco);
+  ensureHydraProviders(monaco);
 }
 var strudelProvidersRegistered = false;
 function ensureStrudelProviders(monaco) {
@@ -11072,6 +11585,15 @@ function ensureP5Providers(monaco) {
   }
   p5ProvidersRegistered = true;
   registerP5Providers(monaco);
+}
+var hydraProvidersRegistered = false;
+function ensureHydraProviders(monaco) {
+  if (hydraProvidersRegistered) return;
+  if (typeof monaco.languages?.registerCompletionItemProvider !== "function" || typeof monaco.languages?.registerHoverProvider !== "function") {
+    return;
+  }
+  hydraProvidersRegistered = true;
+  registerHydraProviders(monaco);
 }
 function toMonacoLanguage(lang) {
   switch (lang) {
