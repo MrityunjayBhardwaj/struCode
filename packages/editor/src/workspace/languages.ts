@@ -90,25 +90,93 @@ function registerHydraLanguage(monaco: typeof Monaco): void {
     includeKinds: ['variable', 'constant'],
     extra: ['Math', 'PI', 'sin', 'cos', 'tan', 'abs', 'floor', 'ceil', 'round', 'max', 'min', 'random', 'pow', 'sqrt'],
   })
+  // Same comprehensive shape as the p5 tokenizer — operators, brackets,
+  // delimiters, identifier fallthrough, template-string interpolation.
+  // Previous Hydra tokenizer had only keyword/method/variable + simple
+  // strings + the `=>` operator, so arithmetic (`+`, `*`, `-`), brackets,
+  // property access, and user variables all fell through to the
+  // undifferentiated `source.hydra` catch-all.
   monaco.languages.setMonarchTokensProvider('hydra', {
+    defaultToken: '',
+    tokenPostfix: '.hydra',
     tokenizer: {
       root: [
         [/\/\/.*$/, 'comment'],
         [/\/\*/, 'comment', '@comment'],
-        ...keywordRule(sources, 'keyword'),
+        // `.foo` property access → colored as method if it's a known Hydra
+        // transform, else as property identifier. Method rule runs first.
         ...methodRule(methods, 'type'),
+        [/\.([a-zA-Z_$][\w$]*)/, 'identifier.property'],
+        ...keywordRule(sources, 'keyword'),
         ...keywordRule(globals, 'variable.predefined'),
         [/\ba\b/, 'variable.predefined'],
-        [/\b\d+\.?\d*\b/, 'number'],
-        [/"[^"]*"/, 'string'],
-        [/'[^']*'/, 'string'],
+        [
+          /\b(let|const|var|function|for|while|if|else|return|class|new|typeof|instanceof|of|in|break|continue|do|switch|case|default|throw|try|catch|finally|async|await|yield|this|super|import|export|from|as|void|delete|null|undefined|true|false)\b/,
+          'keyword',
+        ],
+        [/[a-zA-Z_$][\w$]*/, 'identifier'],
+        [/0[xX][\da-fA-F]+n?/, 'number.hex'],
+        [/0[bB][01]+n?/, 'number.binary'],
+        [/\d+(\.\d+)?([eE][+-]?\d+)?n?/, 'number'],
+        [/\.\d+([eE][+-]?\d+)?/, 'number.float'],
+        [/"/, { token: 'string.quote', next: '@string_double' }],
+        [/'/, { token: 'string.quote', next: '@string_single' }],
+        [/`/, { token: 'string.quote', next: '@string_template' }],
         [/=>/, 'keyword.operator'],
+        [/(\?\?|\?\.|\?|:)/, 'keyword.operator'],
+        [/===|!==|==|!=|<=|>=|<<|>>>|>>|&&|\|\|/, 'keyword.operator'],
+        [/[=!<>]=?/, 'keyword.operator'],
+        [/[+\-*/%&|^~]=?/, 'keyword.operator'],
+        [/[{}()[\]]/, '@brackets'],
+        [/[;,.]/, 'delimiter'],
       ],
       comment: [
+        [/[^/*]+/, 'comment'],
         [/\*\//, 'comment', '@pop'],
         [/./, 'comment'],
       ],
+      string_double: [
+        [/[^\\"]+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/"/, { token: 'string.quote', next: '@pop' }],
+      ],
+      string_single: [
+        [/[^\\']+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/'/, { token: 'string.quote', next: '@pop' }],
+      ],
+      string_template: [
+        [/[^\\`$]+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/\$\{/, { token: 'delimiter.bracket', next: '@template_interp' }],
+        [/\$/, 'string'],
+        [/`/, { token: 'string.quote', next: '@pop' }],
+      ],
+      template_interp: [
+        [/\}/, { token: 'delimiter.bracket', next: '@pop' }],
+        { include: 'root' },
+      ],
     },
+  })
+  monaco.languages.setLanguageConfiguration('hydra', {
+    comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+    brackets: [['{', '}'], ['[', ']'], ['(', ')']],
+    autoClosingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: '`', close: '`' },
+    ],
+    surroundingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: '`', close: '`' },
+    ],
   })
 }
 
