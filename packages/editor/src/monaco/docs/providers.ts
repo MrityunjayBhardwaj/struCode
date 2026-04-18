@@ -62,7 +62,17 @@ function renderHoverContents(
 // Completion
 // ---------------------------------------------------------------------------
 
-const KIND_TO_MONACO: Record<DocKind, keyof typeof MonacoKindNames> = {
+type MonacoKindName =
+  | 'Function'
+  | 'Method'
+  | 'Variable'
+  | 'Constant'
+  | 'Keyword'
+  | 'Module'
+  | 'Value'
+  | 'Interface'
+
+const KIND_TO_MONACO: Record<DocKind, MonacoKindName> = {
   function: 'Function',
   method: 'Method',
   variable: 'Variable',
@@ -73,22 +83,11 @@ const KIND_TO_MONACO: Record<DocKind, keyof typeof MonacoKindNames> = {
   fx: 'Interface',
 }
 
-const MonacoKindNames = {
-  Function: 1,
-  Method: 1,
-  Variable: 1,
-  Constant: 1,
-  Keyword: 1,
-  Module: 1,
-  Value: 1,
-  Interface: 1,
-} as const
-
 function kindOf(
   monaco: typeof Monaco,
   kind: DocKind | undefined,
 ): Monaco.languages.CompletionItemKind {
-  const mapped = kind ? KIND_TO_MONACO[kind] : 'Function'
+  const mapped: MonacoKindName = kind ? KIND_TO_MONACO[kind] : 'Function'
   return monaco.languages.CompletionItemKind[mapped]
 }
 

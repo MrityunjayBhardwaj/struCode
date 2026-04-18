@@ -12,14 +12,11 @@ import { createHoverProvider } from './docs/providers'
 // see `packages/editor/scripts/fetch-docs/strudel.mjs` for the path we'd
 // need to automate. Until then these entries are maintained manually.
 //
-// `StrudelDoc` is a structural subset of `RuntimeDoc` (kept as an alias
-// so existing imports keep working); entries are indexed through
-// `STRUDEL_DOCS_INDEX` and served by the same factory the other
-// runtimes use.
+// Each entry is a RuntimeDoc with `example` required — the pattern for
+// Strudel's hand-curated style. No per-function sourceUrl is set;
+// STRUDEL_DOCS_INDEX.meta.docsBaseUrl covers the Reference→ link.
 
-export type StrudelDoc = RuntimeDoc & { example: string }
-
-export const STRUDEL_DOCS: Record<string, StrudelDoc> = {
+export const STRUDEL_DOCS: Record<string, RuntimeDoc> = {
   note: {
     signature: 'note(pattern: string)',
     description: 'Play notes from a mini-notation pattern. Accepts note names (c4, eb3) or MIDI numbers.',
