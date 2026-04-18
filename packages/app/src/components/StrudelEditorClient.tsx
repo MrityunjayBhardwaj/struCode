@@ -31,7 +31,7 @@ import {
   type VizPreset,
   type PreviewProvider,
 } from "@stave/editor";
-import { PIANOROLL_P5_CODE, PIANOROLL_HYDRA_CODE } from "../templates";
+import { PIANOROLL_P5_CODE, PIANOROLL_HYDRA_CODE, seedMissingPresetFiles } from "../templates";
 
 
 // ---------------------------------------------------------------------------
@@ -112,6 +112,10 @@ export default function StrudelEditorClient({
     p5PresetId: bundledPresetId("Piano Roll", "p5"),
     hydraPresetId: bundledPresetId("Piano Roll Hydra", "hydra"),
   }));
+
+  // Seed any missing viz preset files into the project so older
+  // projects get the full set of built-in viz workspace files.
+  useEffect(() => { seedMissingPresetFiles(); }, []);
 
   // Register ALL .p5/.hydra workspace files as named viz presets so
   // `.viz("name")` works for user-created files, not just bundled ones.

@@ -19736,7 +19736,7 @@ async function flushToPreset(fileId, presetId) {
     ...existing,
     // preserve cropRegion + any future fields
     id: presetId,
-    name: existing?.name ?? file.path.replace(/\.[^.]+$/, ""),
+    name: existing?.name ?? file.path.replace(/^.*\//, "").replace(/\.[^.]+$/, ""),
     renderer: existing?.renderer ?? renderer,
     code: file.content,
     requires: existing?.requires ?? [],
