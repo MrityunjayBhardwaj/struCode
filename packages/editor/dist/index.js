@@ -6987,6 +6987,3957 @@ function registerStrudelNoteCompletions(monaco) {
   });
 }
 
+// src/monaco/docs/types.ts
+function resolveDoc(index, word) {
+  const direct = index.docs[word];
+  if (direct) return { name: word, doc: direct };
+  const aliasTarget = index.aliases?.[word];
+  if (aliasTarget && index.docs[aliasTarget]) {
+    return { name: aliasTarget, doc: index.docs[aliasTarget] };
+  }
+  return null;
+}
+
+// src/monaco/docs/providers.ts
+function createHoverProvider(monaco, index) {
+  return monaco.languages.registerHoverProvider(index.runtime, {
+    provideHover(model, position) {
+      const word = model.getWordAtPosition(position);
+      if (!word) return null;
+      const hit = resolveDoc(index, word.word);
+      if (!hit) return null;
+      return {
+        range: new monaco.Range(
+          position.lineNumber,
+          word.startColumn,
+          position.lineNumber,
+          word.endColumn
+        ),
+        contents: renderHoverContents(hit.name, hit.doc)
+      };
+    }
+  });
+}
+function renderHoverContents(name2, doc) {
+  const out2 = [];
+  out2.push({ value: "```typescript\n" + doc.signature + "\n```" });
+  if (doc.description) out2.push({ value: doc.description });
+  if (doc.example) out2.push({ value: "**Example:** `" + doc.example + "`" });
+  if (doc.returns) out2.push({ value: "**Returns:** " + doc.returns });
+  if (doc.sourceUrl) {
+    out2.push({
+      value: "[Reference \u2192](" + doc.sourceUrl + ")",
+      isTrusted: true
+    });
+  }
+  return out2;
+}
+var KIND_TO_MONACO = {
+  function: "Function",
+  method: "Method",
+  variable: "Variable",
+  constant: "Constant",
+  keyword: "Keyword",
+  synth: "Module",
+  sample: "Value",
+  fx: "Interface"
+};
+function kindOf(monaco, kind) {
+  const mapped = kind ? KIND_TO_MONACO[kind] : "Function";
+  return monaco.languages.CompletionItemKind[mapped];
+}
+function createDotCompletionProvider(monaco, index) {
+  return monaco.languages.registerCompletionItemProvider(index.runtime, {
+    triggerCharacters: ["."],
+    provideCompletionItems(model, position) {
+      const lineBefore = model.getLineContent(position.lineNumber).substring(0, position.column - 1);
+      if (!/[)\]"'`\w]\.[\w]*$/.test(lineBefore)) {
+        return { suggestions: [] };
+      }
+      const word = model.getWordUntilPosition(position);
+      const range2 = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn
+      };
+      return {
+        suggestions: Object.entries(index.docs).map(
+          ([name2, doc]) => toSuggestion(monaco, name2, doc, range2)
+        )
+      };
+    }
+  });
+}
+function createIdentifierCompletionProvider(monaco, index) {
+  return monaco.languages.registerCompletionItemProvider(index.runtime, {
+    provideCompletionItems(model, position) {
+      const word = model.getWordUntilPosition(position);
+      const prefix = word.word;
+      const range2 = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn
+      };
+      const entries = Object.entries(index.docs).filter(
+        ([name2]) => prefix.length === 0 ? true : name2.toLowerCase().startsWith(prefix.toLowerCase())
+      );
+      return {
+        suggestions: entries.map(
+          ([name2, doc]) => toSuggestion(monaco, name2, doc, range2)
+        )
+      };
+    }
+  });
+}
+function toSuggestion(monaco, name2, doc, range2) {
+  const documentation = {
+    value: (doc.description ?? "") + (doc.example ? "\n\n**Example:** `" + doc.example + "`" : "") + (doc.sourceUrl ? "\n\n[Reference \u2192](" + doc.sourceUrl + ")" : ""),
+    isTrusted: true
+  };
+  return {
+    label: name2,
+    kind: kindOf(monaco, doc.kind),
+    insertText: name2,
+    detail: doc.signature,
+    documentation,
+    range: range2
+  };
+}
+function registerRuntimeProviders(monaco, index, toggle = {
+  hover: true,
+  dotCompletion: true,
+  identifierCompletion: true
+}) {
+  const disposables = [];
+  if (toggle.hover) disposables.push(createHoverProvider(monaco, index));
+  if (toggle.dotCompletion)
+    disposables.push(createDotCompletionProvider(monaco, index));
+  if (toggle.identifierCompletion)
+    disposables.push(createIdentifierCompletionProvider(monaco, index));
+  return disposables;
+}
+
+// src/monaco/docs/data/p5.json
+var p5_default = {
+  runtime: "p5js",
+  docs: {
+    describe: {
+      signature: "describe(text: String, display?: Constant)",
+      description: "Creates a screen reader-accessible description of the canvas.",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/describe"
+    },
+    describeElement: {
+      signature: "describeElement(name: String, text: String, display?: Constant)",
+      description: "Creates a screen reader-accessible description of elements in the canvas.",
+      example: "describeElement('Circle', 'A yellow circle in the top-left corner.')",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/describeElement"
+    },
+    textOutput: {
+      signature: "textOutput(display?: Constant)",
+      description: "Creates a screen reader-accessible description of shapes on the canvas.",
+      example: "textOutput()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/textOutput"
+    },
+    gridOutput: {
+      signature: "gridOutput(display?: Constant)",
+      description: "Creates a screen reader-accessible description of shapes on the canvas.",
+      example: "gridOutput()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/gridOutput"
+    },
+    alpha: {
+      signature: "alpha(color: p5.Color|Number[]|String)",
+      description: "Gets the alpha (transparency) value of a color.",
+      example: "let alphaValue = alpha(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/alpha"
+    },
+    blue: {
+      signature: "blue(color: p5.Color|Number[]|String)",
+      description: "Gets the blue value of a color.",
+      example: "let blueValue = blue(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/blue"
+    },
+    brightness: {
+      signature: "brightness(color: p5.Color|Number[]|String)",
+      description: "Gets the brightness value of a color.",
+      example: "let brightValue = brightness(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/brightness"
+    },
+    color: {
+      signature: "color(gray: Number, alpha?: Number)",
+      description: "Creates a p5.",
+      example: "let c = color(255, 204, 0)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/color"
+    },
+    green: {
+      signature: "green(color: p5.Color|Number[]|String)",
+      description: "Gets the green value of a color.",
+      example: "let greenValue = green(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/green"
+    },
+    hue: {
+      signature: "hue(color: p5.Color|Number[]|String)",
+      description: "Gets the hue value of a color.",
+      example: "let hueValue = hue(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/hue"
+    },
+    lerpColor: {
+      signature: "lerpColor(c1: p5.Color, c2: p5.Color, amt: Number)",
+      description: "Blends two colors to find a third color between them.",
+      example: "let interA = lerpColor(from, to, 0.33)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/lerpColor"
+    },
+    paletteLerp: {
+      signature: "paletteLerp(colors_stops: [p5.Color, Number][], amt: Number)",
+      description: "Blends multiple colors to find a color between them.",
+      example: "background(paletteLerp([",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/paletteLerp"
+    },
+    lightness: {
+      signature: "lightness(color: p5.Color|Number[]|String)",
+      description: "Gets the lightness value of a color.",
+      example: "let lightValue = lightness(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/lightness"
+    },
+    red: {
+      signature: "red(color: p5.Color|Number[]|String)",
+      description: "Gets the red value of a color.",
+      example: "let redValue = red(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/red"
+    },
+    saturation: {
+      signature: "saturation(color: p5.Color|Number[]|String)",
+      description: "Gets the saturation value of a color.",
+      example: "let satValue = saturation(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/saturation"
+    },
+    beginClip: {
+      signature: "beginClip(options?: Object)",
+      description: "Starts defining a shape that will mask any shapes drawn afterward.",
+      example: "beginClip()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/beginClip"
+    },
+    endClip: {
+      signature: "endClip()",
+      description: "Ends defining a mask that was started with beginClip().",
+      example: "endClip()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/endClip"
+    },
+    clip: {
+      signature: "clip(callback: Function, options?: Object)",
+      description: "Defines a shape that will mask any shapes drawn afterward.",
+      example: "clip(mask)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/clip"
+    },
+    background: {
+      signature: "background(color: p5.Color)",
+      description: "Sets the color used for the background of the canvas.",
+      example: "background(51)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/background"
+    },
+    clear: {
+      signature: "clear(r?: Number, g?: Number, b?: Number, a?: Number)",
+      description: "Clears the pixels on the canvas.",
+      example: "clear()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/clear"
+    },
+    colorMode: {
+      signature: "colorMode(mode: Constant, max?: Number)",
+      description: "Changes the way color values are interpreted.",
+      example: "colorMode(RGB, 100)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/colorMode"
+    },
+    fill: {
+      signature: "fill(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Sets the color used to fill shapes.",
+      example: "fill(51)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/fill"
+    },
+    noFill: {
+      signature: "noFill()",
+      description: "Disables setting the fill color for shapes.",
+      example: "noFill()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/noFill"
+    },
+    noStroke: {
+      signature: "noStroke()",
+      description: "Disables drawing points, lines, and the outlines of shapes.",
+      example: "noStroke()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/noStroke"
+    },
+    stroke: {
+      signature: "stroke(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Sets the color used to draw points, lines, and the outlines of shapes.",
+      example: "stroke(51)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/stroke"
+    },
+    erase: {
+      signature: "erase(strengthFill?: Number, strengthStroke?: Number)",
+      description: "Starts using shapes to erase parts of the canvas.",
+      example: "erase()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/erase"
+    },
+    noErase: {
+      signature: "noErase()",
+      description: "Ends erasing that was started with erase().",
+      example: "noErase()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/noErase"
+    },
+    arc: {
+      signature: "arc(x: Number, y: Number, w: Number, h: Number, start: Number, stop: Number, mode?: Constant, detail?: Integer)",
+      description: "Draws an arc.",
+      example: "arc(50, 50, 80, 80, 0, PI + HALF_PI)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/arc"
+    },
+    ellipse: {
+      signature: "ellipse(x: Number, y: Number, w: Number, h?: Number)",
+      description: "Draws an ellipse (oval).",
+      example: "ellipse(50, 50, 80, 80)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/ellipse"
+    },
+    circle: {
+      signature: "circle(x: Number, y: Number, d: Number)",
+      description: "Draws a circle.",
+      example: "circle(50, 50, 25)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/circle"
+    },
+    line: {
+      signature: "line(x1: Number, y1: Number, x2: Number, y2: Number)",
+      description: "Draws a straight line between two points.",
+      example: "line(30, 20, 85, 75)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/line"
+    },
+    point: {
+      signature: "point(x: Number, y: Number, z?: Number)",
+      description: "Draws a single point in space.",
+      example: "point(30, 20)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/point"
+    },
+    quad: {
+      signature: "quad(x1: Number, y1: Number, x2: Number, y2: Number, x3: Number, y3: Number, x4: Number, y4: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a quadrilateral (four-sided shape).",
+      example: "quad(20, 20, 80, 20, 80, 80, 20, 80)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/quad"
+    },
+    rect: {
+      signature: "rect(x: Number, y: Number, w: Number, h?: Number, tl?: Number, tr?: Number, br?: Number, bl?: Number)",
+      description: "Draws a rectangle.",
+      example: "rect(30, 20, 55, 55)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/rect"
+    },
+    square: {
+      signature: "square(x: Number, y: Number, s: Number, tl?: Number, tr?: Number, br?: Number, bl?: Number)",
+      description: "Draws a square.",
+      example: "square(30, 20, 55)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/square"
+    },
+    triangle: {
+      signature: "triangle(x1: Number, y1: Number, x2: Number, y2: Number, x3: Number, y3: Number)",
+      description: "Draws a triangle.",
+      example: "triangle(30, 75, 58, 20, 86, 75)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/triangle"
+    },
+    ellipseMode: {
+      signature: "ellipseMode(mode: Constant)",
+      description: "Changes where ellipses, circles, and arcs are drawn.",
+      example: "ellipseMode(RADIUS)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/ellipseMode"
+    },
+    noSmooth: {
+      signature: "noSmooth()",
+      description: "Draws certain features with jagged (aliased) edges.",
+      example: "noSmooth()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/noSmooth"
+    },
+    rectMode: {
+      signature: "rectMode(mode: Constant)",
+      description: "Changes where rectangles and squares are drawn.",
+      example: "rectMode(CORNER)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/rectMode"
+    },
+    smooth: {
+      signature: "smooth()",
+      description: "Draws certain features with smooth (antialiased) edges.",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/smooth"
+    },
+    strokeCap: {
+      signature: "strokeCap(cap: Constant)",
+      description: "Sets the style for rendering the ends of lines.",
+      example: "strokeCap(ROUND)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/strokeCap"
+    },
+    strokeJoin: {
+      signature: "strokeJoin(join: Constant)",
+      description: "Sets the style of the joints that connect line segments.",
+      example: "strokeJoin(MITER)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/strokeJoin"
+    },
+    strokeWeight: {
+      signature: "strokeWeight(weight: Number)",
+      description: "Sets the width of the stroke used for points, lines, and the outlines of shapes.",
+      example: "strokeWeight(4)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/strokeWeight"
+    },
+    bezier: {
+      signature: "bezier(x1: Number, y1: Number, x2: Number, y2: Number, x3: Number, y3: Number, x4: Number, y4: Number)",
+      description: "Draws a B\xE9zier curve.",
+      example: "bezier(85, 20, 10, 10, 90, 90, 15, 80)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezier"
+    },
+    bezierDetail: {
+      signature: "bezierDetail(detail: Number)",
+      description: "Sets the number of segments used to draw B\xE9zier curves in WebGL mode.",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezierDetail"
+    },
+    bezierPoint: {
+      signature: "bezierPoint(a: Number, b: Number, c: Number, d: Number, t: Number)",
+      description: "Calculates coordinates along a B\xE9zier curve using interpolation.",
+      example: "let x = bezierPoint(x1, x2, x3, x4, 0)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezierPoint"
+    },
+    bezierTangent: {
+      signature: "bezierTangent(a: Number, b: Number, c: Number, d: Number, t: Number)",
+      description: "Calculates coordinates along a line that's tangent to a B\xE9zier curve.",
+      example: "let tx = 0.1 * bezierTangent(x1, x2, x3, x4, 0)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezierTangent"
+    },
+    curve: {
+      signature: "curve(x1: Number, y1: Number, x2: Number, y2: Number, x3: Number, y3: Number, x4: Number, y4: Number)",
+      description: "Draws a curve using a Catmull-Rom spline.",
+      example: "curve(5, 26, 73, 24, 73, 61, 15, 65)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curve"
+    },
+    curveDetail: {
+      signature: "curveDetail(resolution: Number)",
+      description: "Sets the number of segments used to draw spline curves in WebGL mode.",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curveDetail"
+    },
+    curveTightness: {
+      signature: "curveTightness(amount: Number)",
+      description: "Adjusts the way curve() and curveVertex() draw.",
+      example: "curveTightness(t)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curveTightness"
+    },
+    curvePoint: {
+      signature: "curvePoint(a: Number, b: Number, c: Number, d: Number, t: Number)",
+      description: "Calculates coordinates along a spline curve using interpolation.",
+      example: "let x = curvePoint(x1, x2, x3, x4, 0)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curvePoint"
+    },
+    curveTangent: {
+      signature: "curveTangent(a: Number, b: Number, c: Number, d: Number, t: Number)",
+      description: "Calculates coordinates along a line that's tangent to a spline curve.",
+      example: "let tx = 0.2 * curveTangent(x1, x2, x3, x4, 0)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curveTangent"
+    },
+    beginContour: {
+      signature: "beginContour()",
+      description: "Begins creating a hole within a flat shape.",
+      example: "beginContour()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/beginContour"
+    },
+    beginShape: {
+      signature: "beginShape(kind?: Constant)",
+      description: "Begins adding vertices to a custom shape.",
+      example: "beginShape()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/beginShape"
+    },
+    bezierVertex: {
+      signature: "bezierVertex(x2: Number, y2: Number, x3: Number, y3: Number, x4: Number, y4: Number)",
+      description: "Adds a B\xE9zier curve segment to a custom shape.",
+      example: "bezierVertex(80, 0, 80, 75, 30, 75)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezierVertex"
+    },
+    curveVertex: {
+      signature: "curveVertex(x: Number, y: Number)",
+      description: "Adds a spline curve segment to a custom shape.",
+      example: "curveVertex(32, 91)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curveVertex"
+    },
+    endContour: {
+      signature: "endContour()",
+      description: "Stops creating a hole within a flat shape.",
+      example: "endContour()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/endContour"
+    },
+    endShape: {
+      signature: "endShape(mode?: Constant, count?: Integer)",
+      description: "Stops adding vertices to a custom shape.",
+      example: "endShape(CLOSE)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/endShape"
+    },
+    quadraticVertex: {
+      signature: "quadraticVertex(cx: Number, cy: Number, x3: Number, y3: Number)",
+      description: "Adds a quadratic B\xE9zier curve segment to a custom shape.",
+      example: "quadraticVertex(80, 20, 50, 50)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/quadraticVertex"
+    },
+    vertex: {
+      signature: "vertex(x: Number, y: Number)",
+      description: "Adds a vertex to a custom shape.",
+      example: "vertex(30, 20)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/vertex"
+    },
+    normal: {
+      signature: "normal(vector: p5.Vector)",
+      description: "Sets the normal vector for vertices in a custom 3D shape.",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/normal"
+    },
+    VERSION: {
+      signature: "VERSION",
+      description: "Version of this p5.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/VERSION"
+    },
+    P2D: {
+      signature: "P2D",
+      description: "The default, two-dimensional renderer.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/P2D"
+    },
+    WEBGL: {
+      signature: "WEBGL",
+      description: "One of the two render modes in p5.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/WEBGL"
+    },
+    WEBGL2: {
+      signature: "WEBGL2",
+      description: "One of the two possible values of a WebGL canvas (either WEBGL or WEBGL2), which can be used to determine what capabilities the rendering environment has.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/WEBGL2"
+    },
+    ARROW: {
+      signature: "ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ARROW"
+    },
+    CROSS: {
+      signature: "CROSS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CROSS"
+    },
+    HAND: {
+      signature: "HAND",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HAND"
+    },
+    MOVE: {
+      signature: "MOVE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/MOVE"
+    },
+    TEXT: {
+      signature: "TEXT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TEXT"
+    },
+    WAIT: {
+      signature: "WAIT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/WAIT"
+    },
+    HALF_PI: {
+      signature: "HALF_PI",
+      description: "A `Number` constant that's approximately 1.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HALF_PI"
+    },
+    PI: {
+      signature: "PI",
+      description: "A `Number` constant that's approximately 3.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/PI"
+    },
+    QUARTER_PI: {
+      signature: "QUARTER_PI",
+      description: "A `Number` constant that's approximately 0.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/QUARTER_PI"
+    },
+    TAU: {
+      signature: "TAU",
+      description: "A `Number` constant that's approximately 6.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TAU"
+    },
+    TWO_PI: {
+      signature: "TWO_PI",
+      description: "A `Number` constant that's approximately 6.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TWO_PI"
+    },
+    DEGREES: {
+      signature: "DEGREES",
+      description: "A `String` constant that's used to set the angleMode().",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DEGREES"
+    },
+    RADIANS: {
+      signature: "RADIANS",
+      description: "A `String` constant that's used to set the angleMode().",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RADIANS"
+    },
+    CORNER: {
+      signature: "CORNER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CORNER"
+    },
+    CORNERS: {
+      signature: "CORNERS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CORNERS"
+    },
+    RADIUS: {
+      signature: "RADIUS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RADIUS"
+    },
+    RIGHT: {
+      signature: "RIGHT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RIGHT"
+    },
+    LEFT: {
+      signature: "LEFT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LEFT"
+    },
+    CENTER: {
+      signature: "CENTER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CENTER"
+    },
+    TOP: {
+      signature: "TOP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TOP"
+    },
+    BOTTOM: {
+      signature: "BOTTOM",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BOTTOM"
+    },
+    BASELINE: {
+      signature: "BASELINE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BASELINE"
+    },
+    POINTS: {
+      signature: "POINTS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/POINTS"
+    },
+    LINES: {
+      signature: "LINES",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LINES"
+    },
+    LINE_STRIP: {
+      signature: "LINE_STRIP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LINE_STRIP"
+    },
+    LINE_LOOP: {
+      signature: "LINE_LOOP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LINE_LOOP"
+    },
+    TRIANGLES: {
+      signature: "TRIANGLES",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TRIANGLES"
+    },
+    TRIANGLE_FAN: {
+      signature: "TRIANGLE_FAN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TRIANGLE_FAN"
+    },
+    TRIANGLE_STRIP: {
+      signature: "TRIANGLE_STRIP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TRIANGLE_STRIP"
+    },
+    QUADS: {
+      signature: "QUADS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/QUADS"
+    },
+    QUAD_STRIP: {
+      signature: "QUAD_STRIP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/QUAD_STRIP"
+    },
+    TESS: {
+      signature: "TESS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TESS"
+    },
+    CLOSE: {
+      signature: "CLOSE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CLOSE"
+    },
+    OPEN: {
+      signature: "OPEN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/OPEN"
+    },
+    CHORD: {
+      signature: "CHORD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CHORD"
+    },
+    PIE: {
+      signature: "PIE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/PIE"
+    },
+    PROJECT: {
+      signature: "PROJECT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/PROJECT"
+    },
+    SQUARE: {
+      signature: "SQUARE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SQUARE"
+    },
+    ROUND: {
+      signature: "ROUND",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ROUND"
+    },
+    BEVEL: {
+      signature: "BEVEL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BEVEL"
+    },
+    MITER: {
+      signature: "MITER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/MITER"
+    },
+    RGB: {
+      signature: "RGB",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RGB"
+    },
+    HSB: {
+      signature: "HSB",
+      description: "HSB (hue, saturation, brightness) is a type of color model.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HSB"
+    },
+    HSL: {
+      signature: "HSL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HSL"
+    },
+    AUTO: {
+      signature: "AUTO",
+      description: "AUTO allows us to automatically set the width or height of an element (but not both), based on the current height and width of the element.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/AUTO"
+    },
+    ALT: {
+      signature: "ALT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ALT"
+    },
+    BACKSPACE: {
+      signature: "BACKSPACE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BACKSPACE"
+    },
+    CONTROL: {
+      signature: "CONTROL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CONTROL"
+    },
+    DELETE: {
+      signature: "DELETE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DELETE"
+    },
+    DOWN_ARROW: {
+      signature: "DOWN_ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DOWN_ARROW"
+    },
+    ENTER: {
+      signature: "ENTER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ENTER"
+    },
+    ESCAPE: {
+      signature: "ESCAPE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ESCAPE"
+    },
+    LEFT_ARROW: {
+      signature: "LEFT_ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LEFT_ARROW"
+    },
+    OPTION: {
+      signature: "OPTION",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/OPTION"
+    },
+    RETURN: {
+      signature: "RETURN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RETURN"
+    },
+    RIGHT_ARROW: {
+      signature: "RIGHT_ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RIGHT_ARROW"
+    },
+    SHIFT: {
+      signature: "SHIFT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SHIFT"
+    },
+    TAB: {
+      signature: "TAB",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TAB"
+    },
+    UP_ARROW: {
+      signature: "UP_ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/UP_ARROW"
+    },
+    BLEND: {
+      signature: "BLEND",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BLEND"
+    },
+    REMOVE: {
+      signature: "REMOVE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/REMOVE"
+    },
+    ADD: {
+      signature: "ADD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ADD"
+    },
+    DARKEST: {
+      signature: "DARKEST",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DARKEST"
+    },
+    LIGHTEST: {
+      signature: "LIGHTEST",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LIGHTEST"
+    },
+    DIFFERENCE: {
+      signature: "DIFFERENCE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DIFFERENCE"
+    },
+    SUBTRACT: {
+      signature: "SUBTRACT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SUBTRACT"
+    },
+    EXCLUSION: {
+      signature: "EXCLUSION",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/EXCLUSION"
+    },
+    MULTIPLY: {
+      signature: "MULTIPLY",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/MULTIPLY"
+    },
+    SCREEN: {
+      signature: "SCREEN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SCREEN"
+    },
+    REPLACE: {
+      signature: "REPLACE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/REPLACE"
+    },
+    OVERLAY: {
+      signature: "OVERLAY",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/OVERLAY"
+    },
+    HARD_LIGHT: {
+      signature: "HARD_LIGHT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HARD_LIGHT"
+    },
+    SOFT_LIGHT: {
+      signature: "SOFT_LIGHT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SOFT_LIGHT"
+    },
+    DODGE: {
+      signature: "DODGE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DODGE"
+    },
+    BURN: {
+      signature: "BURN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BURN"
+    },
+    THRESHOLD: {
+      signature: "THRESHOLD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/THRESHOLD"
+    },
+    GRAY: {
+      signature: "GRAY",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/GRAY"
+    },
+    OPAQUE: {
+      signature: "OPAQUE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/OPAQUE"
+    },
+    INVERT: {
+      signature: "INVERT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/INVERT"
+    },
+    POSTERIZE: {
+      signature: "POSTERIZE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/POSTERIZE"
+    },
+    DILATE: {
+      signature: "DILATE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DILATE"
+    },
+    ERODE: {
+      signature: "ERODE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ERODE"
+    },
+    BLUR: {
+      signature: "BLUR",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BLUR"
+    },
+    NORMAL: {
+      signature: "NORMAL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/NORMAL"
+    },
+    ITALIC: {
+      signature: "ITALIC",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ITALIC"
+    },
+    BOLD: {
+      signature: "BOLD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BOLD"
+    },
+    BOLDITALIC: {
+      signature: "BOLDITALIC",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BOLDITALIC"
+    },
+    CHAR: {
+      signature: "CHAR",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CHAR"
+    },
+    WORD: {
+      signature: "WORD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/WORD"
+    },
+    LINEAR: {
+      signature: "LINEAR",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LINEAR"
+    },
+    QUADRATIC: {
+      signature: "QUADRATIC",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/QUADRATIC"
+    },
+    BEZIER: {
+      signature: "BEZIER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BEZIER"
+    },
+    CURVE: {
+      signature: "CURVE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CURVE"
+    },
+    STROKE: {
+      signature: "STROKE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/STROKE"
+    },
+    FILL: {
+      signature: "FILL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/FILL"
+    },
+    TEXTURE: {
+      signature: "TEXTURE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TEXTURE"
+    },
+    IMMEDIATE: {
+      signature: "IMMEDIATE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/IMMEDIATE"
+    },
+    IMAGE: {
+      signature: "IMAGE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/IMAGE"
+    },
+    NEAREST: {
+      signature: "NEAREST",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/NEAREST"
+    },
+    REPEAT: {
+      signature: "REPEAT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/REPEAT"
+    },
+    CLAMP: {
+      signature: "CLAMP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CLAMP"
+    },
+    MIRROR: {
+      signature: "MIRROR",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/MIRROR"
+    },
+    FLAT: {
+      signature: "FLAT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/FLAT"
+    },
+    SMOOTH: {
+      signature: "SMOOTH",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SMOOTH"
+    },
+    LANDSCAPE: {
+      signature: "LANDSCAPE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LANDSCAPE"
+    },
+    PORTRAIT: {
+      signature: "PORTRAIT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/PORTRAIT"
+    },
+    GRID: {
+      signature: "GRID",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/GRID"
+    },
+    AXES: {
+      signature: "AXES",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/AXES"
+    },
+    LABEL: {
+      signature: "LABEL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LABEL"
+    },
+    FALLBACK: {
+      signature: "FALLBACK",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/FALLBACK"
+    },
+    CONTAIN: {
+      signature: "CONTAIN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CONTAIN"
+    },
+    COVER: {
+      signature: "COVER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/COVER"
+    },
+    UNSIGNED_BYTE: {
+      signature: "UNSIGNED_BYTE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/UNSIGNED_BYTE"
+    },
+    UNSIGNED_INT: {
+      signature: "UNSIGNED_INT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/UNSIGNED_INT"
+    },
+    FLOAT: {
+      signature: "FLOAT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/FLOAT"
+    },
+    HALF_FLOAT: {
+      signature: "HALF_FLOAT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HALF_FLOAT"
+    },
+    RGBA: {
+      signature: "RGBA",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RGBA"
+    },
+    print: {
+      signature: "print(contents: Any)",
+      description: "Displays text in the web browser's console.",
+      example: "print('hello, world')",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/print"
+    },
+    frameCount: {
+      signature: "frameCount",
+      description: "A `Number` variable that tracks the number of frames drawn since the sketch started.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/frameCount"
+    },
+    deltaTime: {
+      signature: "deltaTime",
+      description: "A `Number` variable that tracks the number of milliseconds it took to draw the last frame.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/deltaTime"
+    },
+    focused: {
+      signature: "focused",
+      description: "A `Boolean` variable that's `true` if the browser is focused and `false` if not.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/focused"
+    },
+    cursor: {
+      signature: "cursor(type: String|Constant, x?: Number, y?: Number)",
+      description: "Changes the cursor's appearance.",
+      example: "cursor(CROSS)",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/cursor"
+    },
+    frameRate: {
+      signature: "frameRate(fps: Number)",
+      description: "Sets the number of frames to draw per second.",
+      example: "frameRate(10)",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/frameRate"
+    },
+    getTargetFrameRate: {
+      signature: "getTargetFrameRate()",
+      description: "Returns the target frame rate.",
+      example: "let fps = getTargetFrameRate()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/getTargetFrameRate"
+    },
+    noCursor: {
+      signature: "noCursor()",
+      description: "Hides the cursor from view.",
+      example: "noCursor()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/noCursor"
+    },
+    webglVersion: {
+      signature: "webglVersion",
+      description: "A `String` variable with the WebGL version in use.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/webglVersion"
+    },
+    displayWidth: {
+      signature: "displayWidth",
+      description: "A `Number` variable that stores the width of the screen display.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/displayWidth"
+    },
+    displayHeight: {
+      signature: "displayHeight",
+      description: "A `Number` variable that stores the height of the screen display.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/displayHeight"
+    },
+    windowWidth: {
+      signature: "windowWidth",
+      description: "A `Number` variable that stores the width of the browser's viewport.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/windowWidth"
+    },
+    windowHeight: {
+      signature: "windowHeight",
+      description: "A `Number` variable that stores the height of the browser's viewport.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/windowHeight"
+    },
+    windowResized: {
+      signature: "windowResized(event?: Event)",
+      description: "A function that's called when the browser window is resized.",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/windowResized"
+    },
+    width: {
+      signature: "width",
+      description: "A `Number` variable that stores the width of the canvas in pixels.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/width"
+    },
+    height: {
+      signature: "height",
+      description: "A `Number` variable that stores the height of the canvas in pixels.",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/height"
+    },
+    fullscreen: {
+      signature: "fullscreen(val?: Boolean)",
+      description: "Toggles full-screen mode or returns the current mode.",
+      example: "let fs = fullscreen()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/fullscreen"
+    },
+    pixelDensity: {
+      signature: "pixelDensity(val?: Number)",
+      description: "Sets the pixel density or returns the current density.",
+      example: "pixelDensity(1)",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/pixelDensity"
+    },
+    displayDensity: {
+      signature: "displayDensity()",
+      description: "Returns the display's current pixel density.",
+      example: "let d = displayDensity()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/displayDensity"
+    },
+    getURL: {
+      signature: "getURL()",
+      description: "Returns the sketch's current URL as a `String`.",
+      example: "let url = getURL()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/getURL"
+    },
+    getURLPath: {
+      signature: "getURLPath()",
+      description: "Returns the current URL path as an `Array` of `String`s.",
+      example: "let path = getURLPath()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/getURLPath"
+    },
+    getURLParams: {
+      signature: "getURLParams()",
+      description: "Returns the current URL parameters in an `Object`.",
+      example: "let params = getURLParams()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/getURLParams"
+    },
+    preload: {
+      signature: "preload()",
+      description: "A function that's called once to load assets before the sketch runs.",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/preload"
+    },
+    setup: {
+      signature: "setup()",
+      description: "A function that's called once when the sketch begins running.",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/setup"
+    },
+    draw: {
+      signature: "draw()",
+      description: "A function that's called repeatedly while the sketch runs.",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/draw"
+    },
+    remove: {
+      signature: "remove()",
+      description: "Removes the sketch from the web page.",
+      example: "remove()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/remove"
+    },
+    disableFriendlyErrors: {
+      signature: "disableFriendlyErrors",
+      description: "Turns off the parts of the Friendly Error System (FES) that impact performance.",
+      kind: "variable",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/disableFriendlyErrors"
+    },
+    let: {
+      signature: "let",
+      description: "Declares a new variable.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/let"
+    },
+    if: {
+      signature: "if",
+      description: "A way to choose whether to run a block of code.",
+      example: "if (mouseIsPressed === true) {",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/if"
+    },
+    function: {
+      signature: "function",
+      description: "A named group of statements.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/function"
+    },
+    Boolean: {
+      signature: "Boolean",
+      description: "A value that's either `true` or `false`.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/Boolean"
+    },
+    String: {
+      signature: "String",
+      description: "A sequence of text characters.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/String"
+    },
+    Number: {
+      signature: "Number",
+      description: "A number that can be positive, negative, or zero.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/Number"
+    },
+    Object: {
+      signature: "Object",
+      description: "A container for data that's stored as key-value pairs.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/Object"
+    },
+    Array: {
+      signature: "Array",
+      description: "A list that keeps several pieces of data in order.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/Array"
+    },
+    class: {
+      signature: "class",
+      description: "A template for creating objects of a particular type.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/class"
+    },
+    for: {
+      signature: "for",
+      description: "A way to repeat a block of code when the number of iterations is known.",
+      example: "for (let x = 10; x < 100; x += 20) {",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/for"
+    },
+    while: {
+      signature: "while",
+      description: "A way to repeat a block of code.",
+      example: "while (x < 100) {",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/while"
+    },
+    console: {
+      signature: "console",
+      description: "Prints a message to the web browser's console.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/console"
+    },
+    createCanvas: {
+      signature: "createCanvas(width?: Number, height?: Number, renderer?: Constant, canvas?: HTMLCanvasElement)",
+      description: "Creates a canvas element on the web page.",
+      example: "createCanvas(100, 100)",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/createCanvas"
+    },
+    resizeCanvas: {
+      signature: "resizeCanvas(width: Number, height: Number, noRedraw?: Boolean)",
+      description: "Resizes the canvas to a given width and height.",
+      example: "resizeCanvas(50, 50)",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/resizeCanvas"
+    },
+    noCanvas: {
+      signature: "noCanvas()",
+      description: "Removes the default canvas.",
+      example: "noCanvas()",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/noCanvas"
+    },
+    createGraphics: {
+      signature: "createGraphics(width: Number, height: Number, renderer?: Constant, canvas?: HTMLCanvasElement)",
+      description: "Creates a p5.",
+      example: "pg = createGraphics(50, 50)",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/createGraphics"
+    },
+    createFramebuffer: {
+      signature: "createFramebuffer(options?: Object)",
+      description: "Creates and a new p5.",
+      example: "myBuffer = createFramebuffer()",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/createFramebuffer"
+    },
+    clearDepth: {
+      signature: "clearDepth(depth?: Number)",
+      description: "Clears the depth buffer in WebGL mode.",
+      example: "clearDepth()",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/clearDepth"
+    },
+    blendMode: {
+      signature: "blendMode(mode: Constant)",
+      description: "Sets the way colors blend when added to the canvas.",
+      example: "blendMode(BLEND)",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/blendMode"
+    },
+    drawingContext: {
+      signature: "drawingContext",
+      description: "A system variable that provides direct access to the sketch's `&lt;canvas&gt;` element.",
+      kind: "variable",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/drawingContext"
+    },
+    noLoop: {
+      signature: "noLoop()",
+      description: "Stops the code in draw() from running repeatedly.",
+      example: "noLoop()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/noLoop"
+    },
+    loop: {
+      signature: "loop()",
+      description: "Resumes the draw loop after noLoop() has been called.",
+      example: "loop()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/loop"
+    },
+    isLooping: {
+      signature: "isLooping()",
+      description: "Returns `true` if the draw loop is running and `false` if not.",
+      example: "if (isLooping() === true) {",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/isLooping"
+    },
+    push: {
+      signature: "push()",
+      description: "Begins a drawing group that contains its own styles and transformations.",
+      example: "push()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/push"
+    },
+    pop: {
+      signature: "pop()",
+      description: "Ends a drawing group that contains its own styles and transformations.",
+      example: "pop()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/pop"
+    },
+    redraw: {
+      signature: "redraw(n?: Integer)",
+      description: "Runs the code in draw() once.",
+      example: "redraw()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/redraw"
+    },
+    p5: {
+      signature: "p5(sketch: Object, node: String|HTMLElement)",
+      description: 'Creates a new sketch in "instance" mode.',
+      example: "new p5(sketch)",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/p5"
+    },
+    applyMatrix: {
+      signature: "applyMatrix(arr: Array)",
+      description: "Applies a transformation matrix to the coordinate system.",
+      example: "applyMatrix(1, 0, 0, 1, 50, 50)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/applyMatrix"
+    },
+    resetMatrix: {
+      signature: "resetMatrix()",
+      description: "Clears all transformations applied to the coordinate system.",
+      example: "resetMatrix()",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/resetMatrix"
+    },
+    rotate: {
+      signature: "rotate(angle: Number, axis?: p5.Vector|Number[])",
+      description: "Rotates the coordinate system.",
+      example: "rotate(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotate"
+    },
+    rotateX: {
+      signature: "rotateX(angle: Number)",
+      description: "Rotates the coordinate system about the x-axis in WebGL mode.",
+      example: "rotateX(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotateX"
+    },
+    rotateY: {
+      signature: "rotateY(angle: Number)",
+      description: "Rotates the coordinate system about the y-axis in WebGL mode.",
+      example: "rotateY(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotateY"
+    },
+    rotateZ: {
+      signature: "rotateZ(angle: Number)",
+      description: "Rotates the coordinate system about the z-axis in WebGL mode.",
+      example: "rotateZ(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotateZ"
+    },
+    scale: {
+      signature: "scale(s: Number|p5.Vector|Number[], y?: Number, z?: Number)",
+      description: "Scales the coordinate system.",
+      example: "scale(0.5)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/scale"
+    },
+    shearX: {
+      signature: "shearX(angle: Number)",
+      description: "Shears the x-axis so that shapes appear skewed.",
+      example: "shearX(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/shearX"
+    },
+    shearY: {
+      signature: "shearY(angle: Number)",
+      description: "Shears the y-axis so that shapes appear skewed.",
+      example: "shearY(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/shearY"
+    },
+    translate: {
+      signature: "translate(x: Number, y: Number, z?: Number)",
+      description: "Translates the coordinate system.",
+      example: "translate(50, 50)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/translate"
+    },
+    storeItem: {
+      signature: "storeItem(key: String, value: String|Number|Boolean|Object|Array)",
+      description: "Stores a value in the web browser's local storage.",
+      example: "storeItem('name', 'Feist')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/storeItem"
+    },
+    getItem: {
+      signature: "getItem(key: String)",
+      description: "Returns a value in the web browser's local storage.",
+      example: "let name = getItem('name')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/getItem"
+    },
+    clearStorage: {
+      signature: "clearStorage()",
+      description: "Removes all items in the web browser's local storage.",
+      example: "clearStorage()",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/clearStorage"
+    },
+    removeItem: {
+      signature: "removeItem(key: String)",
+      description: "Removes an item from the web browser's local storage.",
+      example: "removeItem('score')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/removeItem"
+    },
+    createStringDict: {
+      signature: "createStringDict(key: String, value: String)",
+      description: "Creates a new instance of p5.",
+      example: "let myDictionary = createStringDict('p5', 'js')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/createStringDict"
+    },
+    createNumberDict: {
+      signature: "createNumberDict(key: Number, value: Number)",
+      description: "Creates a new instance of p5.",
+      example: "let myDictionary = createNumberDict(100, 42)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/createNumberDict"
+    },
+    select: {
+      signature: "select(selectors: String, container?: String|p5.Element|HTMLElement)",
+      description: "Searches the page for the first element that matches the given CSS selector string.",
+      example: "let cnv = select('canvas')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/select"
+    },
+    selectAll: {
+      signature: "selectAll(selectors: String, container?: String|p5.Element|HTMLElement)",
+      description: "Searches the page for all elements that matches the given CSS selector string.",
+      example: "let buttons = selectAll('button')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/selectAll"
+    },
+    removeElements: {
+      signature: "removeElements()",
+      description: "Removes all elements created by p5.",
+      example: "removeElements()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/removeElements"
+    },
+    changed: {
+      signature: "changed(fxn: Function|Boolean)",
+      description: "Calls a function when the element changes.",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/changed"
+    },
+    input: {
+      signature: "input(fxn: Function|Boolean)",
+      description: "Calls a function when the element receives input.",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/input"
+    },
+    createDiv: {
+      signature: "createDiv(html?: String)",
+      description: "Creates a `&lt;div&gt;&lt;/div&gt;` element.",
+      example: "let div = createDiv('p5*js')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createDiv"
+    },
+    createP: {
+      signature: "createP(html?: String)",
+      description: "Creates a paragraph element.",
+      example: "let p = createP('Tell me a story.')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createP"
+    },
+    createSpan: {
+      signature: "createSpan(html?: String)",
+      description: "Creates a `&lt;span&gt;&lt;/span&gt;` element.",
+      example: "let span = createSpan('p5*js')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createSpan"
+    },
+    createImg: {
+      signature: "createImg(src: String, alt: String)",
+      description: "Creates an `&lt;img&gt;` element that can appear outside of the canvas.",
+      example: "let img = createImg(",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createImg"
+    },
+    createA: {
+      signature: "createA(href: String, html: String, target?: String)",
+      description: "Creates an `&lt;a&gt;&lt;/a&gt;` element that links to another web page.",
+      example: "let a = createA('https://p5js.org/', 'p5*js')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createA"
+    },
+    createSlider: {
+      signature: "createSlider(min: Number, max: Number, value?: Number, step?: Number)",
+      description: "Creates a slider `&lt;input&gt;&lt;/input&gt;` element.",
+      example: "slider = createSlider(0, 255)",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createSlider"
+    },
+    createButton: {
+      signature: "createButton(label: String, value?: String)",
+      description: "Creates a `&lt;button&gt;&lt;/button&gt;` element.",
+      example: "let button = createButton('click me')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createButton"
+    },
+    createCheckbox: {
+      signature: "createCheckbox(label?: String, value?: Boolean)",
+      description: "Creates a checkbox `&lt;input&gt;&lt;/input&gt;` element.",
+      example: "checkbox = createCheckbox()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createCheckbox"
+    },
+    createSelect: {
+      signature: "createSelect(multiple?: Boolean)",
+      description: "Creates a dropdown menu `&lt;select&gt;&lt;/select&gt;` element.",
+      example: "mySelect = createSelect()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createSelect"
+    },
+    createRadio: {
+      signature: "createRadio(containerElement?: Object)",
+      description: "Creates a radio button element.",
+      example: "myRadio = createRadio()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createRadio"
+    },
+    createColorPicker: {
+      signature: "createColorPicker(value?: String|p5.Color)",
+      description: "Creates a color picker element.",
+      example: "myPicker = createColorPicker('deeppink')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createColorPicker"
+    },
+    createInput: {
+      signature: "createInput(value?: String, type?: String)",
+      description: "Creates a text `&lt;input&gt;&lt;/input&gt;` element.",
+      example: "myInput = createInput()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createInput"
+    },
+    createFileInput: {
+      signature: "createFileInput(callback: Function, multiple?: Boolean)",
+      description: "Creates an `&lt;input&gt;&lt;/input&gt;` element of type `'file'`.",
+      example: "input = createFileInput(handleImage)",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createFileInput"
+    },
+    createVideo: {
+      signature: "createVideo(src: String|String[], callback?: Function)",
+      description: "Creates a `&lt;video&gt;` element for simple audio/video playback.",
+      example: "let video = createVideo('assets/small.mp4')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createVideo"
+    },
+    createAudio: {
+      signature: "createAudio(src?: String|String[], callback?: Function)",
+      description: "Creates a hidden `&lt;audio&gt;` element for simple audio playback.",
+      example: "let beat = createAudio('assets/beat.mp3')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createAudio"
+    },
+    createCapture: {
+      signature: "createCapture(type?: String|Constant|Object, flipped?: Object, callback?: Function)",
+      description: 'Creates a `&lt;video&gt;` element that "captures" the audio/video stream from the webcam and microphone.',
+      example: "createCapture(VIDEO)",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createCapture"
+    },
+    createElement: {
+      signature: "createElement(tag: String, content?: String)",
+      description: "Creates a new p5.",
+      example: "createElement('h5')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createElement"
+    },
+    deviceOrientation: {
+      signature: "deviceOrientation",
+      description: "The system variable deviceOrientation always contains the orientation of the device.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/deviceOrientation"
+    },
+    accelerationX: {
+      signature: "accelerationX",
+      description: "The system variable accelerationX always contains the acceleration of the device along the x axis.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/accelerationX"
+    },
+    accelerationY: {
+      signature: "accelerationY",
+      description: "The system variable accelerationY always contains the acceleration of the device along the y axis.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/accelerationY"
+    },
+    accelerationZ: {
+      signature: "accelerationZ",
+      description: "The system variable accelerationZ always contains the acceleration of the device along the z axis.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/accelerationZ"
+    },
+    pAccelerationX: {
+      signature: "pAccelerationX",
+      description: "The system variable pAccelerationX always contains the acceleration of the device along the x axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pAccelerationX"
+    },
+    pAccelerationY: {
+      signature: "pAccelerationY",
+      description: "The system variable pAccelerationY always contains the acceleration of the device along the y axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pAccelerationY"
+    },
+    pAccelerationZ: {
+      signature: "pAccelerationZ",
+      description: "The system variable pAccelerationZ always contains the acceleration of the device along the z axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pAccelerationZ"
+    },
+    rotationX: {
+      signature: "rotationX",
+      description: "The system variable rotationX always contains the rotation of the device along the x axis.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotationX"
+    },
+    rotationY: {
+      signature: "rotationY",
+      description: "The system variable rotationY always contains the rotation of the device along the y axis.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotationY"
+    },
+    rotationZ: {
+      signature: "rotationZ",
+      description: "The system variable rotationZ always contains the rotation of the device along the z axis.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotationZ"
+    },
+    pRotationX: {
+      signature: "pRotationX",
+      description: "The system variable pRotationX always contains the rotation of the device along the x axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pRotationX"
+    },
+    pRotationY: {
+      signature: "pRotationY",
+      description: "The system variable pRotationY always contains the rotation of the device along the y axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pRotationY"
+    },
+    pRotationZ: {
+      signature: "pRotationZ",
+      description: "The system variable pRotationZ always contains the rotation of the device along the z axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pRotationZ"
+    },
+    turnAxis: {
+      signature: "turnAxis",
+      description: "When a device is rotated, the axis that triggers the deviceTurned() method is stored in the turnAxis variable.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/turnAxis"
+    },
+    setMoveThreshold: {
+      signature: "setMoveThreshold(value: Number)",
+      description: "The setMoveThreshold() function is used to set the movement threshold for the deviceMoved() function.",
+      example: "setMoveThreshold(threshold)",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/setMoveThreshold"
+    },
+    setShakeThreshold: {
+      signature: "setShakeThreshold(value: Number)",
+      description: "The setShakeThreshold() function is used to set the movement threshold for the deviceShaken() function.",
+      example: "setShakeThreshold(threshold)",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/setShakeThreshold"
+    },
+    deviceMoved: {
+      signature: "deviceMoved()",
+      description: "The deviceMoved() function is called when the device is moved by more than the threshold value along X, Y or Z axis.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/deviceMoved"
+    },
+    deviceTurned: {
+      signature: "deviceTurned()",
+      description: "The deviceTurned() function is called when the device rotates by more than 90 degrees continuously.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/deviceTurned"
+    },
+    deviceShaken: {
+      signature: "deviceShaken()",
+      description: "The deviceShaken() function is called when the device total acceleration changes of accelerationX and accelerationY values is more than the threshold value.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/deviceShaken"
+    },
+    keyIsPressed: {
+      signature: "keyIsPressed",
+      description: "A `Boolean` system variable that's `true` if any key is currently pressed and `false` if not.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyIsPressed"
+    },
+    key: {
+      signature: "key",
+      description: "A `String` system variable that contains the value of the last key typed.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/key"
+    },
+    keyCode: {
+      signature: "keyCode",
+      description: "A `Number` system variable that contains the code of the last key typed.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyCode"
+    },
+    keyPressed: {
+      signature: "keyPressed(event?: KeyboardEvent)",
+      description: "A function that's called once when any key is pressed.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyPressed"
+    },
+    keyReleased: {
+      signature: "keyReleased(event?: KeyboardEvent)",
+      description: "A function that's called once when any key is released.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyReleased"
+    },
+    keyTyped: {
+      signature: "keyTyped(event?: KeyboardEvent)",
+      description: "A function that's called once when keys with printable characters are pressed.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyTyped"
+    },
+    keyIsDown: {
+      signature: "keyIsDown(code: Number)",
+      description: "Returns `true` if the key it\u2019s checking is pressed and `false` if not.",
+      example: "if (keyIsDown(LEFT_ARROW) === true) {",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyIsDown"
+    },
+    movedX: {
+      signature: "movedX",
+      description: "A `Number` system variable that tracks the mouse's horizontal movement.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/movedX"
+    },
+    movedY: {
+      signature: "movedY",
+      description: "A `Number` system variable that tracks the mouse's vertical movement.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/movedY"
+    },
+    mouseX: {
+      signature: "mouseX",
+      description: "A `Number` system variable that tracks the mouse's horizontal position.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseX"
+    },
+    mouseY: {
+      signature: "mouseY",
+      description: "A `Number` system variable that tracks the mouse's vertical position.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseY"
+    },
+    pmouseX: {
+      signature: "pmouseX",
+      description: "A `Number` system variable that tracks the mouse's previous horizontal position.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pmouseX"
+    },
+    pmouseY: {
+      signature: "pmouseY",
+      description: "A `Number` system variable that tracks the mouse's previous vertical position.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pmouseY"
+    },
+    winMouseX: {
+      signature: "winMouseX",
+      description: "A `Number` variable that tracks the mouse's horizontal position within the browser.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/winMouseX"
+    },
+    winMouseY: {
+      signature: "winMouseY",
+      description: "A `Number` variable that tracks the mouse's vertical position within the browser.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/winMouseY"
+    },
+    pwinMouseX: {
+      signature: "pwinMouseX",
+      description: "A `Number` variable that tracks the mouse's previous horizontal position within the browser.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pwinMouseX"
+    },
+    pwinMouseY: {
+      signature: "pwinMouseY",
+      description: "A `Number` variable that tracks the mouse's previous vertical position within the browser.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pwinMouseY"
+    },
+    mouseButton: {
+      signature: "mouseButton",
+      description: "A String system variable that contains the value of the last mouse button pressed.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseButton"
+    },
+    mouseIsPressed: {
+      signature: "mouseIsPressed",
+      description: "A `Boolean` system variable that's `true` if the mouse is pressed and `false` if not.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseIsPressed"
+    },
+    mouseMoved: {
+      signature: "mouseMoved(event?: MouseEvent)",
+      description: "A function that's called when the mouse moves.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseMoved"
+    },
+    mouseDragged: {
+      signature: "mouseDragged(event?: MouseEvent)",
+      description: "A function that's called when the mouse moves while a button is pressed.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseDragged"
+    },
+    mousePressed: {
+      signature: "mousePressed(event?: MouseEvent)",
+      description: "A function that's called once when a mouse button is pressed.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mousePressed"
+    },
+    mouseReleased: {
+      signature: "mouseReleased(event?: MouseEvent)",
+      description: "A function that's called once when a mouse button is released.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseReleased"
+    },
+    mouseClicked: {
+      signature: "mouseClicked(event?: MouseEvent)",
+      description: "A function that's called once after a mouse button is pressed and released.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseClicked"
+    },
+    doubleClicked: {
+      signature: "doubleClicked(event?: MouseEvent)",
+      description: "A function that's called once when a mouse button is clicked twice quickly.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/doubleClicked"
+    },
+    mouseWheel: {
+      signature: "mouseWheel(event?: WheelEvent)",
+      description: "A function that's called once when the mouse wheel moves.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseWheel"
+    },
+    requestPointerLock: {
+      signature: "requestPointerLock()",
+      description: "Locks the mouse pointer to its current position and makes it invisible.",
+      example: "requestPointerLock()",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/requestPointerLock"
+    },
+    exitPointerLock: {
+      signature: "exitPointerLock()",
+      description: "Exits a pointer lock started with requestPointerLock.",
+      example: "exitPointerLock()",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/exitPointerLock"
+    },
+    touches: {
+      signature: "touches",
+      description: "An `Array` of all the current touch points on a touchscreen device.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/touches"
+    },
+    touchStarted: {
+      signature: "touchStarted(event?: TouchEvent)",
+      description: "A function that's called once each time the user touches the screen.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/touchStarted"
+    },
+    touchMoved: {
+      signature: "touchMoved(event?: TouchEvent)",
+      description: "A function that's called when the user touches the screen and moves.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/touchMoved"
+    },
+    touchEnded: {
+      signature: "touchEnded(event?: TouchEvent)",
+      description: "A function that's called once each time a screen touch ends.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/touchEnded"
+    },
+    createImage: {
+      signature: "createImage(width: Integer, height: Integer)",
+      description: "Creates a new p5.",
+      example: "let img = createImage(66, 66)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/createImage"
+    },
+    saveCanvas: {
+      signature: "saveCanvas(selectedCanvas: p5.Framebuffer|p5.Element|HTMLCanvasElement, filename?: String, extension?: String)",
+      description: "Saves the current canvas as an image.",
+      example: "saveCanvas()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveCanvas"
+    },
+    saveFrames: {
+      signature: "saveFrames(filename: String, extension: String, duration: Number, framerate: Number, callback?: Function(Array))",
+      description: "Captures a sequence of frames from the canvas that can be saved as images.",
+      example: "saveFrames('frame', 'png', 1, 5)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveFrames"
+    },
+    loadImage: {
+      signature: "loadImage(path: String, successCallback?: function(p5.Image), failureCallback?: Function(Event))",
+      description: "Loads an image to create a p5.",
+      example: "img = loadImage('assets/laDefense.jpg')",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadImage"
+    },
+    saveGif: {
+      signature: "saveGif(filename: String, duration: Number, options?: Object)",
+      description: "Generates a gif from a sketch and saves it to a file.",
+      example: "saveGif('mySketch', 5)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveGif"
+    },
+    image: {
+      signature: "image(img: p5.Image|p5.Element|p5.Texture|p5.Framebuffer|p5.FramebufferTexture, x: Number, y: Number, width?: Number, height?: Number)",
+      description: "Draws an image to the canvas.",
+      example: "image(img, 0, 0)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/image"
+    },
+    tint: {
+      signature: "tint(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Tints images using a color.",
+      example: "tint('red')",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/tint"
+    },
+    noTint: {
+      signature: "noTint()",
+      description: "Removes the current tint set by tint().",
+      example: "noTint()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/noTint"
+    },
+    imageMode: {
+      signature: "imageMode(mode: Constant)",
+      description: "Changes the location from which images are drawn when image() is called.",
+      example: "imageMode(CORNER)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/imageMode"
+    },
+    pixels: {
+      signature: "pixels",
+      description: "An array containing the color of each pixel on the canvas.",
+      kind: "variable",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/pixels"
+    },
+    blend: {
+      signature: "blend(srcImage: p5.Image, sx: Integer, sy: Integer, sw: Integer, sh: Integer, dx: Integer, dy: Integer, dw: Integer, dh: Integer, blendMode: Constant)",
+      description: "Copies a region of pixels from one image to another.",
+      example: "blend(img1, 0, 0, 33, 100, 67, 0, 33, 100, LIGHTEST)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/blend"
+    },
+    copy: {
+      signature: "copy(srcImage: p5.Image|p5.Element, sx: Integer, sy: Integer, sw: Integer, sh: Integer, dx: Integer, dy: Integer, dw: Integer, dh: Integer)",
+      description: "Copies pixels from a source image to a region of the canvas.",
+      example: "copy(img, 7, 22, 10, 10, 35, 25, 50, 50)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/copy"
+    },
+    filter: {
+      signature: "filter(filterType: Constant, filterParam?: Number, useWebGL?: Boolean)",
+      description: "Applies an image filter to the canvas.",
+      example: "filter(INVERT)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/filter"
+    },
+    get: {
+      signature: "get(x: Number, y: Number, w: Number, h: Number)",
+      description: "Gets a pixel or a region of pixels from the canvas.",
+      example: "let c = get()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/get"
+    },
+    loadPixels: {
+      signature: "loadPixels()",
+      description: "Loads the current value of each pixel on the canvas into the pixels array.",
+      example: "loadPixels()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadPixels"
+    },
+    set: {
+      signature: "set(x: Number, y: Number, c: Number|Number[]|Object)",
+      description: "Sets the color of a pixel or draws an image to the canvas.",
+      example: "set(30, 20, 0)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/set"
+    },
+    updatePixels: {
+      signature: "updatePixels(x?: Number, y?: Number, w?: Number, h?: Number)",
+      description: "Updates the canvas with the RGBA values in the pixels array.",
+      example: "updatePixels()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/updatePixels"
+    },
+    loadJSON: {
+      signature: "loadJSON(path: String, successCallback?: Function, errorCallback?: Function)",
+      description: "Loads a JSON file to create an `Object`.",
+      example: "myData = loadJSON('assets/data.json')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadJSON"
+    },
+    loadStrings: {
+      signature: "loadStrings(path: String, successCallback?: Function, errorCallback?: Function)",
+      description: "Loads a text file to create an `Array`.",
+      example: "myData = loadStrings('assets/test.txt')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadStrings"
+    },
+    loadTable: {
+      signature: "loadTable(filename: String, extension?: String, header?: String, callback?: Function, errorCallback?: Function)",
+      description: "Reads the contents of a file or URL and creates a p5.",
+      example: "table = loadTable('assets/mammals.csv', 'csv', 'header')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadTable"
+    },
+    loadXML: {
+      signature: "loadXML(path: String, successCallback?: Function, errorCallback?: Function)",
+      description: "Loads an XML file to create a p5.",
+      example: "myXML = loadXML('assets/animals.xml')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadXML"
+    },
+    loadBytes: {
+      signature: "loadBytes(file: String, callback?: Function, errorCallback?: Function)",
+      description: "This method is suitable for fetching files up to size of 64MB.",
+      example: "data = loadBytes('assets/mammals.xml')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadBytes"
+    },
+    httpGet: {
+      signature: "httpGet(path: String, datatype?: String, data?: Object|Boolean, callback?: Function, errorCallback?: Function)",
+      description: "Method for executing an HTTP GET request.",
+      example: "httpGet(url, 'jsonp', false, function(response) {",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/httpGet"
+    },
+    httpPost: {
+      signature: "httpPost(path: String, datatype?: String, data?: Object|Boolean, callback?: Function, errorCallback?: Function)",
+      description: "Method for executing an HTTP POST request.",
+      example: "httpPost(url, 'json', postData, function(result) {",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/httpPost"
+    },
+    httpDo: {
+      signature: "httpDo(path: String, method?: String, datatype?: String, data?: Object, callback?: Function, errorCallback?: Function)",
+      description: "Method for executing an HTTP request.",
+      example: "httpDo(",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/httpDo"
+    },
+    createWriter: {
+      signature: "createWriter(name: String, extension?: String)",
+      description: "Creates a new p5.",
+      example: "let myWriter = createWriter('xo.txt')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/createWriter"
+    },
+    save: {
+      signature: "save(objectOrFilename?: Object|String, filename?: String, options?: Boolean|String)",
+      description: "Saves a given element(image, text, json, csv, wav, or html) to the client's computer.",
+      example: "save(cnv, 'myCanvas.jpg')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/save"
+    },
+    saveJSON: {
+      signature: "saveJSON(json: Array|Object, filename: String, optimize?: Boolean)",
+      description: "Saves an `Object` or `Array` to a JSON file.",
+      example: "saveJSON(data, 'numbers.json')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveJSON"
+    },
+    saveStrings: {
+      signature: "saveStrings(list: String[], filename: String, extension?: String, isCRLF?: Boolean)",
+      description: "Saves an `Array` of `String`s to a file, one per line.",
+      example: "saveStrings(data, 'data.txt')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveStrings"
+    },
+    saveTable: {
+      signature: "saveTable(Table: p5.Table, filename: String, options?: String)",
+      description: "Writes the contents of a Table object to a file.",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveTable"
+    },
+    abs: {
+      signature: "abs(n: Number)",
+      description: "Calculates the absolute value of a number.",
+      example: "let h = abs(mouseX - 50)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/abs"
+    },
+    ceil: {
+      signature: "ceil(n: Number)",
+      description: "Calculates the closest integer value that is greater than or equal to a number.",
+      example: "r = ceil(r)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/ceil"
+    },
+    constrain: {
+      signature: "constrain(n: Number, low: Number, high: Number)",
+      description: "Constrains a number between a minimum and maximum value.",
+      example: "let x = constrain(mouseX, 33, 67)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/constrain"
+    },
+    dist: {
+      signature: "dist(x1: Number, y1: Number, x2: Number, y2: Number)",
+      description: "Calculates the distance between two points.",
+      example: "let d = dist(x1, y1, x2, y2)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/dist"
+    },
+    exp: {
+      signature: "exp(n: Number)",
+      description: "Calculates the value of Euler's number e (2.",
+      example: "let d = exp(1)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/exp"
+    },
+    floor: {
+      signature: "floor(n: Number)",
+      description: "Calculates the closest integer value that is less than or equal to the value of a number.",
+      example: "r = floor(r)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/floor"
+    },
+    lerp: {
+      signature: "lerp(start: Number, stop: Number, amt: Number)",
+      description: "Calculates a number between two numbers at a specific increment.",
+      example: "let c = lerp(a, b, 0.2)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/lerp"
+    },
+    log: {
+      signature: "log(n: Number)",
+      description: "Calculates the natural logarithm (the base-e logarithm) of a number.",
+      example: "let d = log(50)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/log"
+    },
+    mag: {
+      signature: "mag(x: Number, y: Number)",
+      description: "Calculates the magnitude, or length, of a vector.",
+      example: "let m = mag(x, y)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/mag"
+    },
+    map: {
+      signature: "map(value: Number, start1: Number, stop1: Number, start2: Number, stop2: Number, withinBounds?: Boolean)",
+      description: "Re-maps a number from one range to another.",
+      example: "let x = map(mouseX, 0, 100, 0, 50)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/map"
+    },
+    max: {
+      signature: "max(n0: Number, n1: Number)",
+      description: "Returns the largest value in a sequence of numbers.",
+      example: "let m = max(10, 5, 20)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/max"
+    },
+    min: {
+      signature: "min(n0: Number, n1: Number)",
+      description: "Returns the smallest value in a sequence of numbers.",
+      example: "let m = min(10, 5, 20)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/min"
+    },
+    norm: {
+      signature: "norm(value: Number, start: Number, stop: Number)",
+      description: "Maps a number from one range to a value between 0 and 1.",
+      example: "let redValue = norm(mouseX, 0, 100)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/norm"
+    },
+    pow: {
+      signature: "pow(n: Number, e: Number)",
+      description: "Calculates exponential expressions such as 23.",
+      example: "let d = pow(base, 1)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/pow"
+    },
+    round: {
+      signature: "round(n: Number, decimals?: Number)",
+      description: "Calculates the integer closest to a number.",
+      example: "let x = round(4.2)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/round"
+    },
+    sq: {
+      signature: "sq(n: Number)",
+      description: "Calculates the square of a number.",
+      example: "let d = sq(3)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/sq"
+    },
+    sqrt: {
+      signature: "sqrt(n: Number)",
+      description: "Calculates the square root of a number.",
+      example: "let d = sqrt(16)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/sqrt"
+    },
+    fract: {
+      signature: "fract(n: Number)",
+      description: "Calculates the fractional part of a number.",
+      example: "let f = fract(n)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/fract"
+    },
+    createVector: {
+      signature: "createVector(x?: Number, y?: Number, z?: Number)",
+      description: "Creates a new p5.",
+      example: "let p1 = createVector(25, 25)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/createVector"
+    },
+    noise: {
+      signature: "noise(x: Number, y?: Number, z?: Number)",
+      description: "Returns random numbers that can be tuned to feel organic.",
+      example: "let x = 100 * noise(0.005 * frameCount)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/noise"
+    },
+    noiseDetail: {
+      signature: "noiseDetail(lod: Number, falloff: Number)",
+      description: "Adjusts the character of the noise produced by the noise() function.",
+      example: "noiseDetail(6, 0.25)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/noiseDetail"
+    },
+    noiseSeed: {
+      signature: "noiseSeed(seed: Number)",
+      description: "Sets the seed value for the noise() function.",
+      example: "noiseSeed(99)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/noiseSeed"
+    },
+    randomSeed: {
+      signature: "randomSeed(seed: Number)",
+      description: "Sets the seed value for the random() and randomGaussian() functions.",
+      example: "randomSeed(99)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/randomSeed"
+    },
+    random: {
+      signature: "random(min?: Number, max?: Number)",
+      description: "Returns a random number or a random element from an array.",
+      example: "let x = random(0, 100)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/random"
+    },
+    randomGaussian: {
+      signature: "randomGaussian(mean?: Number, sd?: Number)",
+      description: "Returns a random number fitting a Gaussian, or normal, distribution.",
+      example: "x = randomGaussian(50)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/randomGaussian"
+    },
+    acos: {
+      signature: "acos(value: Number)",
+      description: "Calculates the arc cosine of a number.",
+      example: "let ac = acos(c)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/acos"
+    },
+    asin: {
+      signature: "asin(value: Number)",
+      description: "Calculates the arc sine of a number.",
+      example: "let as = asin(s)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/asin"
+    },
+    atan: {
+      signature: "atan(value: Number)",
+      description: "Calculates the arc tangent of a number.",
+      example: "let at = atan(t)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/atan"
+    },
+    atan2: {
+      signature: "atan2(y: Number, x: Number)",
+      description: "Calculates the angle formed by a point, the origin, and the positive x-axis.",
+      example: "let a = atan2(mouseY, mouseX)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/atan2"
+    },
+    cos: {
+      signature: "cos(angle: Number)",
+      description: "Calculates the cosine of an angle.",
+      example: "let x = 30 * cos(frameCount * 0.05) + 50",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/cos"
+    },
+    sin: {
+      signature: "sin(angle: Number)",
+      description: "Calculates the sine of an angle.",
+      example: "let y = 30 * sin(frameCount * 0.05) + 50",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/sin"
+    },
+    tan: {
+      signature: "tan(angle: Number)",
+      description: "Calculates the tangent of an angle.",
+      example: "let y = 5 * tan(x * 0.1) + 50",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/tan"
+    },
+    degrees: {
+      signature: "degrees(radians: Number)",
+      description: "Converts an angle measured in radians to its value in degrees.",
+      example: "let deg = degrees(rad)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/degrees"
+    },
+    radians: {
+      signature: "radians(degrees: Number)",
+      description: "Converts an angle measured in degrees to its value in radians.",
+      example: "let rad = radians(deg)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/radians"
+    },
+    angleMode: {
+      signature: "angleMode(mode: Constant)",
+      description: "Changes the unit system used to measure angles.",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/angleMode"
+    },
+    textAlign: {
+      signature: "textAlign(horizAlign: Constant, vertAlign?: Constant)",
+      description: "Sets the way text is aligned when text() is called.",
+      example: "textAlign(RIGHT)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textAlign"
+    },
+    textLeading: {
+      signature: "textLeading(leading: Number)",
+      description: "Sets the spacing between lines of text when text() is called.",
+      example: "textLeading(30)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textLeading"
+    },
+    textSize: {
+      signature: "textSize(size: Number)",
+      description: "Sets the font size when text() is called.",
+      example: "textSize(12)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textSize"
+    },
+    textStyle: {
+      signature: "textStyle(style: Constant)",
+      description: "Sets the style for system fonts when text() is called.",
+      example: "textStyle(NORMAL)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textStyle"
+    },
+    textWidth: {
+      signature: "textWidth(str: String)",
+      description: "Calculates the maximum width of a string of text drawn when text() is called.",
+      example: "let w = textWidth(s)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textWidth"
+    },
+    textAscent: {
+      signature: "textAscent()",
+      description: "Calculates the ascent of the current font at its current size.",
+      example: "let a = textAscent() * fontScale",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textAscent"
+    },
+    textDescent: {
+      signature: "textDescent()",
+      description: "Calculates the descent of the current font at its current size.",
+      example: "let d = textDescent() * fontScale",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textDescent"
+    },
+    textWrap: {
+      signature: "textWrap(style: Constant)",
+      description: "Sets the style for wrapping text when text() is called.",
+      example: "textWrap(WORD)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textWrap"
+    },
+    loadFont: {
+      signature: "loadFont(path: String, successCallback?: Function, failureCallback?: Function)",
+      description: "Loads a font and creates a p5.",
+      example: "font = loadFont('assets/inconsolata.otf')",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadFont"
+    },
+    text: {
+      signature: "text(str: String|Object|Array|Number|Boolean, x: Number, y: Number, maxWidth?: Number, maxHeight?: Number)",
+      description: "Draws text to the canvas.",
+      example: "text('hi', 50, 50)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/text"
+    },
+    textFont: {
+      signature: "textFont()",
+      description: "Sets the font used by the text() function.",
+      example: "textFont('Courier New')",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textFont"
+    },
+    append: {
+      signature: "append(array: Array, value: Any)",
+      description: "Adds a value to the end of an array.",
+      example: "append(myArray, 'Peach')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/append"
+    },
+    arrayCopy: {
+      signature: "arrayCopy(src: Array, srcPosition: Integer, dst: Array, dstPosition: Integer, length: Integer)",
+      description: "Copies an array (or part of an array) to another array.",
+      example: "arrayCopy(src, srcPosition, dst, dstPosition, length)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/arrayCopy"
+    },
+    concat: {
+      signature: "concat(a: Array, b: Array)",
+      description: "Concatenates two arrays, maps to Array.",
+      example: "let arr3 = concat(arr1, arr2)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/concat"
+    },
+    reverse: {
+      signature: "reverse(list: Array)",
+      description: "Reverses the order of an array, maps to Array.",
+      example: "reverse(myArray)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/reverse"
+    },
+    shorten: {
+      signature: "shorten(list: Array)",
+      description: "Decreases an array by one element and returns the shortened array, maps to Array.",
+      example: "let newArray = shorten(myArray)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/shorten"
+    },
+    shuffle: {
+      signature: "shuffle(array: Array, bool?: Boolean)",
+      description: "Shuffles the elements of an array.",
+      example: "let shuffledColors = shuffle(colors)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/shuffle"
+    },
+    sort: {
+      signature: "sort(list: Array, count?: Integer)",
+      description: "Sorts an array of numbers from smallest to largest, or puts an array of words in alphabetical order.",
+      example: "words = sort(words, count)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/sort"
+    },
+    splice: {
+      signature: "splice(list: Array, value: Any, position: Integer)",
+      description: "Inserts a value or an array of values into an existing array.",
+      example: "splice(myArray, insArray, 3)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/splice"
+    },
+    subset: {
+      signature: "subset(list: Array, start: Integer, count?: Integer)",
+      description: "Extracts an array of elements from an existing array.",
+      example: "let sub1 = subset(myArray, 0, 3)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/subset"
+    },
+    float: {
+      signature: "float(str: String)",
+      description: "Converts a `String` to a floating point (decimal) `Number`.",
+      example: "let converted = float(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/float"
+    },
+    int: {
+      signature: "int(n: String|Boolean|Number)",
+      description: "Converts a `Boolean`, `String`, or decimal `Number` to an integer.",
+      example: "let converted = int(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/int"
+    },
+    str: {
+      signature: "str(n: String|Boolean|Number)",
+      description: "Converts a `Boolean` or `Number` to `String`.",
+      example: "let converted = str(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/str"
+    },
+    boolean: {
+      signature: "boolean(n: String|Boolean|Number)",
+      description: "Converts a `String` or `Number` to a `Boolean`.",
+      example: "let converted = boolean(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/boolean"
+    },
+    byte: {
+      signature: "byte(n: String|Boolean|Number)",
+      description: "Converts a `Boolean`, `String`, or `Number` to its byte value.",
+      example: "let converted = byte(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/byte"
+    },
+    char: {
+      signature: "char(n: String|Number)",
+      description: "Converts a `Number` or `String` to a single-character `String`.",
+      example: "let converted = char(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/char"
+    },
+    unchar: {
+      signature: "unchar(n: String)",
+      description: "Converts a single-character `String` to a `Number`.",
+      example: "let converted = unchar(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/unchar"
+    },
+    hex: {
+      signature: "hex(n: Number, digits?: Number)",
+      description: "Converts a `Number` to a `String` with its hexadecimal value.",
+      example: "let converted = hex(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/hex"
+    },
+    unhex: {
+      signature: "unhex(n: String)",
+      description: "Converts a `String` with a hexadecimal value to a `Number`.",
+      example: "let converted = unhex(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/unhex"
+    },
+    join: {
+      signature: "join(list: Array, separator: String)",
+      description: "Combines an array of strings into one string.",
+      example: "let combined = join(myWords, ' : ')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/join"
+    },
+    match: {
+      signature: "match(str: String, regexp: String)",
+      description: "Applies a regular expression to a string and returns an array with the first match.",
+      example: "let matches = match(string, '[a-z][0-9]')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/match"
+    },
+    matchAll: {
+      signature: "matchAll(str: String, regexp: String)",
+      description: "Applies a regular expression to a string and returns an array of matches.",
+      example: "let matches = matchAll(string, '[a-z][0-9]')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/matchAll"
+    },
+    nf: {
+      signature: "nf(num: Number|String, left?: Integer|String, right?: Integer|String)",
+      description: "Converts a `Number` into a `String` with a given number of digits.",
+      example: "let formatted = nf(number)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/nf"
+    },
+    nfc: {
+      signature: "nfc(num: Number|String, right?: Integer|String)",
+      description: "Converts a `Number` into a `String` with commas to mark units of 1,000.",
+      example: "let commas = nfc(number)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/nfc"
+    },
+    nfp: {
+      signature: "nfp(num: Number, left?: Integer, right?: Integer)",
+      description: "Converts a `Number` into a `String` with a plus or minus sign.",
+      example: "let p = nfp(positive)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/nfp"
+    },
+    nfs: {
+      signature: "nfs(num: Number, left?: Integer, right?: Integer)",
+      description: "Converts a positive `Number` into a `String` with an extra space in front.",
+      example: "let formatted = nfs(positive)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/nfs"
+    },
+    split: {
+      signature: "split(value: String, delim: String)",
+      description: "Splits a `String` into pieces and returns an array containing the pieces.",
+      example: "let words = split(string, '...')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/split"
+    },
+    splitTokens: {
+      signature: "splitTokens(value: String, delim?: String)",
+      description: "Splits a `String` into pieces and returns an array containing the pieces.",
+      example: "let words = splitTokens(string)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/splitTokens"
+    },
+    trim: {
+      signature: "trim(str: String)",
+      description: "Removes whitespace from the start and end of a `String` without changing the middle.",
+      example: "let trimmed = trim(string)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/trim"
+    },
+    day: {
+      signature: "day()",
+      description: "Returns the current day as a number from 1\u201331.",
+      example: "let d = day()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/day"
+    },
+    hour: {
+      signature: "hour()",
+      description: "Returns the current hour as a number from 0\u201323.",
+      example: "let h = hour()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/hour"
+    },
+    minute: {
+      signature: "minute()",
+      description: "Returns the current minute as a number from 0\u201359.",
+      example: "let m = minute()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/minute"
+    },
+    millis: {
+      signature: "millis()",
+      description: "Returns the number of milliseconds since a sketch started running.",
+      example: "let ms = millis()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/millis"
+    },
+    month: {
+      signature: "month()",
+      description: "Returns the current month as a number from 1\u201312.",
+      example: "let m = month()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/month"
+    },
+    second: {
+      signature: "second()",
+      description: "Returns the current second as a number from 0\u201359.",
+      example: "let s = second()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/second"
+    },
+    year: {
+      signature: "year()",
+      description: "Returns the current year as a number such as 1999.",
+      example: "let y = year()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/year"
+    },
+    beginGeometry: {
+      signature: "beginGeometry()",
+      description: "Begins adding shapes to a new p5.",
+      example: "beginGeometry()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/beginGeometry"
+    },
+    endGeometry: {
+      signature: "endGeometry()",
+      description: "Stops adding shapes to a new p5.",
+      example: "shape = endGeometry()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/endGeometry"
+    },
+    buildGeometry: {
+      signature: "buildGeometry(callback: Function)",
+      description: "Creates a custom p5.",
+      example: "shape = buildGeometry(createShape)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/buildGeometry"
+    },
+    freeGeometry: {
+      signature: "freeGeometry(geometry: p5.Geometry)",
+      description: "Clears a p5.",
+      example: "freeGeometry(shape)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/freeGeometry"
+    },
+    plane: {
+      signature: "plane(width?: Number, height?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a plane.",
+      example: "plane()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/plane"
+    },
+    box: {
+      signature: "box(width?: Number, height?: Number, depth?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a box (rectangular prism).",
+      example: "box()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/box"
+    },
+    sphere: {
+      signature: "sphere(radius?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a sphere.",
+      example: "sphere()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/sphere"
+    },
+    cylinder: {
+      signature: "cylinder(radius?: Number, height?: Number, detailX?: Integer, detailY?: Integer, bottomCap?: Boolean, topCap?: Boolean)",
+      description: "Draws a cylinder.",
+      example: "cylinder()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/cylinder"
+    },
+    cone: {
+      signature: "cone(radius?: Number, height?: Number, detailX?: Integer, detailY?: Integer, cap?: Boolean)",
+      description: "Draws a cone.",
+      example: "cone()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/cone"
+    },
+    ellipsoid: {
+      signature: "ellipsoid(radiusX?: Number, radiusY?: Number, radiusZ?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws an ellipsoid.",
+      example: "ellipsoid(30)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/ellipsoid"
+    },
+    torus: {
+      signature: "torus(radius?: Number, tubeRadius?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a torus.",
+      example: "torus()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/torus"
+    },
+    orbitControl: {
+      signature: "orbitControl(sensitivityX?: Number, sensitivityY?: Number, sensitivityZ?: Number, options?: Object)",
+      description: "Allows the user to orbit around a 3D sketch using a mouse, trackpad, or touchscreen.",
+      example: "orbitControl()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/orbitControl"
+    },
+    debugMode: {
+      signature: "debugMode()",
+      description: "Adds a grid and an axes icon to clarify orientation in 3D sketches.",
+      example: "debugMode()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/debugMode"
+    },
+    noDebugMode: {
+      signature: "noDebugMode()",
+      description: "Turns off debugMode() in a 3D sketch.",
+      example: "noDebugMode()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/noDebugMode"
+    },
+    ambientLight: {
+      signature: "ambientLight(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Creates a light that shines from all directions.",
+      example: "ambientLight(80)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/ambientLight"
+    },
+    specularColor: {
+      signature: "specularColor(v1: Number, v2: Number, v3: Number)",
+      description: "Sets the specular color for lights.",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/specularColor"
+    },
+    directionalLight: {
+      signature: "directionalLight(v1: Number, v2: Number, v3: Number, x: Number, y: Number, z: Number)",
+      description: "Creates a light that shines in one direction.",
+      example: "directionalLight(255, 0, 0, 0, 1, 0)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/directionalLight"
+    },
+    pointLight: {
+      signature: "pointLight(v1: Number, v2: Number, v3: Number, x: Number, y: Number, z: Number)",
+      description: "Creates a light that shines from a point in all directions.",
+      example: "pointLight(255, 0, 0, 0, -150, 0)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/pointLight"
+    },
+    imageLight: {
+      signature: "imageLight(img: p5.image)",
+      description: "Creates an ambient light from an image.",
+      example: "imageLight(img)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/imageLight"
+    },
+    panorama: {
+      signature: "panorama(img: p5.Image)",
+      description: "Creates an immersive 3D background.",
+      example: "panorama(img)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/panorama"
+    },
+    lights: {
+      signature: "lights()",
+      description: "Places an ambient and directional light in the scene.",
+      example: "lights()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/lights"
+    },
+    lightFalloff: {
+      signature: "lightFalloff(constant: Number, linear: Number, quadratic: Number)",
+      description: "Sets the falloff rate for pointLight() and spotLight().",
+      example: "lightFalloff(2, 0, 0)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/lightFalloff"
+    },
+    spotLight: {
+      signature: "spotLight(v1: Number, v2: Number, v3: Number, x: Number, y: Number, z: Number, rx: Number, ry: Number, rz: Number, angle?: Number, concentration?: Number)",
+      description: "Creates a light that shines from a point in one direction.",
+      example: "spotLight(255, 0, 0, 0, 0, 100, 0, 0, -1, PI / 32)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/spotLight"
+    },
+    noLights: {
+      signature: "noLights()",
+      description: "Removes all lights from the sketch.",
+      example: "noLights()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/noLights"
+    },
+    loadModel: {
+      signature: "loadModel(path: String, normalize: Boolean, successCallback?: function(p5.Geometry), failureCallback?: Function(Event), fileType?: String)",
+      description: "Loads a 3D model to create a p5.",
+      example: "shape = loadModel('assets/teapot.obj')",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadModel"
+    },
+    model: {
+      signature: "model(model: p5.Geometry)",
+      description: "Draws a p5.",
+      example: "model(shape)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/model"
+    },
+    createModel: {
+      signature: "createModel(modelString: String, fileType?: String, normalize: Boolean, successCallback?: function(p5.Geometry), failureCallback?: Function(Event))",
+      description: "Load a 3d model from an OBJ or STL string.",
+      example: "octahedron = createModel(octahedron_model, '.obj')",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/createModel"
+    },
+    loadShader: {
+      signature: "loadShader(vertFilename: String, fragFilename: String, successCallback?: Function, failureCallback?: Function)",
+      description: "Loads vertex and fragment shaders to create a p5.",
+      example: "mandelbrot = loadShader('assets/shader.vert', 'assets/shader.frag')",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadShader"
+    },
+    createShader: {
+      signature: "createShader(vertSrc: String, fragSrc: String, options?: Object)",
+      description: "Creates a new p5.",
+      example: "let shaderProgram = createShader(vertSrc, fragSrc)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/createShader"
+    },
+    createFilterShader: {
+      signature: "createFilterShader(fragSrc: String)",
+      description: "Creates a p5.",
+      example: "let s = createFilterShader(fragSrc)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/createFilterShader"
+    },
+    shader: {
+      signature: "shader(s: p5.Shader)",
+      description: "Sets the p5.",
+      example: "shader(shaderProgram)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/shader"
+    },
+    baseMaterialShader: {
+      signature: "baseMaterialShader()",
+      description: "Get the default shader used with lights, materials, and textures.",
+      example: "myShader = baseMaterialShader().modify({",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/baseMaterialShader"
+    },
+    baseNormalShader: {
+      signature: "baseNormalShader()",
+      description: "Get the shader used by `normalMaterial()`.",
+      example: "myShader = baseNormalShader().modify({",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/baseNormalShader"
+    },
+    baseColorShader: {
+      signature: "baseColorShader()",
+      description: "Get the shader used when no lights or materials are applied.",
+      example: "myShader = baseColorShader().modify({",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/baseColorShader"
+    },
+    baseStrokeShader: {
+      signature: "baseStrokeShader()",
+      description: "Get the shader used when drawing the strokes of shapes.",
+      example: "myShader = baseStrokeShader().modify({",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/baseStrokeShader"
+    },
+    resetShader: {
+      signature: "resetShader()",
+      description: "Restores the default shaders.",
+      example: "resetShader()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/resetShader"
+    },
+    texture: {
+      signature: "texture(tex: p5.Image|p5.MediaElement|p5.Graphics|p5.Texture|p5.Framebuffer|p5.FramebufferTexture)",
+      description: "Sets the texture that will be used on shapes.",
+      example: "texture(img)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/texture"
+    },
+    textureMode: {
+      signature: "textureMode(mode: Constant)",
+      description: "Changes the coordinate system used for textures when they\u2019re applied to custom shapes.",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/textureMode"
+    },
+    textureWrap: {
+      signature: "textureWrap(wrapX: Constant, wrapY?: Constant)",
+      description: "Changes the way textures behave when a shape\u2019s uv coordinates go beyond the texture.",
+      example: "textureWrap(CLAMP)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/textureWrap"
+    },
+    normalMaterial: {
+      signature: "normalMaterial()",
+      description: "Sets the current material as a normal material.",
+      example: "normalMaterial()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/normalMaterial"
+    },
+    ambientMaterial: {
+      signature: "ambientMaterial(v1: Number, v2: Number, v3: Number)",
+      description: "Sets the ambient color of shapes\u2019 surface material.",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/ambientMaterial"
+    },
+    emissiveMaterial: {
+      signature: "emissiveMaterial(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Sets the emissive color of shapes\u2019 surface material.",
+      example: "emissiveMaterial(255, 0, 0)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/emissiveMaterial"
+    },
+    specularMaterial: {
+      signature: "specularMaterial(gray: Number, alpha?: Number)",
+      description: "Sets the specular color of shapes\u2019 surface material.",
+      example: "specularMaterial(255)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/specularMaterial"
+    },
+    shininess: {
+      signature: "shininess(shine: Number)",
+      description: 'Sets the amount of gloss ("shininess") of a specularMaterial().',
+      example: "shininess(10)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/shininess"
+    },
+    metalness: {
+      signature: "metalness(metallic: Number)",
+      description: 'Sets the amount of "metalness" of a specularMaterial().',
+      example: "metalness(1)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/metalness"
+    },
+    camera: {
+      signature: "camera(x?: Number, y?: Number, z?: Number, centerX?: Number, centerY?: Number, centerZ?: Number, upX?: Number, upY?: Number, upZ?: Number)",
+      description: "Sets the position and orientation of the current camera in a 3D sketch.",
+      example: "camera(200, -400, 800)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/camera"
+    },
+    perspective: {
+      signature: "perspective(fovy?: Number, aspect?: Number, near?: Number, far?: Number)",
+      description: "Sets a perspective projection for the current camera in a 3D sketch.",
+      example: "perspective(0.2, 1.5)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/perspective"
+    },
+    linePerspective: {
+      signature: "linePerspective(enable: Boolean)",
+      description: "Enables or disables perspective for lines in 3D sketches.",
+      example: "let isEnabled = linePerspective()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/linePerspective"
+    },
+    ortho: {
+      signature: "ortho(left?: Number, right?: Number, bottom?: Number, top?: Number, near?: Number, far?: Number)",
+      description: "Sets an orthographic projection for the current camera in a 3D sketch.",
+      example: "ortho()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/ortho"
+    },
+    frustum: {
+      signature: "frustum(left?: Number, right?: Number, bottom?: Number, top?: Number, near?: Number, far?: Number)",
+      description: "Sets the frustum of the current camera in a 3D sketch.",
+      example: "frustum()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/frustum"
+    },
+    createCamera: {
+      signature: "createCamera()",
+      description: "Creates a new p5.",
+      example: "cam1 = createCamera()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/createCamera"
+    },
+    setCamera: {
+      signature: "setCamera(cam: p5.Camera)",
+      description: "Sets the current (active) camera of a 3D sketch.",
+      example: "setCamera(cam1)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/setCamera"
+    },
+    setAttributes: {
+      signature: "setAttributes(key: String, value: Boolean)",
+      description: "Set attributes for the WebGL Drawing context.",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/setAttributes"
+    },
+    getAudioContext: {
+      signature: "getAudioContext()",
+      description: "Returns the Audio Context for this sketch.",
+      example: "if (getAudioContext().state !== 'running') {",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/getAudioContext"
+    },
+    userStartAudio: {
+      signature: "userStartAudio(elements?: Element|Array, callback?: Function)",
+      description: "It is not only a good practice to give users control over starting audio.",
+      example: "userStartAudio()",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/userStartAudio"
+    },
+    getOutputVolume: {
+      signature: "getOutputVolume()",
+      description: "Returns a number representing the output volume for sound in this sketch.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/getOutputVolume"
+    },
+    outputVolume: {
+      signature: "outputVolume(volume: Number|Object, rampTime?: Number, timeFromNow?: Number)",
+      description: "Scale the output of all sound in this sketch Scaled between 0.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/outputVolume"
+    },
+    soundOut: {
+      signature: "soundOut",
+      description: "`p5.",
+      kind: "variable",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/soundOut"
+    },
+    sampleRate: {
+      signature: "sampleRate()",
+      description: "Returns a number representing the sample rate, in samples per second, of all sound objects in this audio context.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/sampleRate"
+    },
+    freqToMidi: {
+      signature: "freqToMidi(frequency: Number)",
+      description: "Returns the closest MIDI note value for a given frequency.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/freqToMidi"
+    },
+    midiToFreq: {
+      signature: "midiToFreq(midiNote: Number)",
+      description: "Returns the frequency value of a MIDI note value.",
+      example: "freq = midiToFreq(midiVal)",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/midiToFreq"
+    },
+    soundFormats: {
+      signature: "soundFormats(formats?: String)",
+      description: "List the SoundFile formats that you will include.",
+      example: "soundFormats('mp3', 'ogg')",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/soundFormats"
+    },
+    saveSound: {
+      signature: "saveSound(soundFile: p5.SoundFile, fileName: String)",
+      description: "Save a p5.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveSound"
+    },
+    loadSound: {
+      signature: "loadSound(path: String|Array, successCallback?: Function, errorCallback?: Function, whileLoading?: Function)",
+      description: "loadSound() returns a new p5.",
+      example: "mySound = loadSound('assets/doorbell')",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadSound"
+    },
+    createConvolver: {
+      signature: "createConvolver(path: String, callback?: Function, errorCallback?: Function)",
+      description: "Create a p5.",
+      example: "cVerb = createConvolver('assets/bx-spring.mp3')",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/createConvolver"
+    },
+    setBPM: {
+      signature: "setBPM(BPM: Number, rampTime: Number)",
+      description: "Set the global tempo, in beats per minute, for all p5.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/setBPM"
+    }
+  }};
+
+// src/monaco/docs/p5.ts
+var P5_DOCS_INDEX = p5_default;
+function registerP5Providers(monaco) {
+  return registerRuntimeProviders(monaco, P5_DOCS_INDEX, {
+    hover: true,
+    dotCompletion: false,
+    identifierCompletion: true
+  });
+}
+
 // src/workspace/languages.ts
 var hydraRegistered = false;
 var p5jsRegistered = false;
@@ -7073,6 +11024,7 @@ function ensureWorkspaceLanguages(monaco) {
   registerHydraLanguage(monaco);
   registerP5JsLanguage(monaco);
   ensureStrudelProviders(monaco);
+  ensureP5Providers(monaco);
 }
 var strudelProvidersRegistered = false;
 function ensureStrudelProviders(monaco) {
@@ -7084,6 +11036,15 @@ function ensureStrudelProviders(monaco) {
   registerStrudelDotCompletions(monaco);
   registerStrudelNoteCompletions(monaco);
   registerStrudelHover(monaco);
+}
+var p5ProvidersRegistered = false;
+function ensureP5Providers(monaco) {
+  if (p5ProvidersRegistered) return;
+  if (typeof monaco.languages?.registerCompletionItemProvider !== "function" || typeof monaco.languages?.registerHoverProvider !== "function") {
+    return;
+  }
+  p5ProvidersRegistered = true;
+  registerP5Providers(monaco);
 }
 function toMonacoLanguage(lang) {
   switch (lang) {

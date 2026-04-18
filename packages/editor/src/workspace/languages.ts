@@ -51,6 +51,7 @@ import {
   registerStrudelNoteCompletions,
 } from '../monaco/strudelCompletions'
 import { registerStrudelHover } from '../monaco/strudelDocs'
+import { registerP5Providers } from '../monaco/docs/p5'
 import type { WorkspaceLanguage } from './types'
 
 /**
@@ -160,6 +161,7 @@ export function ensureWorkspaceLanguages(monaco: typeof Monaco): void {
   registerHydraLanguage(monaco)
   registerP5JsLanguage(monaco)
   ensureStrudelProviders(monaco)
+  ensureP5Providers(monaco)
 }
 
 // Completion + hover providers for strudel. Monaco's provider registry
@@ -179,6 +181,19 @@ function ensureStrudelProviders(monaco: typeof Monaco): void {
   registerStrudelDotCompletions(monaco)
   registerStrudelNoteCompletions(monaco)
   registerStrudelHover(monaco)
+}
+
+let p5ProvidersRegistered = false
+function ensureP5Providers(monaco: typeof Monaco): void {
+  if (p5ProvidersRegistered) return
+  if (
+    typeof monaco.languages?.registerCompletionItemProvider !== 'function' ||
+    typeof monaco.languages?.registerHoverProvider !== 'function'
+  ) {
+    return
+  }
+  p5ProvidersRegistered = true
+  registerP5Providers(monaco)
 }
 
 /**
@@ -213,4 +228,5 @@ export function toMonacoLanguage(lang: WorkspaceLanguage): string {
 export function __resetWorkspaceLanguagesForTests(): void {
   hydraRegistered = false
   p5jsRegistered = false
+  p5ProvidersRegistered = false
 }
