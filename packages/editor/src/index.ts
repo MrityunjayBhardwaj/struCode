@@ -242,3 +242,36 @@ export type {
   WorkspaceShellProps,
   ChromeForTab,
 } from './workspace/types'
+
+// Engine log + friendly-error plumbing
+export type {
+  LogLevel,
+  RuntimeId,
+  LogSuggestion,
+  LogEntry,
+} from './engine/engineLog'
+export {
+  emitLog,
+  subscribeLog,
+  getLogHistory,
+  clearLog,
+} from './engine/engineLog'
+export type {
+  FriendlyErrorParts,
+  FuzzyMatch,
+  FormatOptions,
+} from './engine/friendlyErrors'
+export {
+  levenshtein,
+  fuzzyMatch,
+  extractReferenceIdentifier,
+  formatFriendlyError,
+} from './engine/friendlyErrors'
+
+// DocsIndex exports so the app can pass runtime indexes into the friendly
+// error formatter without reaching through internal paths.
+export type { DocsIndex, RuntimeDoc, DocKind } from './monaco/docs/types'
+export { P5_DOCS_INDEX } from './monaco/docs/p5'
+export { HYDRA_DOCS_INDEX } from './monaco/docs/hydra'
+export { SONICPI_DOCS_INDEX } from './monaco/docs/sonicpi'
+export { STRUDEL_DOCS_INDEX } from './monaco/strudelDocs'

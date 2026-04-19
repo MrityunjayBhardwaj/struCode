@@ -26,6 +26,12 @@ import {
   flushToPreset,
   getPresetIdForFile,
   registerPresetAsNamedViz,
+  emitLog,
+  formatFriendlyError,
+  STRUDEL_DOCS_INDEX,
+  SONICPI_DOCS_INDEX,
+  type DocsIndex,
+  type RuntimeId,
   type WorkspaceTab,
   type ChromeContext,
   type VizPreset,
@@ -239,6 +245,22 @@ export default function StrudelEditorClient({
         const cur = next.get(fileId) ?? { isPlaying: false, error: null, autoRefresh: false };
         next.set(fileId, { ...cur, error: err });
         return next;
+      });
+      // Pipe into the shared event store so toast / status-bar / console
+      // panel / Monaco markers can all react. Runtime identity comes from
+      // the workspace file's language (strudel | sonicpi — no other
+      // languages are wired to LiveCodingRuntime today).
+      const fileNow = getFile(fileId);
+      const runtimeId: RuntimeId = fileNow?.language === "sonicpi" ? "sonicpi" : "strudel";
+      const index: DocsIndex = runtimeId === "sonicpi" ? SONICPI_DOCS_INDEX : STRUDEL_DOCS_INDEX;
+      const parts = formatFriendlyError(err, runtimeId, { index });
+      emitLog({
+        level: "error",
+        runtime: runtimeId,
+        source: fileNow?.path ?? fileId,
+        message: parts.message,
+        suggestion: parts.suggestion,
+        stack: parts.stack,
       });
     });
     // Live-mode re-eval has no user-driven play() to clear the error state,

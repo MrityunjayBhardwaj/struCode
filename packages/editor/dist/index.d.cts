@@ -4127,4 +4127,239 @@ declare function getPresetIdForFile(file: WorkspaceFile): string | undefined;
  */
 declare function registerPresetAsNamedViz(preset: VizPreset): boolean;
 
-export { AUTO_SNAPSHOT_PREFIX, type AudioPayload, type AudioSourceRef, BACKDROP_BLUR_VAR, BUNDLED_PREFIX, type BackdropQuality, BufferedScheduler, type ChromeContext, type ChromeForTab, type CollectContext, type ComponentBag, type CropRegion, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, type EditorTheme, EditorView, type EngineComponents, HYDRA_VIZ, type HapEvent, HapStream, type HydraPatternFn, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, type IRComponent, type IREvent, IREventCollectSystem, type IRPattern, LIGHT_THEME_TOKENS, LiveCodingEditor, type LiveCodingEditorProps, type LiveCodingEngine, LiveCodingRuntime, type LiveCodingRuntime$1 as LiveCodingRuntimeInterface, type LiveCodingRuntimeProvider, LiveRecorder, type NormalizedHap, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, type PatternIR, type PatternScheduler, PianorollSketch, PitchwheelSketch, type PlayParams, type PreviewContext, type PreviewProvider, PreviewView, type ProjectMeta, type ResolvedTheme, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, type SnapshotMeta, SonicPiEngine, type SourceLocation, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, type StrudelEditorProps, StrudelEngine, StrudelParseSystem, type StrudelTheme, type System, UI_ICON_SIZE_VAR, type UseWorkspaceFileResult, type VizConfig, type VizDescriptor, VizDropdown, VizEditor, type VizEditorProps, VizPanel, VizPicker, type VizPreset, VizPresetStore, type VizRefs, type VizRenderer, type VizRendererSource, WavEncoder, type WorkspaceAudioBus, type WorkspaceFile, type WorkspaceGroupState, type WorkspaceLanguage, WorkspaceShell, type WorkspaceShellHandle, type WorkspaceShellProps, type WorkspaceTab, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFolderOrder, getInlineVizActionSize, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+/**
+ * Shared event store for every runtime's info / warn / error messages.
+ *
+ * Goal: one stream of structured log entries that multiple UI surfaces
+ * subscribe to — toast on new errors, status-bar LED counting new
+ * entries since last opened, Monaco inline markers on the offending
+ * file, and a dedicated Console panel with history + filters. Each
+ * runtime (Strudel, Sonic Pi, p5.js, Hydra) emits through the same
+ * `emitLog` entry point so downstream consumers don't need per-runtime
+ * special-casing.
+ *
+ * The store keeps a bounded history (MAX_HISTORY most recent entries).
+ * Listeners are fired synchronously on emit so UI surfaces can update
+ * in the same microtask as the runtime error handler.
+ */
+type LogLevel = 'info' | 'warn' | 'error';
+type RuntimeId = 'strudel' | 'sonicpi' | 'p5' | 'hydra'
+/** Stave-itself errors (engine init, host-side failures). */
+ | 'stave';
+/**
+ * "Did you mean X?" hint produced by the friendly-error formatter from
+ * a fuzzy match against the runtime's `DocsIndex`. Carried on the log
+ * entry so every UI surface (toast, console row, Monaco marker) can
+ * render it the same way.
+ */
+interface LogSuggestion {
+    /** Canonical symbol name (e.g. `noise`). */
+    name: string;
+    /** In-app docs page for the suggested symbol. */
+    docsUrl: string;
+    /** One-line example if the DocsIndex carried one. */
+    example?: string;
+    /** First-sentence description if present. */
+    description?: string;
+}
+interface LogEntry {
+    /** Monotonic-ish unique id — used as React key, preserved through history. */
+    id: string;
+    /** Epoch ms when the entry was emitted. */
+    ts: number;
+    level: LogLevel;
+    runtime: RuntimeId;
+    /** Workspace file path this entry originated from, if known. */
+    source?: string;
+    /** 1-indexed line number inside `source`, if known. */
+    line?: number;
+    column?: number;
+    message: string;
+    suggestion?: LogSuggestion;
+    /** Raw error stack for the "expand stack" fold. */
+    stack?: string;
+}
+type LogListener = (entry: LogEntry | null, history: readonly LogEntry[]) => void;
+/**
+ * Emit a log entry. Returns the full entry (with generated id + ts) so
+ * callers can hold a reference for later deduplication or jumping. A
+ * `null` listener signal is reserved for `clearLog` / reset — emitLog
+ * always passes the emitted entry.
+ */
+declare function emitLog(partial: Omit<LogEntry, 'id' | 'ts'>): LogEntry;
+/**
+ * Subscribe to every future log entry. Returns an unsubscribe. Does
+ * NOT replay history — consumers that need it should call
+ * `getLogHistory()` on mount.
+ */
+declare function subscribeLog(fn: LogListener): () => void;
+/**
+ * Read the current history in chronological order. Safe to mutate the
+ * returned array; we give back a frozen slice of the internal buffer.
+ */
+declare function getLogHistory(): readonly LogEntry[];
+/**
+ * Empty the history and fire a `null` notification so subscribers can
+ * reset their local state (clear marker maps, zero the LED counter).
+ */
+declare function clearLog(): void;
+
+/**
+ * Shared shape for every runtime's hover/completion documentation index.
+ *
+ * The goal is one schema across Strudel, Sonic Pi, p5.js, Hydra, and any
+ * future runtime, so hover + completion providers are factory-built from
+ * the same index — not hand-rolled per runtime.
+ */
+type DocKind = 'function' | 'method' | 'variable' | 'constant' | 'keyword' | 'synth' | 'sample' | 'fx';
+interface RuntimeDoc {
+    /** Callable form, e.g. `note(pattern: string)` or `.fast(n)` */
+    signature: string;
+    /** Prose description (Markdown allowed). */
+    description: string;
+    /** Short inline example, shown verbatim. */
+    example?: string;
+    /** Classification — drives the Monaco completion icon. */
+    kind?: DocKind;
+    /** Return description, e.g. `Pattern` or `void`. */
+    returns?: string;
+    /** Topic / category for filtering (e.g. `transform`, `shape`). */
+    category?: string;
+    /** Permalink into the upstream reference. */
+    sourceUrl?: string;
+}
+interface DocsIndex {
+    /** Monaco language id. */
+    runtime: string;
+    /** Identifier → doc entry. Identifier is the bare name, no `.` prefix. */
+    docs: Record<string, RuntimeDoc>;
+    /** Optional alias → canonical name map (e.g. `bg` → `background`). */
+    aliases?: Record<string, string>;
+    /** Provenance for sync scripts and staleness checks. */
+    meta?: {
+        version?: string;
+        fetchedAt?: string;
+        source?: string;
+        /**
+         * Fallback URL for the hover "Reference →" link when an entry has no
+         * `sourceUrl` of its own. Useful for runtimes whose docs don't carry
+         * stable per-function permalinks (e.g. Strudel).
+         */
+        docsBaseUrl?: string;
+    };
+}
+
+/**
+ * Turns a raw runtime error into a user-friendly `LogEntry` body.
+ *
+ * Inspired by p5.js's Friendly Error System (FES). We have a structural
+ * advantage — every runtime ships its `DocsIndex` (the same one hover /
+ * completion consume), so fuzzy-matching a misspelled identifier back
+ * to a real symbol with its docs URL is a lookup, not a hard-coded
+ * dictionary.
+ *
+ * Scope today:
+ *   - Extract the offending identifier from a ReferenceError.
+ *   - Fuzzy-match it (Levenshtein) against DocsIndex keys.
+ *   - Format a friendly message + suggestion record.
+ *
+ * Not in scope yet:
+ *   - Parsing TypeError arg-type mismatches (needs real signature parsing).
+ *   - Parsing Sonic Pi's Ruby error format (different error surface).
+ *   - Cross-runtime suggestions (*"stack is a Strudel fn; you're in Hydra"*).
+ */
+
+interface FriendlyErrorParts {
+    /** Short sentence surfacing in toast + console row + Monaco marker. */
+    message: string;
+    /** Populated when we found a confident fuzzy match in DocsIndex. */
+    suggestion?: LogSuggestion;
+    /** Underlying stack, copied through so the Console panel can fold it. */
+    stack?: string;
+}
+/**
+ * Levenshtein edit distance. Small implementation — fine for runs of up
+ * to a few thousand words, which is the order of magnitude of the
+ * combined DocsIndex keys (~935).
+ */
+declare function levenshtein(a: string, b: string): number;
+interface FuzzyMatch {
+    name: string;
+    distance: number;
+}
+/**
+ * Return the closest identifiers to `word` from a corpus, sorted by
+ * distance. `maxDistance` filters out anything beyond the threshold;
+ * defaults to `Math.max(2, ceil(word.length / 3))` — generous for short
+ * words, stricter for long ones. `limit` caps the returned list.
+ */
+declare function fuzzyMatch(word: string, corpus: readonly string[], options?: {
+    maxDistance?: number;
+    limit?: number;
+}): FuzzyMatch[];
+/**
+ * Extract the undefined identifier from a ReferenceError's message.
+ * Returns `null` when the error isn't a reference-miss we recognise.
+ */
+declare function extractReferenceIdentifier(err: unknown): string | null;
+interface FormatOptions {
+    /** DocsIndex for the runtime the code was running in. */
+    index?: DocsIndex;
+    /** Override the base URL pattern used for suggestion.docsUrl. */
+    docsUrlFor?: (runtime: RuntimeId, name: string) => string;
+}
+/**
+ * Build a FriendlyErrorParts from a raw thrown value. When `index` is
+ * provided and the error is a ReferenceError, attempts a fuzzy-match
+ * against the index and attaches the best suggestion.
+ */
+declare function formatFriendlyError(err: unknown, runtime: RuntimeId, options?: FormatOptions): FriendlyErrorParts;
+
+/**
+ * p5.js hover + completion — sourced from the official p5.js reference
+ * (YUIDoc build, vendored to `data/p5.json` via
+ * `scripts/fetch-docs/p5.mjs`).
+ *
+ * Re-sync with upstream:
+ *   node packages/editor/scripts/fetch-docs/p5.mjs
+ *
+ * The transform trims descriptions to one sentence and picks the shortest
+ * real call-site line from each method's examples, so the vendored JSON
+ * stays under 200 KB.
+ */
+
+declare const P5_DOCS_INDEX: DocsIndex;
+
+/**
+ * Hydra hover + completion — sourced from the hydra-synth function list
+ * (`glsl-functions.js` vendored as `data/hydra.json` via
+ * `scripts/fetch-docs/hydra.mjs`) plus a small hand-curated set of
+ * runtime-only globals (output buffers, `hush`, `time`, etc.) that don't
+ * live in the GLSL list.
+ *
+ * Re-sync with upstream:
+ *   node packages/editor/scripts/fetch-docs/hydra.mjs
+ */
+
+declare const HYDRA_DOCS_INDEX: DocsIndex;
+
+/**
+ * Sonic Pi hover + completion — assembled from the upstream sonic-pi repo:
+ *   - Language functions scraped from `app/server/ruby/lib/sonicpi/lang/*.rb`
+ *     via the `doc name:` metadata blocks.
+ *   - Synth symbols from `etc/doc/cheatsheets/synths.md`.
+ *   - FX symbols from `etc/doc/cheatsheets/fx.md`.
+ *
+ * Re-sync with upstream:
+ *   node packages/editor/scripts/fetch-docs/sonicpi.mjs
+ *
+ * Monaco's `getWordAtPosition` stops at `:`, so `:dull_bell` resolves to
+ * the bare `dull_bell` identifier — which the docs index stores under
+ * that bare key. One lookup covers both forms.
+ */
+
+declare const SONICPI_DOCS_INDEX: DocsIndex;
+
+declare const STRUDEL_DOCS_INDEX: DocsIndex;
+
+export { AUTO_SNAPSHOT_PREFIX, type AudioPayload, type AudioSourceRef, BACKDROP_BLUR_VAR, BUNDLED_PREFIX, type BackdropQuality, BufferedScheduler, type ChromeContext, type ChromeForTab, type CollectContext, type ComponentBag, type CropRegion, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, type DocKind, type DocsIndex, type EditorTheme, EditorView, type EngineComponents, type FormatOptions, type FriendlyErrorParts, type FuzzyMatch, HYDRA_DOCS_INDEX, HYDRA_VIZ, type HapEvent, HapStream, type HydraPatternFn, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, type IRComponent, type IREvent, IREventCollectSystem, type IRPattern, LIGHT_THEME_TOKENS, LiveCodingEditor, type LiveCodingEditorProps, type LiveCodingEngine, LiveCodingRuntime, type LiveCodingRuntime$1 as LiveCodingRuntimeInterface, type LiveCodingRuntimeProvider, LiveRecorder, type LogEntry, type LogLevel, type LogSuggestion, type NormalizedHap, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, type PatternIR, type PatternScheduler, PianorollSketch, PitchwheelSketch, type PlayParams, type PreviewContext, type PreviewProvider, PreviewView, type ProjectMeta, type ResolvedTheme, type RuntimeDoc, type RuntimeId, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, type SnapshotMeta, SonicPiEngine, type SourceLocation, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, type StrudelEditorProps, StrudelEngine, StrudelParseSystem, type StrudelTheme, type System, UI_ICON_SIZE_VAR, type UseWorkspaceFileResult, type VizConfig, type VizDescriptor, VizDropdown, VizEditor, type VizEditorProps, VizPanel, VizPicker, type VizPreset, VizPresetStore, type VizRefs, type VizRenderer, type VizRendererSource, WavEncoder, type WorkspaceAudioBus, type WorkspaceFile, type WorkspaceGroupState, type WorkspaceLanguage, WorkspaceShell, type WorkspaceShellHandle, type WorkspaceShellProps, type WorkspaceTab, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFolderOrder, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeLog, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
