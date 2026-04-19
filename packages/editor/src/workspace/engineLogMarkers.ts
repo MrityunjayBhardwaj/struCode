@@ -82,6 +82,17 @@ function applyEntry(entry: LogEntry): void {
   if (!fileId) return
   const resolved = getModelForFile(fileId)
   if (!resolved) return
+  // Guard against a stack-parsed line that sits past the user's file.
+  // `new Function` errors sometimes carry line numbers relative to the
+  // generated wrapper body (or to a bundle frame that slipped through
+  // parseStackLocation's filters). `setLineMarker` would clamp that to
+  // the full-document range and paint the whole sketch red — visually
+  // louder than "we don't know where it is." Skip instead; the Console
+  // row already carries the message, and nothing else pretends to
+  // know the line.
+  const model = resolved.model as { getLineCount?: () => number }
+  const lineCount = model.getLineCount?.() ?? 0
+  if (entry.line < 1 || entry.line > lineCount) return
   // Severity mapping: engine 'error' / 'warn' / 'info' → Monaco
   // Error / Warning / Info.
   const severity = entry.level

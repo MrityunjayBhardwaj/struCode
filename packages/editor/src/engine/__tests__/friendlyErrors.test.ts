@@ -189,7 +189,7 @@ describe('formatFriendlyError', () => {
 })
 
 describe('parseStackLocation', () => {
-  it('parses V8 at-eval frame', () => {
+  it('parses V8 at-eval frame pointing at <anonymous>', () => {
     expect(
       parseStackLocation({
         stack: 'Error\n    at eval (<anonymous>:7:3)',
@@ -197,17 +197,50 @@ describe('parseStackLocation', () => {
     ).toEqual({ line: 7, column: 3 })
   })
 
-  it('parses Firefox @-suffix frame', () => {
+  it('parses V8 bare <anonymous> frame (new Function body)', () => {
     expect(
       parseStackLocation({
-        stack: 'Error\nsketch@debugger eval:12:5',
+        stack: 'SyntaxError: X\n    at <anonymous>:4:12\n    at Module.foo (file.js:1:1)',
+      }),
+    ).toEqual({ line: 4, column: 12 })
+  })
+
+  it('parses Firefox @<anonymous> frame', () => {
+    expect(
+      parseStackLocation({
+        stack: 'Error\nsketch@<anonymous>:12:5',
       }),
     ).toEqual({ line: 12, column: 5 })
+  })
+
+  it('parses Firefox debugger-eval frame', () => {
+    expect(
+      parseStackLocation({
+        stack: 'Error\n@debugger eval:3:1',
+      }),
+    ).toEqual({ line: 3, column: 1 })
   })
 
   it('returns null when no frame matches', () => {
     expect(parseStackLocation({ stack: 'nothing relevant' })).toBeNull()
     expect(parseStackLocation({})).toBeNull()
     expect(parseStackLocation(null)).toBeNull()
+  })
+
+  it('does NOT grab line numbers out of bundled @scope paths', () => {
+    // Regression: the old permissive `@[^\n]*?:(\d+):(\d+)` pattern
+    // matched the tail of `.../@stave/editor/dist/index.js:1234:56`
+    // and returned line=1234 — which then painted the user's whole
+    // file red when `setLineMarker` clamped out-of-range to full doc.
+    const stack = `SyntaxError: Unexpected token '}'
+    at new Function (<anonymous>)
+    at compileP5Code (webpack://./@stave/editor/src/visualizers/p5Compiler.ts:113:3)
+    at factory (webpack://./@stave/editor/dist/index.js:1234:56)`
+    expect(parseStackLocation({ stack })).toBeNull()
+  })
+
+  it('does NOT match generic V8 frame file:line:col pairs', () => {
+    const stack = `Error\n    at Object.fn (/app/src/foo.ts:42:10)`
+    expect(parseStackLocation({ stack })).toBeNull()
   })
 })

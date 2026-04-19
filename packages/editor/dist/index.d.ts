@@ -4370,9 +4370,20 @@ interface FriendlyErrorParts {
     column?: number;
 }
 /**
- * Parse the first eval-frame line/column out of an error's stack. Same
- * patterns `setEvalError` uses internally — exported here so emit sites
- * can enrich `LogEntry` without duplicating the regex.
+ * Parse the first user-code line/column out of an error's stack.
+ *
+ * We only trust frames that clearly originate from a runtime eval
+ * path — `<anonymous>` for `new Function` / direct eval, or an
+ * explicit `eval at` chain. Matching any `:LINE:COL` pair we see
+ * would false-positive on bundled paths (e.g. a stack containing
+ * `.../@stave/editor/dist/index.js:1234:56`) and hand back a line
+ * number that has nothing to do with the user's file — the
+ * downstream marker then clamps to full-document range and the user
+ * sees the whole sketch underlined.
+ *
+ * Returns `null` when the stack only contains compiled-bundle or
+ * framework frames. Caller should treat that as "line unknown" and
+ * skip the inline marker rather than painting the whole file.
  */
 declare function parseStackLocation(err: unknown): {
     line: number;

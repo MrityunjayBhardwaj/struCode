@@ -28174,9 +28174,15 @@ function makeFixedKey(runtime, source) {
 function parseStackLocation(err2) {
   const stack = typeof err2 === "object" && err2 !== null && "stack" in err2 ? String(err2.stack ?? "") : "";
   if (!stack) return null;
-  const v8 = stack.match(/at eval[^(]*\(.*?:(\d+):(\d+)\)/);
-  if (v8) return { line: parseInt(v8[1], 10), column: parseInt(v8[2], 10) };
-  const ff = stack.match(/@[^\n]*?:(\d+):(\d+)/);
+  const v8Eval = stack.match(/at eval[^(]*\(<anonymous>:(\d+):(\d+)\)/);
+  if (v8Eval)
+    return { line: parseInt(v8Eval[1], 10), column: parseInt(v8Eval[2], 10) };
+  const v8Anon = stack.match(/^\s*at\s+<anonymous>:(\d+):(\d+)/m);
+  if (v8Anon)
+    return { line: parseInt(v8Anon[1], 10), column: parseInt(v8Anon[2], 10) };
+  const ff = stack.match(
+    /@(?:<anonymous>|debugger eval|eval):(\d+):(\d+)/
+  );
   if (ff) return { line: parseInt(ff[1], 10), column: parseInt(ff[2], 10) };
   return null;
 }
@@ -28592,6 +28598,9 @@ function applyEntry(entry) {
   if (!fileId) return;
   const resolved = getModelForFile(fileId);
   if (!resolved) return;
+  const model = resolved.model;
+  const lineCount = model.getLineCount?.() ?? 0;
+  if (entry.line < 1 || entry.line > lineCount) return;
   const severity = entry.level;
   setLineMarker(
     resolved.monaco,

@@ -181,6 +181,33 @@ describe('installEngineLogMarkers', () => {
     expect(setModelMarkers).not.toHaveBeenCalled()
   })
 
+  it('skips marker when parsed line is past the model (avoids painting whole file)', async () => {
+    const editor = makeFakeEditor()
+    const file = createWorkspaceFile(
+      'f-tiny',
+      'tiny.p5',
+      '',
+      'p5',
+    )
+    registerEditor(file.id, editor)
+    installEngineLogMarkers()
+
+    // Fake model has 20 lines (see makeFakeEditor). Line 999 would have
+    // clamped to full-doc under the old setLineMarker fallback.
+    emitLog({
+      level: 'error',
+      runtime: 'p5',
+      source: 'tiny.p5',
+      line: 999,
+      message: 'SyntaxError',
+    })
+    await flush()
+
+    expect(setModelMarkers).not.toHaveBeenCalled()
+
+    unregisterEditor(file.id, editor)
+  })
+
   it('attaches the suggestion name to the marker hover text', async () => {
     const editor = makeFakeEditor()
     const file = createWorkspaceFile(

@@ -39,9 +39,20 @@ export interface FriendlyErrorParts {
 }
 
 /**
- * Parse the first eval-frame line/column out of an error's stack. Same
- * patterns `setEvalError` uses internally — exported here so emit sites
- * can enrich `LogEntry` without duplicating the regex.
+ * Parse the first user-code line/column out of an error's stack.
+ *
+ * We only trust frames that clearly originate from a runtime eval
+ * path — `<anonymous>` for `new Function` / direct eval, or an
+ * explicit `eval at` chain. Matching any `:LINE:COL` pair we see
+ * would false-positive on bundled paths (e.g. a stack containing
+ * `.../@stave/editor/dist/index.js:1234:56`) and hand back a line
+ * number that has nothing to do with the user's file — the
+ * downstream marker then clamps to full-document range and the user
+ * sees the whole sketch underlined.
+ *
+ * Returns `null` when the stack only contains compiled-bundle or
+ * framework frames. Caller should treat that as "line unknown" and
+ * skip the inline marker rather than painting the whole file.
  */
 export function parseStackLocation(
   err: unknown,
@@ -51,11 +62,24 @@ export function parseStackLocation(
       ? String((err as { stack: unknown }).stack ?? '')
       : ''
   if (!stack) return null
-  // V8: "at eval (<anonymous>:LINE:COL)" or "at eval (eval at ...)"
-  const v8 = stack.match(/at eval[^(]*\(.*?:(\d+):(\d+)\)/)
-  if (v8) return { line: parseInt(v8[1], 10), column: parseInt(v8[2], 10) }
-  // Firefox: "@<anonymous>:LINE:COL" or similar suffix
-  const ff = stack.match(/@[^\n]*?:(\d+):(\d+)/)
+  // V8: "at eval (<anonymous>:LINE:COL)" — user code in direct eval.
+  const v8Eval = stack.match(/at eval[^(]*\(<anonymous>:(\d+):(\d+)\)/)
+  if (v8Eval)
+    return { line: parseInt(v8Eval[1], 10), column: parseInt(v8Eval[2], 10) }
+  // V8: bare "at <anonymous>:LINE:COL" frame — typical for code run
+  // through `new Function(body)` when the parser points at the body
+  // position. Anchored to line start so we don't match the tail of a
+  // bundled filename.
+  const v8Anon = stack.match(/^\s*at\s+<anonymous>:(\d+):(\d+)/m)
+  if (v8Anon)
+    return { line: parseInt(v8Anon[1], 10), column: parseInt(v8Anon[2], 10) }
+  // Firefox: "name@<anonymous>:LINE:COL" or "@debugger eval:LINE:COL".
+  // The alternation right after `@` keeps `@scope/package` npm paths
+  // out — `@stave/editor` doesn't match any of the three tokens, so
+  // the bundled-path false-positive is structural, not position-based.
+  const ff = stack.match(
+    /@(?:<anonymous>|debugger eval|eval):(\d+):(\d+)/,
+  )
   if (ff) return { line: parseInt(ff[1], 10), column: parseInt(ff[2], 10) }
   return null
 }
