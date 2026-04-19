@@ -4435,7 +4435,9 @@ var StrudelEngine = class {
         if (next.startsWith("$:") || next.startsWith("setcps")) break;
         if (next !== "" && !next.startsWith("//")) lastLineIdx = j;
       }
-      result.set(key, { vizId, afterLine: lastLineIdx + 1 });
+      const blockLines = lines.slice(i2, lastLineIdx + 1).join(" ").replace(/\s+/g, " ").trim();
+      const contentHash = blockLines.slice(0, 120);
+      result.set(key, { vizId, afterLine: lastLineIdx + 1, contentHash });
     }
     return result;
   }
@@ -5788,9 +5790,25 @@ function defineStrudelMonacoTheme(monaco) {
       { token: "strudel.mini.operator", foreground: "f472b6" },
       { token: "strudel.mini.number", foreground: "fb923c" },
       { token: "string", foreground: "fcd34d" },
+      { token: "string.escape", foreground: "fde68a" },
+      { token: "string.quote", foreground: "fcd34d" },
       { token: "number", foreground: "fb923c" },
+      { token: "number.hex", foreground: "fb923c" },
+      { token: "number.binary", foreground: "fb923c" },
+      { token: "number.float", foreground: "fb923c" },
       { token: "comment", foreground: "6b7280", fontStyle: "italic" },
       { token: "keyword", foreground: "c4b5fd" },
+      { token: "keyword.operator", foreground: "f472b6" },
+      { token: "variable.predefined", foreground: "fde68a" },
+      { token: "constant", foreground: "fb923c" },
+      { token: "type", foreground: "7dd3fc" },
+      { token: "identifier", foreground: "e2e8f0" },
+      { token: "identifier.property", foreground: "93c5fd" },
+      { token: "delimiter", foreground: "94a3b8" },
+      { token: "delimiter.parenthesis", foreground: "94a3b8" },
+      { token: "delimiter.curly", foreground: "94a3b8" },
+      { token: "delimiter.square", foreground: "94a3b8" },
+      { token: "delimiter.bracket", foreground: "94a3b8" },
       // Sonic Pi tokens
       { token: "sonicpi.function", foreground: "93c5fd", fontStyle: "bold" },
       { token: "sonicpi.music", foreground: "a78bfa" },
@@ -5808,7 +5826,8 @@ function defineStrudelMonacoTheme(monaco) {
       "editorIndentGuide.background": "#ffffff10",
       "editorWidget.background": "#0f0f1e",
       "editorSuggestWidget.background": "#0f0f1e",
-      "editorSuggestWidget.border": "#6a6ac840"
+      "editorSuggestWidget.border": "#6a6ac840",
+      "minimap.background": "#00000000"
     }
   });
   monaco.editor.defineTheme("stave-light", {
@@ -5823,8 +5842,25 @@ function defineStrudelMonacoTheme(monaco) {
       { token: "strudel.mini.operator", foreground: "be185d" },
       { token: "strudel.mini.number", foreground: "c2410c" },
       { token: "string", foreground: "92400e" },
+      { token: "string.escape", foreground: "a16207" },
+      { token: "string.quote", foreground: "92400e" },
       { token: "number", foreground: "c2410c" },
-      { token: "comment", foreground: "9ca3af", fontStyle: "italic" }
+      { token: "number.hex", foreground: "c2410c" },
+      { token: "number.binary", foreground: "c2410c" },
+      { token: "number.float", foreground: "c2410c" },
+      { token: "comment", foreground: "9ca3af", fontStyle: "italic" },
+      { token: "keyword", foreground: "6d28d9" },
+      { token: "keyword.operator", foreground: "be185d" },
+      { token: "variable.predefined", foreground: "92400e" },
+      { token: "constant", foreground: "c2410c" },
+      { token: "type", foreground: "0369a1" },
+      { token: "identifier", foreground: "1e1b4b" },
+      { token: "identifier.property", foreground: "1d4ed8" },
+      { token: "delimiter", foreground: "64748b" },
+      { token: "delimiter.parenthesis", foreground: "64748b" },
+      { token: "delimiter.curly", foreground: "64748b" },
+      { token: "delimiter.square", foreground: "64748b" },
+      { token: "delimiter.bracket", foreground: "64748b" }
     ],
     colors: {
       "editor.background": "#f0f0f6",
@@ -5832,7 +5868,8 @@ function defineStrudelMonacoTheme(monaco) {
       "editorLineNumber.foreground": "#a0a0b4",
       "editorCursor.foreground": "#4a4ae0",
       "editor.selectionBackground": "#5555b830",
-      "editor.lineHighlightBackground": "#5555b808"
+      "editor.lineHighlightBackground": "#5555b808",
+      "minimap.background": "#00000000"
     }
   });
 }
@@ -6276,6 +6313,7 @@ function notify(id) {
 var zoneOverrideSubscribers = /* @__PURE__ */ new Map();
 var wiredZoneObservers = /* @__PURE__ */ new Set();
 var PRUNE_ZONE_OVERRIDES_ORIGIN = /* @__PURE__ */ Symbol("prune-zone-overrides");
+var HEIGHT_RESIZE_ORIGIN = /* @__PURE__ */ Symbol("height-resize");
 function ensureZoneOverridesMap(fileId) {
   const filesMap = getFilesMap();
   const fileMap = filesMap.get(fileId);
@@ -6287,7 +6325,8 @@ function ensureZoneOverridesMap(fileId) {
   }
   if (!wiredZoneObservers.has(fileId)) {
     overrides.observeDeep((events) => {
-      if (events[0]?.transaction.origin === PRUNE_ZONE_OVERRIDES_ORIGIN) return;
+      const origin = events[0]?.transaction.origin;
+      if (origin === PRUNE_ZONE_OVERRIDES_ORIGIN || origin === HEIGHT_RESIZE_ORIGIN) return;
       const subs = zoneOverrideSubscribers.get(fileId);
       if (subs) for (const cb of subs) cb();
     });
@@ -6302,7 +6341,7 @@ function getZoneCropOverride(fileId, trackKey) {
   const entry = overrides.get(trackKey);
   return entry?.cropRegion;
 }
-function setZoneCropOverride(fileId, trackKey, cropRegion, vizId) {
+function setZoneCropOverride(fileId, trackKey, cropRegion, vizId, contentHash) {
   ensureDoc();
   const overrides = ensureZoneOverridesMap(fileId);
   if (!overrides) return;
@@ -6311,9 +6350,33 @@ function setZoneCropOverride(fileId, trackKey, cropRegion, vizId) {
     if (cropRegion === null) {
       overrides.delete(trackKey);
     } else {
-      overrides.set(trackKey, { cropRegion, vizId });
+      const existing = overrides.get(trackKey) ?? {};
+      overrides.set(trackKey, { ...existing, cropRegion, vizId, contentHash });
     }
   }, STRUCT_ORIGIN);
+}
+function getZoneHeightOverride(fileId, trackKey) {
+  ensureDoc();
+  const overrides = ensureZoneOverridesMap(fileId);
+  if (!overrides) return void 0;
+  const entry = overrides.get(trackKey);
+  return entry?.heightPx;
+}
+function setZoneHeightOverride(fileId, trackKey, heightPx, contentHash) {
+  ensureDoc();
+  const overrides = ensureZoneOverridesMap(fileId);
+  if (!overrides) return;
+  const doc = ensureDoc();
+  doc.transact(() => {
+    const existing = overrides.get(trackKey) ?? {};
+    if (heightPx === null) {
+      const { heightPx: _, ...rest } = existing;
+      if (Object.keys(rest).length === 0) overrides.delete(trackKey);
+      else overrides.set(trackKey, rest);
+    } else {
+      overrides.set(trackKey, { ...existing, heightPx, ...contentHash ? { contentHash } : {} });
+    }
+  }, HEIGHT_RESIZE_ORIGIN);
 }
 function pruneZoneOverrides(fileId, currentViz) {
   ensureDoc();
@@ -6323,10 +6386,12 @@ function pruneZoneOverrides(fileId, currentViz) {
   const stale = [];
   for (const [trackKey, value] of overrides.entries()) {
     const entry = value;
-    const currentVizId = currentViz.get(trackKey);
-    if (!currentVizId) {
+    const current = currentViz.get(trackKey);
+    if (!current) {
       stale.push(trackKey);
-    } else if (entry.vizId && entry.vizId !== currentVizId) {
+    } else if (entry.vizId && entry.vizId !== current.vizId) {
+      stale.push(trackKey);
+    } else if (entry.contentHash && current.contentHash && entry.contentHash !== current.contentHash) {
       stale.push(trackKey);
     }
   }
@@ -6380,323 +6445,2668 @@ function useWorkspaceFile(id) {
   return { file, setContent: setContent2 };
 }
 
-// src/monaco/language.ts
-function registerSonicPiLanguage(monaco) {
-  const langs = monaco.languages.getLanguages();
-  if (langs.some((l) => l.id === "sonicpi")) return;
-  monaco.languages.register({ id: "sonicpi" });
-  monaco.languages.setMonarchTokensProvider("sonicpi", {
-    defaultToken: "",
-    tokenPostfix: ".sonicpi",
-    keywords: [
-      "do",
-      "end",
-      "if",
-      "else",
-      "elsif",
-      "unless",
-      "loop",
-      "while",
-      "until",
-      "for",
-      "in",
-      "begin",
-      "rescue",
-      "ensure",
-      "true",
-      "false",
-      "nil",
-      "and",
-      "or",
-      "not"
-    ],
-    sonicPiFunctions: [
-      "live_loop",
-      "play",
-      "sample",
-      "sleep",
-      "sync",
-      "cue",
-      "in_thread",
-      "use_synth",
-      "use_bpm",
-      "use_random_seed",
-      "with_fx",
-      "control",
-      "define",
-      "density",
-      "puts",
-      "print"
-    ],
-    musicFunctions: [
-      "choose",
-      "rrand",
-      "rrand_i",
-      "rand",
-      "rand_i",
-      "dice",
-      "one_in",
-      "ring",
-      "knit",
-      "range",
-      "line",
-      "spread",
-      "chord",
-      "scale",
-      "note",
-      "hz_to_midi",
-      "midi_to_hz",
-      "tick",
-      "look"
-    ],
-    tokenizer: {
-      root: [
-        // Ruby comment
-        [/#.*$/, "comment"],
-        // Ruby symbols :name
-        [/:\w+/, "sonicpi.symbol"],
-        // Sonic Pi DSL functions
-        [
-          /\b(live_loop|play|sample|sleep|sync|cue|in_thread|use_synth|use_bpm|use_random_seed|with_fx|control|define|density)\b/,
-          "sonicpi.function"
-        ],
-        // Music/math helper functions
-        [
-          /\b(choose|rrand|rrand_i|rand|rand_i|dice|one_in|ring|knit|range|line|spread|chord|scale|note|hz_to_midi|midi_to_hz|tick|look)\b/,
-          "sonicpi.music"
-        ],
-        // Keywords
-        [/\b(do|end|if|else|elsif|unless|loop|while|until|for|in|true|false|nil)\b/, "keyword"],
-        // Note names: c3, eb4, f#2
-        [/\b[a-gA-G][bs#]?\d\b/, "sonicpi.note"],
-        // Numbers
-        [/\b\d+(\.\d+)?\b/, "number"],
-        // Strings
-        [/"/, "string", "@string_double"],
-        [/'/, "string", "@string_single"],
-        // Keyword args (release:, amp:, rate:)
-        [/\b(\w+):/, "sonicpi.kwarg"]
-      ],
-      string_double: [
-        [/#\{/, "string.interpolation", "@interpolation"],
-        [/"/, "string", "@pop"],
-        [/[^"#]+/, "string"],
-        [/./, "string"]
-      ],
-      string_single: [
-        [/'/, "string", "@pop"],
-        [/[^']+/, "string"]
-      ],
-      interpolation: [
-        [/\}/, "string.interpolation", "@pop"],
-        { include: "root" }
-      ]
+// src/monaco/docs/types.ts
+function resolveDoc(index, word) {
+  const direct = index.docs[word];
+  if (direct) return { name: word, doc: direct };
+  const aliasTarget = index.aliases?.[word];
+  if (aliasTarget && index.docs[aliasTarget]) {
+    return { name: aliasTarget, doc: index.docs[aliasTarget] };
+  }
+  return null;
+}
+function validateDocsIndex(label, raw) {
+  if (!raw || typeof raw !== "object") {
+    throw new Error(`${label}: docs index must be an object`);
+  }
+  const r = raw;
+  if (typeof r.runtime !== "string" || r.runtime.length === 0) {
+    throw new Error(`${label}: runtime must be a non-empty string`);
+  }
+  if (!r.docs || typeof r.docs !== "object") {
+    throw new Error(`${label}: docs must be an object`);
+  }
+  for (const [name2, entry] of Object.entries(r.docs)) {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`${label}: entry "${name2}" is not an object`);
     }
-  });
-  monaco.languages.setLanguageConfiguration("sonicpi", {
-    comments: {
-      lineComment: "#"
-    },
-    brackets: [
-      ["{", "}"],
-      ["[", "]"],
-      ["(", ")"]
-    ],
-    autoClosingPairs: [
-      { open: "{", close: "}" },
-      { open: "[", close: "]" },
-      { open: "(", close: ")" },
-      { open: '"', close: '"' },
-      { open: "'", close: "'" }
-    ]
+    const e = entry;
+    if (typeof e.signature !== "string") {
+      throw new Error(
+        `${label}: entry "${name2}" is missing string "signature"`
+      );
+    }
+    if (typeof e.description !== "string") {
+      throw new Error(
+        `${label}: entry "${name2}" is missing string "description"`
+      );
+    }
+  }
+}
+
+// src/monaco/docs/providers.ts
+function createHoverProvider(monaco, index) {
+  return monaco.languages.registerHoverProvider(index.runtime, {
+    provideHover(model, position) {
+      const word = model.getWordAtPosition(position);
+      if (!word) return null;
+      const hit = resolveDoc(index, word.word);
+      if (!hit) return null;
+      return {
+        range: new monaco.Range(
+          position.lineNumber,
+          word.startColumn,
+          position.lineNumber,
+          word.endColumn
+        ),
+        contents: renderHoverContents(hit.doc, index.meta?.docsBaseUrl)
+      };
+    }
   });
 }
-function registerStrudelLanguage(monaco) {
-  const langs = monaco.languages.getLanguages();
-  if (langs.some((l) => l.id === "strudel")) return;
-  monaco.languages.register({ id: "strudel" });
-  monaco.languages.setMonarchTokensProvider("strudel", {
-    defaultToken: "",
-    tokenPostfix: ".strudel",
-    keywords: [
-      "const",
-      "let",
-      "var",
-      "await",
-      "async",
-      "return",
-      "if",
-      "else",
-      "for",
-      "while",
-      "function",
-      "class",
-      "import",
-      "export",
-      "from"
-    ],
-    strudelFunctions: [
-      "note",
-      "s",
-      "gain",
-      "release",
-      "sustain",
-      "cutoff",
-      "resonance",
-      "stack",
-      "mask",
-      "speed",
-      "room",
-      "delay",
-      "distort",
-      "fm",
-      "swing",
-      "struct",
-      "every",
-      "sometimes",
-      "jux",
-      "off",
-      "fast",
-      "slow",
-      "rev",
-      "palindrome",
-      "chunk",
-      "iter",
-      "euclid",
-      "euclidRot",
-      "degradeBy",
-      "layer",
-      "cat",
-      "seq",
-      "silence",
-      "pure",
-      "reify",
-      "sub",
-      "add",
-      "mul",
-      "div",
-      "mod",
-      "abs",
-      "range",
-      "rangex",
-      "rand",
-      "irand",
-      "perlin",
-      "sine",
-      "saw",
-      "square",
-      "tri",
-      "setcps",
-      "setCps",
-      "cpm",
-      "hpf",
-      "lpf",
-      "bpf",
-      "crush",
-      "shape",
-      "coarse",
-      "begin",
-      "end",
-      "loop",
-      "loopBegin",
-      "loopEnd",
-      "pan",
-      "orbit",
-      "color",
-      "velocity",
-      "amp",
-      "legato",
-      "accel",
-      "unit",
-      "cut",
-      "n",
-      "bank",
-      "stretch",
-      "nudge",
-      "degrade",
-      "ftype",
-      "fanchor",
-      "vowel"
-    ],
-    tokenizer: {
-      root: [
-        // $: pattern-start marker
-        [/\$\s*:/, "strudel.pattern-start"],
-        // setcps / setCps tempo
-        [/\bsetcps\b|\bsetCps\b/, "strudel.tempo"],
-        // Note names: c3, eb4, f#2, C#5
-        [/\b[a-gA-G][b#]?\d\b/, "strudel.note"],
-        // Strudel function names (must come before keywords check)
-        [
-          /\b(note|s|gain|release|sustain|cutoff|resonance|stack|mask|speed|room|delay|distort|fm|swing|struct|every|sometimes|jux|off|fast|slow|rev|palindrome|chunk|iter|euclid|euclidRot|degradeBy|layer|cat|seq|silence|pure|reify|range|rangex|rand|irand|perlin|cpm|hpf|lpf|bpf|crush|shape|coarse|begin|end|loop|pan|orbit|color|velocity|amp|legato|accel|unit|cut|bank|stretch|nudge|degrade|vowel)\b/,
-          "strudel.function"
-        ],
-        // JS keywords
-        [
-          /\b(const|let|var|await|async|return|if|else|for|while|function|class|import|export|from)\b/,
-          "keyword"
-        ],
-        // Line comment
-        [/\/\/.*$/, "comment"],
-        // Block comment
-        [/\/\*/, "comment", "@block_comment"],
-        // Strings (mini-notation)
-        [/"/, "string", "@mini_string_double"],
-        [/'/, "string", "@mini_string_single"],
-        [/`/, "string", "@template_string"],
-        // Numbers
-        [/\b\d+(\.\d+)?\b/, "number"]
-      ],
-      block_comment: [
-        [/[^/*]+/, "comment"],
-        [/\*\//, "comment", "@pop"],
-        [/[/*]/, "comment"]
-      ],
-      mini_string_double: [
-        [/[~*!%?@<>\[\]{}|,_]/, "strudel.mini.operator"],
-        [/[a-gA-G][b#]?\d?/, "strudel.mini.note"],
-        [/\d+(\.\d+)?/, "strudel.mini.number"],
-        [/"/, "string", "@pop"],
-        [/[^"]+/, "string"]
-      ],
-      mini_string_single: [
-        [/[~*!%?@<>\[\]{}|,_]/, "strudel.mini.operator"],
-        [/[a-gA-G][b#]?\d?/, "strudel.mini.note"],
-        [/\d+(\.\d+)?/, "strudel.mini.number"],
-        [/'/, "string", "@pop"],
-        [/[^']+/, "string"]
-      ],
-      template_string: [
-        [/`/, "string", "@pop"],
-        [/[^`]+/, "string"]
-      ]
+function renderHoverContents(doc, fallbackUrl) {
+  const out2 = [];
+  out2.push({ value: "```typescript\n" + doc.signature + "\n```" });
+  if (doc.description) out2.push({ value: doc.description });
+  if (doc.example) out2.push({ value: "**Example:** `" + doc.example + "`" });
+  if (doc.returns) out2.push({ value: "**Returns:** " + doc.returns });
+  const href = doc.sourceUrl ?? fallbackUrl;
+  if (href) {
+    out2.push({
+      value: "[Reference \u2192](" + href + ")",
+      isTrusted: true
+    });
+  }
+  return out2;
+}
+var KIND_TO_MONACO = {
+  function: "Function",
+  method: "Method",
+  variable: "Variable",
+  constant: "Constant",
+  keyword: "Keyword",
+  synth: "Module",
+  sample: "Value",
+  fx: "Interface"
+};
+function kindOf(monaco, kind) {
+  const mapped = kind ? KIND_TO_MONACO[kind] : "Function";
+  return monaco.languages.CompletionItemKind[mapped];
+}
+function createDotCompletionProvider(monaco, index) {
+  return monaco.languages.registerCompletionItemProvider(index.runtime, {
+    triggerCharacters: ["."],
+    provideCompletionItems(model, position) {
+      const lineBefore = model.getLineContent(position.lineNumber).substring(0, position.column - 1);
+      if (!/[)\]"'`\w]\.[\w]*$/.test(lineBefore)) {
+        return { suggestions: [] };
+      }
+      const word = model.getWordUntilPosition(position);
+      const range2 = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn
+      };
+      return {
+        suggestions: Object.entries(index.docs).map(
+          ([name2, doc]) => toSuggestion(monaco, name2, doc, range2)
+        )
+      };
     }
   });
-  monaco.languages.setLanguageConfiguration("strudel", {
-    comments: {
-      lineComment: "//",
-      blockComment: ["/*", "*/"]
+}
+function createIdentifierCompletionProvider(monaco, index) {
+  return monaco.languages.registerCompletionItemProvider(index.runtime, {
+    provideCompletionItems(model, position) {
+      const word = model.getWordUntilPosition(position);
+      const prefix = word.word;
+      const range2 = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn
+      };
+      const entries = Object.entries(index.docs).filter(
+        ([name2]) => prefix.length === 0 ? true : name2.toLowerCase().startsWith(prefix.toLowerCase())
+      );
+      return {
+        suggestions: entries.map(
+          ([name2, doc]) => toSuggestion(monaco, name2, doc, range2)
+        )
+      };
+    }
+  });
+}
+function toSuggestion(monaco, name2, doc, range2) {
+  const documentation = {
+    value: (doc.description ?? "") + (doc.example ? "\n\n**Example:** `" + doc.example + "`" : "") + (doc.sourceUrl ? "\n\n[Reference \u2192](" + doc.sourceUrl + ")" : ""),
+    isTrusted: true
+  };
+  return {
+    label: name2,
+    kind: kindOf(monaco, doc.kind),
+    insertText: name2,
+    detail: doc.signature,
+    documentation,
+    range: range2
+  };
+}
+function registerRuntimeProviders(monaco, index, toggle = {
+  hover: true,
+  dotCompletion: true,
+  identifierCompletion: true
+}) {
+  const disposables = [];
+  if (toggle.hover) disposables.push(createHoverProvider(monaco, index));
+  if (toggle.dotCompletion)
+    disposables.push(createDotCompletionProvider(monaco, index));
+  if (toggle.identifierCompletion)
+    disposables.push(createIdentifierCompletionProvider(monaco, index));
+  return disposables;
+}
+
+// src/monaco/docs/data/sonicpi.json
+var sonicpi_default = {
+  runtime: "sonicpi",
+  docs: {
+    set: {
+      signature: "set(time_state_key: default, value: anything)",
+      description: "Store information in the Time State for the current time for either the current or any other thread.",
+      example: "set :foo, 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
     },
-    brackets: [
-      ["{", "}"],
-      ["[", "]"],
-      ["(", ")"]
-    ],
-    autoClosingPairs: [
-      { open: "{", close: "}" },
-      { open: "[", close: "]" },
-      { open: "(", close: ")" },
-      { open: '"', close: '"' },
-      { open: "'", close: "'" },
-      { open: "`", close: "`" }
-    ],
-    surroundingPairs: [
-      { open: "{", close: "}" },
-      { open: "[", close: "]" },
-      { open: "(", close: ")" },
-      { open: '"', close: '"' },
-      { open: "'", close: "'" }
-    ]
+    cue: {
+      signature: "cue(cue_id: symbol)",
+      description: "Send a heartbeat synchronisation message containing the (virtual) timestamp of the current thread.",
+      example: "cue :foo",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    get: {
+      signature: "get(time_state_key: default)",
+      description: "Retrieve information from Time State set prior to the current time from either the current or any other thread.",
+      example: "get :foo",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_swing: {
+      signature: "with_swing(shift: beats, pulse: number, tick: symbol, offset: number)",
+      description: "Runs block within a `time_warp` except for once every `pulse` consecutive runs (defaulting to 4).",
+      example: "with_swing 0.1 do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    tuplets: {
+      signature: "tuplets(tuplet_list: list)",
+      description: "Runs the block with tuplet timing and optional swing.",
+      example: "tuplets [70, [72, 72], 70, [82, 82, 82]] do |n|",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    run_file: {
+      signature: "run_file(filename: path)",
+      description: "Reads the full contents of the file with `path` and executes it in a new Run.",
+      example: 'run_file "~/path/to/sonic-pi-code.rb"',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    run_code: {
+      signature: "run_code(code: string)",
+      description: "Executes the code passed as a string in a new Run.",
+      example: 'run_code "sample :ambi_lunar_land"',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    eval_file: {
+      signature: "eval_file(filename: path)",
+      description: "Reads the full contents of the file with `path` and executes within the current thread like a function call.",
+      example: 'eval_file "~/path/to/sonic-pi-code.rb"',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_osc_logging: {
+      signature: "use_osc_logging(true_or_false: boolean)",
+      description: "Enable or disable log messages created on OSC functions.",
+      example: "use_osc_logging true",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_osc_logging: {
+      signature: "with_osc_logging(true_or_false: boolean)",
+      description: "Similar to use_osc_logging except only applies to code within supplied `do`/`end` block.",
+      example: "with_osc_logging false do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_osc: {
+      signature: "use_osc(hostname: string, port: number)",
+      description: "Sets the destination host and port that `osc` will send messages to.",
+      example: 'use_osc "localhost", 7000',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_osc: {
+      signature: "with_osc(hostname: string, port: number)",
+      description: "Sets the destination host and port that `osc` will send messages to for the given do/end block.",
+      example: 'with_osc "localhost", 7010 do',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    osc_send: {
+      signature: "osc_send(hostname: string, port: number, path: osc_path, args: list)",
+      description: "Similar to `osc` except ignores any `use_osc` settings and sends the OSC message directly to the specified `hostname` and `port`.",
+      example: 'osc_send "localhost", 7000, "/foo/baz"',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    osc: {
+      signature: "osc(path: arguments)",
+      description: "Sends an OSC message to the current host and port specified by `use_osc` or `with_osc`.",
+      example: 'osc "/foo/bar"',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    reset: {
+      signature: "reset",
+      description: "All settings such as the current synth, BPM, random stream and tick values will be reset to the values inherited from the parent thread.",
+      example: "reset",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    clear: {
+      signature: "clear",
+      description: "All settings such as the current synth, BPM, random stream and tick values will be reset to their defaults.",
+      example: "clear",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    time_warp: {
+      signature: "time_warp(delta_time: number)",
+      description: "The code within the given block is executed with the specified delta time shift specified in beats.",
+      example: "time_warp 0.1 do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    tick_set: {
+      signature: "tick_set(value: number)",
+      description: "Set the default tick to the specified `value`.",
+      example: "tick_set 40",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    tick_reset: {
+      signature: "tick_reset",
+      description: "Reset default tick to 0.",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    tick_reset_all: {
+      signature: "tick_reset_all",
+      description: "Reset all ticks - default and keyed",
+      example: "tick_reset_all",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    tick: {
+      signature: "tick(key: symbol)",
+      description: "Increment the default tick by 1 and return value.",
+      example: "puts tick",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    look: {
+      signature: "look",
+      description: "Read and return value of default tick.",
+      example: "puts look",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    stop: {
+      signature: "stop",
+      description: "Stops the current thread or if not in a thread, stops the current run.",
+      example: "stop",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    on: {
+      signature: "on(condition: truthy)",
+      description: "Optionally evaluate the block depending on the truthiness of the supplied condition.",
+      example: "on true do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    bools: {
+      signature: "bools(list: array)",
+      description: "Create a new ring of booleans values from 1s and 0s, which can be easier to write and manipulate in a live setting.",
+      example: "(bools 1, 0)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    stretch: {
+      signature: "stretch(list: anything, count: number)",
+      description: "Stretches a list of values each value repeated count times.",
+      example: "(stretch [1,2], 3)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    knit: {
+      signature: "knit(value: anything, count: number)",
+      description: "Knits a series of value, count pairs to create a ring buffer where each value is repeated count times.",
+      example: "(knit 1, 5)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    spread: {
+      signature: "spread(num_accents: number, size: number)",
+      description: "Creates a new ring of boolean values which space a given number of accents as evenly as possible throughout a bar.",
+      example: "(spread 3, 8)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    range: {
+      signature: "range(start: number, finish: number, step_size: number)",
+      description: "Create a new ring buffer from the range arguments (start, finish and step size).",
+      example: "(range 1, 5)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    line: {
+      signature: "line(start: number, finish: number)",
+      description: "Create a ring buffer representing a straight line between start and finish of steps elements.",
+      example: "(line 0, 4, steps: 4)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    halves: {
+      signature: "halves(start: number, num_halves: int)",
+      description: "Create a ring containing the results of successive halving of the `start` value.",
+      example: "(halves 60, 2)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    doubles: {
+      signature: "doubles(start: number, num_doubles: int)",
+      description: "Create a ring containing the results of successive doubling of the `start` value.",
+      example: "(doubles 60, 2)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    vector: {
+      signature: "vector(list: array)",
+      description: "Create a new immutable vector from args.",
+      example: "(vector 1, 2, 3)[0]",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    ring: {
+      signature: "ring(list: array)",
+      description: "Create a new immutable ring buffer from args.",
+      example: "(ring 1, 2, 3)[0]",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    map: {
+      signature: "map(list: array)",
+      description: "Create a new immutable key/value map from args.",
+      example: "(map foo: 1, bar: 2)[:foo]",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    ramp: {
+      signature: "ramp(list: array)",
+      description: "Create a new immutable ramp vector from args.",
+      example: "(ramp 1, 2, 3)[0]",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    choose: {
+      signature: "choose(list: array)",
+      description: "Choose an element at random from a list (array).",
+      example: "play choose([60, 64, 67])",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    pick: {
+      signature: "pick(list: array, n: number_or_nil)",
+      description: "Pick n elements from list or ring.",
+      example: "sample :loop_amen, onset: pick",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    inc: {
+      signature: "inc(n: number)",
+      description: "Increment a number by `1`.",
+      example: "inc 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    dec: {
+      signature: "dec(n: number)",
+      description: "Decrement a number by `1`.",
+      example: "dec 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    loop: {
+      signature: "loop",
+      description: "Given a do/end block, repeats it forever.",
+      example: "loop do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    live_loop: {
+      signature: "live_loop(name: symbol)",
+      description: "Loop the do/end block forever.",
+      example: "live_loop :ping do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    block_duration: {
+      signature: "block_duration",
+      description: "Given a block, runs it and returns the amount of time that has passed.",
+      example: "dur = block_duration do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    block_slept: {
+      signature: "block_slept",
+      description: "Given a block, runs it and returns whether or not the block contained sleeps or syncs",
+      example: "slept = block_slept? do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    at: {
+      signature: "at(times: list, params: list)",
+      description: "Given a list of times, run the block once after waiting each given time.",
+      example: "at 4 do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    version: {
+      signature: "version",
+      description: "Return information representing the current version of Sonic Pi.",
+      example: "puts version",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    spark_graph: {
+      signature: "spark_graph",
+      description: "Given a list of numeric values, this method turns them into a string of bar heights.",
+      example: "puts (spark_graph (range 1, 5))",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    spark: {
+      signature: "spark",
+      description: "Given a list of numeric values, this method turns them into a string of bar heights and prints them out.",
+      example: "spark (range 1, 5)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    defonce: {
+      signature: "defonce(name: symbol)",
+      description: "Allows you to assign the result of some code to a name, with the property that the code will only execute once - therefore stopping re-definitions.",
+      example: "defonce :foo do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    ndefine: {
+      signature: "ndefine(name: symbol)",
+      description: "Does nothing.",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    define: {
+      signature: "define(name: symbol)",
+      description: "Allows you to group a bunch of code and give it your own name for future re-use.",
+      example: "define :foo do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    comment: {
+      signature: "comment",
+      description: "Does not evaluate any of the code within the block.",
+      example: "comment do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    uncomment: {
+      signature: "uncomment",
+      description: "Evaluates all of the code within the block.",
+      example: "uncomment do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    print: {
+      signature: "print(output: anything)",
+      description: "Displays the information you specify as a string inside the output pane.",
+      example: 'print "hello there"',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    puts: {
+      signature: "puts(output: anything)",
+      description: "Displays the information you specify as a string inside the output pane.",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    vt: {
+      signature: "vt",
+      description: "Get the virtual time of the current thread.",
+      example: "puts vt",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    factor: {
+      signature: "factor(val: number, factor: number)",
+      description: "Test to see if factor is indeed a factor of `val`.",
+      example: "factor?(10, 2)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    quantise: {
+      signature: "quantise(n: number, step: positive_number)",
+      description: "Round value to the nearest multiple of step resolution.",
+      example: "quantise(10, 1)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    dice: {
+      signature: "dice(num_sides: number)",
+      description: "Throws a dice with the specified num_sides (defaults to `6`) and returns the score as a number between `1` and `num_sides`.",
+      example: "dice",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    one_in: {
+      signature: "one_in(num: number)",
+      description: "Returns `true` or `false` with a specified probability - it will return true every one in num times where num is the param you specify",
+      example: "one_in 2",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rdist: {
+      signature: "rdist(width: number, centre: number)",
+      description: "Returns a random number within the range with width around centre.",
+      example: "print rdist(1, 0)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rrand: {
+      signature: "rrand(min: number, max: number)",
+      description: "Given two numbers, this produces a float between the supplied min and max values exclusively.",
+      example: "print rrand(0, 10)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rrand_i: {
+      signature: "rrand_i(min: number, max: number)",
+      description: "Given two numbers, this produces a whole number between the min and max you supplied inclusively.",
+      example: "print rrand_i(0, 10)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rand: {
+      signature: "rand(max: number_or_range)",
+      description: "Given a max number, produces a float between `0` and the supplied max value.",
+      example: "print rand(0.5)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rand_i: {
+      signature: "rand_i(max: number_or_range)",
+      description: "Given a max number, produces a whole number between `0` and the supplied max value exclusively.",
+      example: "print rand_i(5)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rand_look: {
+      signature: "rand_look(max: number_or_range)",
+      description: "Given a max number, produces a number between `0` and the supplied max value exclusively.",
+      example: "print rand_look(0.5)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rand_i_look: {
+      signature: "rand_i_look(max: number_or_range)",
+      description: "Given a max number, produces a whole number between `0` and the supplied max value exclusively.",
+      example: "print rand_i_look(5)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rand_back: {
+      signature: "rand_back(amount: number)",
+      description: "Roll the random generator back essentially 'undoing' the last call to `rand`.",
+      example: "rand_back",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rand_skip: {
+      signature: "rand_skip(amount: number)",
+      description: "Jump the random generator forward essentially skipping the next call to `rand`.",
+      example: "rand_skip",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rand_reset: {
+      signature: "rand_reset",
+      description: "Resets the random stream to the last specified seed.",
+      example: "rand_reset",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    shuffle: {
+      signature: "shuffle(list: array)",
+      description: "Returns a new list with the same elements as the original but with their order shuffled.",
+      example: "shuffle [1, 2, 3, 4]",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_random_seed: {
+      signature: "use_random_seed(seed: number)",
+      description: "Resets the random number generator to the specified seed.",
+      example: "use_random_seed 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_random_seed: {
+      signature: "with_random_seed(seed: number)",
+      description: "Resets the random number generator to the specified seed for the specified code block.",
+      example: "with_random_seed 1 do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_random_source: {
+      signature: "use_random_source(noise_type: symbol)",
+      description: "Sets the random number source to be one of `:white`, `:pink`, `:light_pink`, `:dark_pink` or `:perlin`.",
+      example: "use_random_source :white",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_random_source: {
+      signature: "with_random_source(noise_type: symbol)",
+      description: "Resets the random number generator to the specified noise type for the specified code block.",
+      example: "with_random_source :white do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_cue_logging: {
+      signature: "use_cue_logging(true_or_false: boolean)",
+      description: "Enable or disable log messages created on cues.",
+      example: "use_cue_logging true",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_cue_logging: {
+      signature: "with_cue_logging(true_or_false: boolean)",
+      description: "Similar to use_cue_logging except only applies to code within supplied `do`/`end` block.",
+      example: "with_cue_logging false do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    link_sync: {
+      signature: "link_sync(quantum: number, phase: number)",
+      description: "Similar to link except it also waits for the link session to be playing.",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    link: {
+      signature: "link(quantum: number, phase: number)",
+      description: "By default link waits for the start of the next bar of the shared network metronome link.",
+      example: "link",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    set_link_bpm: {
+      signature: "set_link_bpm(bpm: number)",
+      description: "Set the tempo for the link metronome in BPM.",
+      example: "set_link_bpm! 30",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_bpm: {
+      signature: "use_bpm(bpm: number)",
+      description: "Sets the tempo in bpm (beats per minute) for everything afterwards.",
+      example: "use_bpm 120",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_bpm: {
+      signature: "with_bpm(bpm: number)",
+      description: "Sets the tempo in bpm (beats per minute) for everything in the given block.",
+      example: "with_bpm 120 do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_bpm_mul: {
+      signature: "with_bpm_mul(mul: number)",
+      description: "Sets the tempo in bpm (beats per minute) for everything in the given block as a multiplication of the current tempo.",
+      example: "with_bpm_mul 0.5 do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_bpm_mul: {
+      signature: "use_bpm_mul(mul: number)",
+      description: "Sets the tempo in bpm (beats per minute) as a multiplication of the current tempo.",
+      example: "use_bpm_mul 0.5",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    density: {
+      signature: "density(d: density)",
+      description: "Runs the block `d` times with the bpm for the block also multiplied by `d`.",
+      example: "density 2 do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_time: {
+      signature: "current_time",
+      description: "Returns the current logical time.",
+      example: "puts current_time",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_random_seed: {
+      signature: "current_random_seed",
+      description: "Returns the current random seed.",
+      example: "puts current_random_seed",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_random_source: {
+      signature: "current_random_source",
+      description: "Returns the source of the current random number generator (what kind of noise is generating the random numbers).",
+      example: "puts current_random_source",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_bpm_mode: {
+      signature: "current_bpm_mode",
+      description: "Returns the current tempo mode - either a bpm value or :link.",
+      example: "puts current_bpm_mode",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_bpm: {
+      signature: "current_bpm",
+      description: "Returns the current tempo as a bpm value.",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_beat_duration: {
+      signature: "current_beat_duration",
+      description: "Get the duration of the current beat in seconds.",
+      example: "puts current_beat_duration",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    beat: {
+      signature: "beat",
+      description: "Returns the beat value for the current thread/live_loop.",
+      example: "puts beat",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rt: {
+      signature: "rt(seconds: number)",
+      description: "Real time representation.",
+      example: "sleep rt(1)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    bt: {
+      signature: "bt(seconds: number)",
+      description: "Beat time representation.",
+      example: "puts bt(1)",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    set_sched_ahead_time: {
+      signature: "set_sched_ahead_time(time: number)",
+      description: "Specify how many seconds ahead of time the synths should be triggered.",
+      example: "set_sched_ahead_time! 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_sched_ahead_time: {
+      signature: "use_sched_ahead_time(time: number)",
+      description: "Specify how many seconds ahead of time the synths should be triggered.",
+      example: "use_sched_ahead_time 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_real_time: {
+      signature: "use_real_time",
+      description: "Set sched ahead time to 0 for the current thread.",
+      example: "use_real_time",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_real_time: {
+      signature: "with_real_time",
+      description: "Sets sched ahead time to 0 within the block for the current thread.",
+      example: "with_real_time do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_sched_ahead_time: {
+      signature: "with_sched_ahead_time(time: number)",
+      description: "Specify how many seconds ahead of time the synths should be triggered for the block.",
+      example: "with_sched_ahead_time 1 do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_sched_ahead_time: {
+      signature: "current_sched_ahead_time",
+      description: "Returns the current schedule ahead time.",
+      example: "puts current_sched_ahead_time",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sleep: {
+      signature: "sleep(beats: number)",
+      description: "Wait for a number of beats before triggering the next command.",
+      example: "sleep 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    wait: {
+      signature: "wait(beats: number)",
+      description: "Synonym for `sleep` - see `sleep`",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sync_bpm: {
+      signature: "sync_bpm(cue_id: symbol)",
+      description: "An alias for `sync` with the `bpm_sync:` opt set to true.",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sync: {
+      signature: "sync(cue_id: symbol)",
+      description: "Pause/block the current thread until a `cue` heartbeat with a matching `cue_id` is received.",
+      example: "sync :foo",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    in_thread: {
+      signature: "in_thread",
+      description: "Execute a given block (between `do` .",
+      example: "in_thread do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    assert_error: {
+      signature: "assert_error(class: Exception)",
+      description: "Runs the block and ensures that it raises the correct Exception.",
+      example: "assert_error do",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    assert_not: {
+      signature: "assert_not(arg: anything)",
+      description: "Raises an exception if the argument is not either nil or false.",
+      example: "assert_not false",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    assert: {
+      signature: "assert(arg: anything)",
+      description: "Raises an exception if the argument is either nil or false.",
+      example: "assert true",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    assert_not_equal: {
+      signature: "assert_not_equal(arg1: anything, arg2: anything)",
+      description: "Raises an exception if both arguments are qual.",
+      example: "assert_not_equal 1, 3",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    assert_equal: {
+      signature: "assert_equal(arg1: anything, arg2: anything)",
+      description: "Raises an exception if both arguments aren't equal.",
+      example: "assert_equal 1, 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    assert_similar: {
+      signature: "assert_similar(arg1: anything, arg2: anything)",
+      description: "Raises an exception if both arguments aren't similar.",
+      example: "assert_similar 1, 1",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    load_buffer: {
+      signature: "load_buffer(path: string)",
+      description: "Given a path to a file, will read the contents and load it into the current buffer.",
+      example: 'load_buffer "~/sonic-pi-tracks/phat-beats.rb"',
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    load_example: {
+      signature: "load_example(path: string)",
+      description: "Given a keyword representing an example, will load it into the current buffer.",
+      example: "load_example :rerezzed",
+      kind: "function",
+      category: "core",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    live_audio: {
+      signature: "live_audio(name: symbol)",
+      description: "A named audio stream live from your soundcard",
+      example: "live_audio :foo",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    scsynth_info: {
+      signature: "scsynth_info",
+      description: "Create a map of information about the running audio synthesiser SuperCollider.",
+      example: "puts scsynth_info",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_free: {
+      signature: "sample_free(path: string)",
+      description: "Frees the memory and resources consumed by loading the sample on the server.",
+      example: "sample_free :loop_amen",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    buffer: {
+      signature: "buffer(symbol: name, number: duration)",
+      description: "Initialise or return a named buffer with a specific duration (defaults to 8 beats).",
+      example: "buffer(:foo)",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_free_all: {
+      signature: "sample_free_all",
+      description: "Unloads all samples therefore freeing the memory and resources consumed.",
+      example: "sample_free_all",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_timing_guarantees: {
+      signature: "use_timing_guarantees(bool: true_or_false)",
+      description: "If set to true, synths will not trigger if it is too late.",
+      example: "use_timing_guarantees true",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_timing_guarantees: {
+      signature: "with_timing_guarantees(bool: true_or_false)",
+      description: "For the given block, if set to true, synths will not trigger if it is too late.",
+      example: "with_timing_guarantees true do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_sample_bpm: {
+      signature: "use_sample_bpm(string_or_number: sample_name_or_duration)",
+      description: "Modify bpm so that sleeping for 1 will sleep for the duration of the sample.",
+      example: "use_sample_bpm :loop_amen",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_sample_bpm: {
+      signature: "with_sample_bpm(string_or_number: sample_name_or_duration)",
+      description: "Block-scoped modification of bpm so that sleeping for 1 will sleep for the duration of the sample.",
+      example: "with_sample_bpm :loop_amen do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_arg_bpm_scaling: {
+      signature: "use_arg_bpm_scaling(bool: boolean)",
+      description: "Turn synth argument bpm scaling on or off for the current thread.",
+      example: "use_arg_bpm_scaling false",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_arg_bpm_scaling: {
+      signature: "with_arg_bpm_scaling",
+      description: "Turn synth argument bpm scaling on or off for the supplied block.",
+      example: "with_arg_bpm_scaling false do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    set_audio_latency: {
+      signature: "set_audio_latency(milliseconds: number)",
+      description: "On some systems with certain configurations (such as wireless speakers, and even a typical Windows environment with the default audio drivers) the audio latency can be large.",
+      example: "set_audio_latency! 100",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    set_recording_bit_depth: {
+      signature: "set_recording_bit_depth(bit_depth: number)",
+      description: "When you hit the record button, Sonic Pi saves all the audio you can hear into a wav file.",
+      example: "set_recording_bit_depth! 24",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    set_control_delta: {
+      signature: "set_control_delta(time: number)",
+      description: "Specify how many seconds between successive modifications (i.",
+      example: "set_control_delta! 0.1",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_debug: {
+      signature: "use_debug(true_or_false: boolean)",
+      description: "Enable or disable messages created on synth triggers.",
+      example: "use_debug true",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_debug: {
+      signature: "with_debug(true_or_false: boolean)",
+      description: "Similar to use_debug except only applies to code within supplied `do`/`end` block.",
+      example: "with_debug false do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_arg_checks: {
+      signature: "use_arg_checks(true_or_false: boolean)",
+      description: "When triggering synths, each argument is checked to see if it is sensible.",
+      example: "use_arg_checks false",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_arg_checks: {
+      signature: "with_arg_checks(true_or_false: boolean)",
+      description: "Similar to `use_arg_checks` except only applies to code within supplied `do`/`end` block.",
+      example: "with_arg_checks false do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_synth: {
+      signature: "use_synth(synth_name: symbol)",
+      description: "Switch the current synth to `synth_name`.",
+      example: "use_synth :mod_sine",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_synth: {
+      signature: "with_synth(synth_name: symbol)",
+      description: "Switch the current synth to `synth_name` but only for the duration of the `do`/`end` block.",
+      example: "with_synth :saw_beep do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    recording_start: {
+      signature: "recording_start",
+      description: "Start recording all sound to a `.",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    recording_stop: {
+      signature: "recording_stop",
+      description: "Stop current recording.",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    recording_save: {
+      signature: "recording_save(path: string)",
+      description: "Save previous recording to the specified location",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    recording_delete: {
+      signature: "recording_delete",
+      description: "After using `recording_start` and `recording_stop`, a temporary file is created until you decide to use `recording_save`.",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    reset_mixer: {
+      signature: "reset_mixer",
+      description: "The main mixer is the final mixer that all sound passes through.",
+      example: "reset_mixer!",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    set_mixer_control: {
+      signature: "set_mixer_control",
+      description: "The main mixer is the final mixer that all sound passes through.",
+      example: "set_mixer_control! lpf: 30, lpf_slide: 16",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    synth: {
+      signature: "synth(synth_name: symbol)",
+      description: "Trigger specified synth with given opts.",
+      example: "synth :dsaw, note: 60",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    play: {
+      signature: "play(note: symbol_or_number)",
+      description: "Play note with current synth.",
+      example: "play 50",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    play_pattern: {
+      signature: "play_pattern(notes: list)",
+      description: "Play list of notes with the current synth one after another with a sleep of 1 Accepts optional args for modification of the synth being played.",
+      example: "play_pattern [40, 41, 42]",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    play_pattern_timed: {
+      signature: "play_pattern_timed(notes: list, times: list_or_number)",
+      description: "Play each note in a list of notes one after another with specified durations.",
+      example: "play_pattern_timed [40, 42, 44], [1, 2, 3]",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    play_chord: {
+      signature: "play_chord(notes: list)",
+      description: "Play a list of notes at the same time.",
+      example: "play_chord [40, 45, 47]",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_merged_synth_defaults: {
+      signature: "use_merged_synth_defaults",
+      description: "Specify synth arg values to be used by any following call to play.",
+      example: "use_merged_synth_defaults amp: 0.5",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_merged_synth_defaults: {
+      signature: "with_merged_synth_defaults",
+      description: "Specify synth arg values to be used by any following call to play within the specified `do`/`end` block.",
+      example: "with_merged_synth_defaults amp: 0.5, pan: 1 do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_synth_defaults: {
+      signature: "use_synth_defaults",
+      description: "Specify new default values to be used by all subsequent calls to `play`.",
+      example: "use_synth_defaults amp: 0.5, cutoff: 70",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_sample_defaults: {
+      signature: "use_sample_defaults",
+      description: "Specify new default values to be used by all subsequent calls to `sample`.",
+      example: "use_sample_defaults amp: 0.5, cutoff: 70",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_merged_sample_defaults: {
+      signature: "use_merged_sample_defaults",
+      description: "Specify new default values to be used by all subsequent calls to `sample`.",
+      example: "use_merged_sample_defaults amp: 0.5, cutoff: 70",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_sample_defaults: {
+      signature: "with_sample_defaults",
+      description: "Specify new default values to be used by all subsequent calls to `sample` within the `do`/`end` block.",
+      example: "with_sample_defaults cutoff: 90 do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_merged_sample_defaults: {
+      signature: "with_merged_sample_defaults",
+      description: "Specify new default values to be used by all subsequent calls to `sample` within the `do`/`end` block.",
+      example: "with_merged_sample_defaults cutoff: 90 do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_synth_defaults: {
+      signature: "with_synth_defaults",
+      description: "Specify new default values to be used by all calls to `play` within the `do`/`end` block.",
+      example: "with_synth_defaults amp: 0.6, cutoff: 80 do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_fx: {
+      signature: "with_fx(fx_name: symbol)",
+      description: "This applies the named effect (FX) to everything within a given `do`/`end` block.",
+      example: "with_fx :distortion do",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_synth: {
+      signature: "current_synth",
+      description: "Returns the current synth name.",
+      example: "puts current_synth",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_synth_defaults: {
+      signature: "current_synth_defaults",
+      description: "Returns the current synth defaults.",
+      example: "puts current_synth_defaults",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_sample_defaults: {
+      signature: "current_sample_defaults",
+      description: "Returns the current sample defaults.",
+      example: "puts current_sample_defaults",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_volume: {
+      signature: "current_volume",
+      description: "Returns the current volume.",
+      example: "puts current_volume",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_debug: {
+      signature: "current_debug",
+      description: "Returns the current debug setting (`true` or `false`).",
+      example: "puts current_debug",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_arg_checks: {
+      signature: "current_arg_checks",
+      description: "Returns the current arg checking setting (`true` or `false`).",
+      example: "puts current_arg_checks",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    set_volume: {
+      signature: "set_volume(vol: number)",
+      description: "Set the main system volume to `vol`.",
+      example: "set_volume! 2",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_loaded: {
+      signature: "sample_loaded(path: string)",
+      description: "Given a path to a `.",
+      example: "puts sample_loaded? :elec_blip",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    load_sample: {
+      signature: "load_sample(path: string)",
+      description: "Given a path to a `.",
+      example: "load_sample :elec_blip",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    load_samples: {
+      signature: "load_samples(paths: list)",
+      description: "Given a directory containing multiple `.",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_info: {
+      signature: "sample_info(path: string)",
+      description: "Alias for the `load_sample` method.",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_buffer: {
+      signature: "sample_buffer(path: string)",
+      description: "Alias for the `load_sample` method.",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_duration: {
+      signature: "sample_duration(path: string)",
+      description: "Given the name of a loaded sample, or a path to a `.",
+      example: "puts sample_duration(:loop_garzul)",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_paths: {
+      signature: "sample_paths(pre_args: source_and_filter_types)",
+      description: "Accepts the same pre-args and opts as `sample` and returns a ring of matched sample paths.",
+      example: 'sample_paths "/path/to/samples/"',
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample: {
+      signature: "sample(name_or_path: symbol_or_string)",
+      description: "Play back a recorded sound file (sample).",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    status: {
+      signature: "status",
+      description: "This returns a Hash of information about the synthesis environment.",
+      example: "puts status",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    control: {
+      signature: "control(node: synth_node)",
+      description: "Control a running synth node by passing new parameters to it.",
+      example: "control my_node, cutoff: 70",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    kill: {
+      signature: "kill(node: synth_node)",
+      description: "Kill a running synth sound or sample.",
+      example: "kill foo",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_names: {
+      signature: "sample_names(group: symbol)",
+      description: "Return a ring of sample names for the specified group",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    all_sample_names: {
+      signature: "all_sample_names",
+      description: "Return a list of all the sample names available",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    sample_groups: {
+      signature: "sample_groups",
+      description: "Return a list of all the sample groups available",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    synth_names: {
+      signature: "synth_names",
+      description: "Return a list of all the synths available",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    fx_names: {
+      signature: "fx_names",
+      description: "Return a list of all the FX available",
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    load_synthdef: {
+      signature: "load_synthdef(path: string)",
+      description: "Load a pre-compiled synth design from the specified file.",
+      example: 'load_synthdef "~/Desktop/my_noises/whoosh.scsyndef"',
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    load_synthdefs: {
+      signature: "load_synthdefs(path: string)",
+      description: "Load all pre-compiled synth designs in the specified directory.",
+      example: 'load_synthdefs "~/Desktop/my_noises"',
+      kind: "function",
+      category: "sound",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    math_scale: {
+      signature: "math_scale",
+      description: "Scales a given input value within the specified input range to a corresponding value in the specified output range using the formula: (out_max - out_min) (val - in_min) f (x) = -------------------------------- + out_min ",
+      example: "math_scale 0.5, 0, 1, 10, 20",
+      kind: "function",
+      category: "maths",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    octs: {
+      signature: "octs(start: note, num_octaves: pos_int)",
+      description: "Create a ring of successive octaves starting at `start` for `num_octaves`.",
+      example: "(octs 60, 2)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_notes: {
+      signature: "midi_notes(list: array)",
+      description: "Create a new immutable ring buffer of notes from args.",
+      example: "(midi_notes :d3, :d4, :d5)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    rest: {
+      signature: "rest(note_or_args: number_symbol_or_map)",
+      description: "Given a note or an args map, returns true if it represents a rest and false if otherwise",
+      example: "puts rest? nil",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    pitch_to_ratio: {
+      signature: "pitch_to_ratio(pitch: midi_number)",
+      description: "Convert a midi note to a ratio which when applied to a frequency will scale the frequency by the number of semitones.",
+      example: "pitch_to_ratio 12",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    ratio_to_pitch: {
+      signature: "ratio_to_pitch(ratio: number)",
+      description: "Convert a frequency ratio to a midi note which when added to a note will transpose the note to match the frequency ratio.",
+      example: "ratio_to_pitch 2",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_to_hz: {
+      signature: "midi_to_hz(note: symbol_or_number)",
+      description: "Convert a midi note to hz",
+      example: "midi_to_hz(60)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    hz_to_midi: {
+      signature: "hz_to_midi(freq: number)",
+      description: "Convert a frequency in hz to a midi note.",
+      example: "hz_to_midi(261.63)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    set_cent_tuning: {
+      signature: "set_cent_tuning(cent_shift: number)",
+      description: "Globally tune Sonic Pi to play with another external instrument.",
+      example: "set_cent_tuning! 1",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_cent_tuning: {
+      signature: "use_cent_tuning(cent_shift: number)",
+      description: "Uniformly tunes your music by shifting all notes played by the specified number of cents.",
+      example: "use_cent_tuning 1",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_cent_tuning: {
+      signature: "with_cent_tuning(cent_shift: number)",
+      description: "Similar to `use_cent_tuning` except only applies cent shift to code within supplied `do`/`end` block.",
+      example: "with_cent_tuning 2 do",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_octave: {
+      signature: "use_octave(octave_shift: number)",
+      description: "Transposes your music by shifting all notes played by the specified number of octaves.",
+      example: "use_octave 1",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_octave: {
+      signature: "with_octave(octave_shift: number)",
+      description: "Transposes your music by shifting all notes played by the specified number of octaves within the specified block.",
+      example: "with_octave 1 do",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_transpose: {
+      signature: "use_transpose(note_shift: number)",
+      description: "Transposes your music by shifting all notes played by the specified amount.",
+      example: "use_transpose 1",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_transpose: {
+      signature: "with_transpose(note_shift: number)",
+      description: "Similar to use_transpose except only applies to code within supplied `do`/`end` block.",
+      example: "with_transpose 12 do",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_tuning: {
+      signature: "use_tuning(tuning: symbol, fundamental_note: symbol_or_number)",
+      description: "In most music we make semitones by dividing the octave into 12 equal parts, which is known as equal temperament.",
+      example: "use_tuning :just, :c",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_tuning: {
+      signature: "with_tuning(tuning: symbol, fundamental_note: symbol_or_number)",
+      description: "Similar to use_tuning except only applies to code within supplied `do`/`end` block.",
+      example: "with_tuning :just, :c do",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_transpose: {
+      signature: "current_transpose",
+      description: "Returns the current transpose value.",
+      example: "puts current_transpose",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_cent_tuning: {
+      signature: "current_cent_tuning",
+      description: "Returns the cent shift value.",
+      example: "puts current_cent_tuning",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_octave: {
+      signature: "current_octave",
+      description: "Returns the octave shift value.",
+      example: "puts current_octave",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    note: {
+      signature: "note(note: symbol_or_number)",
+      description: "Takes a midi note, a symbol (e.",
+      example: "puts note(60)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    note_range: {
+      signature: "note_range(start_note: note, end_note: note)",
+      description: "Produces a ring of all the notes between a start note and an end note.",
+      example: "(note_range :c4, :c5)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    note_info: {
+      signature: "note_info(note: symbol_or_number)",
+      description: "Returns an instance of `SonicPi::Note`.",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    degree: {
+      signature: "degree(degree: symbol_or_number, tonic: symbol, scale: symbol)",
+      description: "For a given scale and tonic it takes a symbol/string/number and resolves it to a midi note.",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    scale: {
+      signature: "scale(tonic: symbol, name: symbol)",
+      description: "Creates a ring of MIDI note numbers when given a tonic note and a scale name.",
+      example: "puts (scale :C, :major)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    chord_degree: {
+      signature: "chord_degree(degree: symbol_or_number, tonic: symbol, scale: symbol, number_of_notes: number)",
+      description: "In music we build chords from scales.",
+      example: "puts (chord_degree :i, :A3, :major)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    chord: {
+      signature: "chord(tonic: symbol, name: symbol)",
+      description: "Creates an immutable ring of Midi note numbers when given a tonic note and a chord type.",
+      example: "puts (chord :e, :minor)",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    chord_invert: {
+      signature: "chord_invert(notes: list, shift: number)",
+      description: "Given a set of notes, apply a number of inversions indicated by the `shift` parameter.",
+      example: 'play (chord_invert (chord :A3, "M"), 0)',
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    scale_names: {
+      signature: "scale_names",
+      description: "Returns a ring containing all scale names known to Sonic Pi",
+      example: "puts scale_names",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    chord_names: {
+      signature: "chord_names",
+      description: "Returns a ring containing all chord names known to Sonic Pi",
+      example: "puts chord_names",
+      kind: "function",
+      category: "western_theory",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_midi_logging: {
+      signature: "use_midi_logging(true_or_false: boolean)",
+      description: "Enable or disable log messages created on MIDI functions.",
+      example: "use_midi_logging true",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_midi_logging: {
+      signature: "with_midi_logging(true_or_false: boolean)",
+      description: "Similar to use_midi_logging except only applies to code within supplied `do`/`end` block.",
+      example: "with_midi_logging false do",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_midi_defaults: {
+      signature: "use_midi_defaults",
+      description: "Specify new default values to be used by all subsequent calls to `midi_*` fns.",
+      example: 'use_midi_defaults channel: 3, port: "foo"',
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_midi_defaults: {
+      signature: "with_midi_defaults",
+      description: "Specify new default values to be used by all calls to `midi_*` fns within the `do`/`end` block.",
+      example: 'with_midi_defaults channel: 3, port: "foo" do',
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    use_merged_midi_defaults: {
+      signature: "use_merged_midi_defaults",
+      description: "Specify new default values to be used by all subsequent calls to `midi_*` fns.",
+      example: "use_merged_midi_defaults channel: 1",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    with_merged_midi_defaults: {
+      signature: "with_merged_midi_defaults",
+      description: "Specify opt values to be used by any following call to the `midi_*` fns within the specified `do`/`end` block.",
+      example: "with_merged_midi_defaults channel: 1 do",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    current_midi_defaults: {
+      signature: "current_midi_defaults",
+      description: "Returns the current MIDI defaults.",
+      example: "current_midi_defaults",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_note_on: {
+      signature: "midi_note_on(note: midi, velocity: midi)",
+      description: "Sends a MIDI Note On Event to *all* connected devices on *all* channels.",
+      example: "midi_note_on :e3",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_note_off: {
+      signature: "midi_note_off(note: midi, release_velocity: midi)",
+      description: "Sends the MIDI note off message to *all* connected devices on *all* channels.",
+      example: "midi_note_off :e3",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_poly_pressure: {
+      signature: "midi_poly_pressure(note: midi, value: midi)",
+      description: "Sends a MIDI polyphonic key pressure message to *all* connected devices on *all* channels.",
+      example: "midi_poly_pressure 100, 32",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_cc: {
+      signature: "midi_cc(control_num: midi, value: midi)",
+      description: "Sends a MIDI control change message to *all* connected devices on *all* channels.",
+      example: "midi_cc 100, 32",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_channel_pressure: {
+      signature: "midi_channel_pressure(val: midi)",
+      description: "Sends a MIDI channel pressure (aftertouch) message to *all* connected devices on *all* channels.",
+      example: "midi_channel_pressure 50",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_pitch_bend: {
+      signature: "midi_pitch_bend(delta: float01)",
+      description: "Sends a MIDI pitch bend message to *all* connected devices on *all* channels.",
+      example: "midi_pitch_bend 0",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_pc: {
+      signature: "midi_pc(program_num: midi)",
+      description: "Sends a MIDI program change message to *all* connected devices on *all* channels.",
+      example: "midi_pc 100",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_raw: {
+      signature: "midi_raw",
+      description: "Send raw MIDI message",
+      example: "midi_raw 176, 121, 0",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_sysex: {
+      signature: "midi_sysex",
+      description: "Sends the MIDI SysEx message to *all* connected MIDI devices.",
+      example: "midi_sysex 0xf0, 0x00, 0x20, 0x6b, 0x7f, 0x42, 0x02, 0x00, 0x10, 0x77, 0x11, 0xf7",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_sound_off: {
+      signature: "midi_sound_off",
+      description: "Sends a MIDI sound off message to *all* connected devices on *all* channels.",
+      example: "midi_sound_off",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_reset: {
+      signature: "midi_reset(value: number)",
+      description: "Sends a MIDI reset all controllers message to *all* connected devices on *all* channels.",
+      example: "midi_reset",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_local_control_off: {
+      signature: "midi_local_control_off",
+      description: "Sends a MIDI local control off message to *all* connected devices on *all* channels.",
+      example: "midi_local_control_off",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_local_control_on: {
+      signature: "midi_local_control_on",
+      description: "Sends a MIDI local control on message to *all* connected devices on *all* channels.",
+      example: "midi_local_control_on",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_mode: {
+      signature: "midi_mode(mode: mode_keyword)",
+      description: "Sends the Omni/Mono/Poly MIDI mode message to *all* connected MIDI devices on *all* channels.",
+      example: "midi_mode :omni_on",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_all_notes_off: {
+      signature: "midi_all_notes_off",
+      description: "Sends a MIDI all notes off message to *all* connected MIDI devices.",
+      example: "midi_all_notes_off",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_clock_tick: {
+      signature: "midi_clock_tick",
+      description: "Sends a MIDI clock tick message to *all* connected devices on *all* channels.",
+      example: "midi_clock_tick",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_start: {
+      signature: "midi_start",
+      description: "Sends the MIDI start system message to *all* connected MIDI devices on *all* ports.",
+      example: "midi_start",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_stop: {
+      signature: "midi_stop",
+      description: "Sends the MIDI stop system message to *all* connected MIDI devices on *all* ports.",
+      example: "midi_stop",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_continue: {
+      signature: "midi_continue",
+      description: "Sends the MIDI continue system message to *all* connected MIDI devices on *all* ports.",
+      example: "midi_continue",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi_clock_beat: {
+      signature: "midi_clock_beat(duration: beats)",
+      description: "Sends enough MIDI clock ticks for one beat to *all* connected MIDI devices.",
+      example: "midi_clock_beat",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    midi: {
+      signature: "midi(note: number)",
+      description: "Sends a MIDI note on event to *all* connected MIDI devices and *all* channels and then after sustain beats sends a MIDI note off event.",
+      example: "midi :e1, sustain: 0.3, vel_f: 0.5, channel: 3",
+      kind: "function",
+      category: "midi",
+      sourceUrl: "https://sonic-pi.net/tutorial.html"
+    },
+    dull_bell: {
+      signature: ":dull_bell",
+      description: "A simple dull discordant bell sound.",
+      example: "synth :dull_bell, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    pretty_bell: {
+      signature: ":pretty_bell",
+      description: "A pretty bell sound. Works well with short attacks and long decays.",
+      example: "synth :pretty_bell, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    beep: {
+      signature: ":beep",
+      description: "A simple pure sine wave. The sine wave is the simplest, purest sound there is and is the fundamental building block of all noise. The mathematician Fourier demonstrated that any sound could be built out of a number of sine waves (the more complex the sound, the more sine waves ne",
+      example: "synth :beep, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    sine: {
+      signature: ":sine",
+      description: "A simple pure sine wave. The sine wave is the simplest, purest sound there is and is the fundamental building block of all noise. The mathematician Fourier demonstrated that any sound could be built out of a number of sine waves (the more complex the sound, the more sine waves ne",
+      example: "synth :sine, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    saw: {
+      signature: ":saw",
+      description: "A saw wave with a low pass filter. Great for using with FX such as the built in low pass filter (available via the cutoff arg) due to the complexity and thickness of the sound.",
+      example: "synth :saw, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    pulse: {
+      signature: ":pulse",
+      description: "A simple pulse wave with a low pass filter. This defaults to a square wave, but the timbre can be changed dramatically by adjusting the pulse_width arg between 0 and 1. The pulse wave is thick and heavy with lower notes and is a great ingredient for bass sounds.",
+      example: "synth :pulse, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    subpulse: {
+      signature: ":subpulse",
+      description: "A pulse wave with a sub sine wave passed through a low pass filter. The pulse wave is thick and heavy with lower notes and is a great ingredient for bass sounds - especially with the sub wave.",
+      example: "synth :subpulse, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    square: {
+      signature: ":square",
+      description: "A simple square wave with a low pass filter. The square wave is thick and heavy with lower notes and is a great ingredient for bass sounds. If you wish to modulate the width of the square wave see the synth pulse.",
+      example: "synth :square, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    tri: {
+      signature: ":tri",
+      description: "A simple triangle wave with a low pass filter.",
+      example: "synth :tri, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    dsaw: {
+      signature: ":dsaw",
+      description: "A pair of detuned saw waves passed through a low pass filter. Two saw waves with slightly different frequencies generates a nice thick sound which is the basis for a lot of famous synth sounds. Thicken the sound by increasing the detune value, or create an octave-playing synth by",
+      example: "synth :dsaw, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    dpulse: {
+      signature: ":dpulse",
+      description: "A pair of detuned pulse waves passed through a low pass filter. Two pulse waves with slightly different frequencies generates a nice thick sound which can be used as a basis for some nice bass sounds. Thicken the sound by increasing the detune value, or create an octave-playing s",
+      example: "synth :dpulse, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    dtri: {
+      signature: ":dtri",
+      description: "A pair of detuned triangle waves passed through a low pass filter. Two pulse waves with slightly different frequencies generates a nice thick sound which can be used as a basis for some nice bass sounds. Thicken the sound by increasing the detune value, or create an octave-playin",
+      example: "synth :dtri, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    fm: {
+      signature: ":fm",
+      description: "A sine wave with a fundamental frequency which is modulated at audio rate by another sine wave with a specific modulation, division and depth. Useful for generating a wide range of sounds by playing with the divisor and depth params. Great for deep powerful bass and crazy 70s sci",
+      example: "synth :fm, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    mod_fm: {
+      signature: ":mod_fm",
+      description: "The FM synth modulating between two notes - the duration of the modulation can be modified using the mod_phase arg, the range (number of notes jumped between) by the mod_range arg and the width of the jumps by the mod_width param. The FM synth is a sine wave with a fundamental fr",
+      example: "synth :mod_fm, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    mod_saw: {
+      signature: ":mod_saw",
+      description: "A saw wave passed through a low pass filter which modulates between two separate notes via a variety of control waves.",
+      example: "synth :mod_saw, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    mod_dsaw: {
+      signature: ":mod_dsaw",
+      description: "A pair of detuned saw waves (see the dsaw synth) which are modulated between two fixed notes at a given rate.",
+      example: "synth :mod_dsaw, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    mod_sine: {
+      signature: ":mod_sine",
+      description: "A sine wave passed through a low pass filter which modulates between two separate notes via a variety of control waves.",
+      example: "synth :mod_sine, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    mod_beep: {
+      signature: ":mod_beep",
+      description: "A sine wave passed through a low pass filter which modulates between two separate notes via a variety of control waves.",
+      example: "synth :mod_beep, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    mod_tri: {
+      signature: ":mod_tri",
+      description: "A triangle wave passed through a low pass filter which modulates between two separate notes via a variety of control waves.",
+      example: "synth :mod_tri, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    mod_pulse: {
+      signature: ":mod_pulse",
+      description: "A pulse wave with a low pass filter modulating between two notes via a variety of control waves (see mod_wave: arg). The pulse wave defaults to a square wave, but the timbre can be changed dramatically by adjusting the pulse_width arg between 0 and 1.",
+      example: "synth :mod_pulse, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    tb303: {
+      signature: ":tb303",
+      description: "Emulation of the classic Roland TB-303 Bass Line synthesiser. Overdrive the res (i.e. use very large values) for that classic late 80s acid sound.",
+      example: "synth :tb303, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    supersaw: {
+      signature: ":supersaw",
+      description: "Thick swirly saw waves sparkling and moving about to create a rich trancy sound.",
+      example: "synth :supersaw, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    hoover: {
+      signature: ":hoover",
+      description: "Classic early 90's rave synth - 'a sort of slurry chorussy synth line like the classic Dominator by Human Resource'. Based on Dan Stowell's implementation in SuperCollider and Daniel Turczanski's port to Overtone. Works really well with portamento (see docs for the 'control' meth",
+      example: "synth :hoover, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    prophet: {
+      signature: ":prophet",
+      description: "Dark and swirly, this synth uses Pulse Width Modulation (PWM) to create a timbre which continually moves around. This effect is created using the pulse ugen which produces a variable width square wave. We then control the width of the pulses using a variety of LFOs - sin-osc and ",
+      example: "synth :prophet, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    zawa: {
+      signature: ":zawa",
+      description: "Saw wave with oscillating timbre. Produces moving saw waves with a unique character controllable with the control oscillator (usage similar to mod synths).",
+      example: "synth :zawa, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    dark_ambience: {
+      signature: ":dark_ambience",
+      description: "A slow rolling bass with a sparkle of light trying to escape the darkness. Great for an ambient sound.",
+      example: "synth :dark_ambience, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    growl: {
+      signature: ":growl",
+      description: "A deep rumbling growl with a bright sine shining through at higher notes.",
+      example: "synth :growl, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    hollow: {
+      signature: ":hollow",
+      description: "A hollow breathy sound constructed from random noise",
+      example: "synth :hollow, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    mono_player: {
+      signature: ":mono_player",
+      description: "### Opts: * amp: - doc: The amplitude of the sound. Typically a value between 0 and 1. Higher amplitudes may be used, but won't make the sound louder, they will just reduce the quality of all the sounds currently being played (due to compression.) - default: 1 - constraints: must",
+      example: "synth :mono_player, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    stereo_player: {
+      signature: ":stereo_player",
+      description: "### Opts: * amp: - doc: The amplitude of the sound. Typically a value between 0 and 1. Higher amplitudes may be used, but won't make the sound louder, they will just reduce the quality of all the sounds currently being played (due to compression.) - default: 1 - constraints: must",
+      example: "synth :stereo_player, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    blade: {
+      signature: ":blade",
+      description: "Straight from the 70s, evoking the mists of Blade Runner, this simple electro-style string synth is based on filtered saw waves and a variable vibrato.",
+      example: "synth :blade, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    piano: {
+      signature: ":piano",
+      description: "A basic piano synthesiser. Note that due to the plucked nature of this synth the envelope opts such as `attack:`, `sustain:` and `release:` do not work as expected. They can only shorten the natural length of the note, not prolong it. Also, the `note:` opt will only honour whole ",
+      example: "synth :piano, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    pluck: {
+      signature: ":pluck",
+      description: "A basic plucked string synthesiser that uses Karplus-Strong synthesis. Note that due to the plucked nature of this synth the envelope opts such as `attack:`, `sustain:` and `release:` do not work as expected. They can only shorten the natural length of the note, not prolong it. A",
+      example: "synth :pluck, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    sound_in: {
+      signature: ":sound_in",
+      description: "Please write documentation!",
+      example: "synth :sound_in, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    noise: {
+      signature: ":noise",
+      description: "Noise that contains equal amounts of energy at every frequency - comparable to radio static. Useful for generating percussive sounds such as snares and hand claps. Also useful for simulating wind or sea effects.",
+      example: "synth :noise, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    pnoise: {
+      signature: ":pnoise",
+      description: "Noise whose spectrum falls off in power by 3 dB per octave. Useful for generating percussive sounds such as snares and hand claps. Also useful for simulating wind or sea effects.",
+      example: "synth :pnoise, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    bnoise: {
+      signature: ":bnoise",
+      description: "Noise whose spectrum falls off in power by 6 dB per octave. Useful for generating percussive sounds such as snares and hand claps. Also useful for simulating wind or sea effects.",
+      example: "synth :bnoise, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    gnoise: {
+      signature: ":gnoise",
+      description: "Generates noise which results from flipping random bits in a word. The spectrum is emphasised towards lower frequencies. Useful for generating percussive sounds such as snares and hand claps. Also useful for simulating wind or sea effects.",
+      example: "synth :gnoise, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    cnoise: {
+      signature: ":cnoise",
+      description: "Generates noise whose values are either -1 or 1. This produces the maximum energy for the least peak to peak amplitude. Useful for generating percussive sounds such as snares and hand claps. Also useful for simulating wind or sea effects.",
+      example: "synth :cnoise, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    basic_mono_player: {
+      signature: ":basic_mono_player",
+      description: "### Opts: * amp: - doc: The amplitude of the sound. Typically a value between 0 and 1. Higher amplitudes may be used, but won't make the sound louder, they will just reduce the quality of all the sounds currently being played (due to compression.) - default: 1 - constraints: must",
+      example: "synth :basic_mono_player, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    basic_stereo_player: {
+      signature: ":basic_stereo_player",
+      description: "### Opts: * amp: - doc: The amplitude of the sound. Typically a value between 0 and 1. Higher amplitudes may be used, but won't make the sound louder, they will just reduce the quality of all the sounds currently being played (due to compression.) - default: 1 - constraints: must",
+      example: "synth :basic_stereo_player, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    basic_mixer: {
+      signature: ":basic_mixer",
+      description: "Please write documentation!",
+      example: "synth :basic_mixer, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    main_mixer: {
+      signature: ":main_mixer",
+      description: "Please write documentation!",
+      example: "synth :main_mixer, note: :c4",
+      kind: "synth",
+      category: "synth",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-6.1"
+    },
+    bitcrusher: {
+      signature: ":bitcrusher",
+      description: "Creates lo-fi output by decimating and deconstructing the incoming audio by lowering both the sample rate and bit depth. The default sample rate for CD audio is 44100, so use values less than that for that crunchy chip-tune sound full of artefacts and bitty distortion. Similarly,",
+      example: "with_fx :bitcrusher do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    krush: {
+      signature: ":krush",
+      description: "Krush that sound!",
+      example: "with_fx :krush do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    reverb: {
+      signature: ":reverb",
+      description: "Make the incoming signal sound more spacious or distant as if it were played in a large room or cave. Signal may also be dampened by reducing the amplitude of the higher frequencies.",
+      example: "with_fx :reverb do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    gverb: {
+      signature: ":gverb",
+      description: "Make the incoming signal sound more spacious or distant as if it were played in a large room or cave. Similar to reverb but with a more spacious feel.",
+      example: "with_fx :gverb do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    level: {
+      signature: ":level",
+      description: "Amplitude modifier. All FX have their own amp built in, so it may be the case that you don't specifically need an isolated amp FX. However, it is useful to be able to control the overall amplitude of a number of running synths. All sounds created in the FX block will have their a",
+      example: "with_fx :level do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    echo: {
+      signature: ":echo",
+      description: "Standard echo with variable phase duration (time between echoes) and decay (length of echo fade out). If you wish to have a phase duration longer than 2s, you need to specify the longest phase duration you'd like with the arg max_phase. Be warned, echo FX with very long phases ca",
+      example: "with_fx :echo do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    slicer: {
+      signature: ":slicer",
+      description: "Modulates the amplitude of the input signal with a specific control wave and phase duration. With the default pulse wave, slices the signal in and out, with the triangle wave, fades the signal in and out and with the saw wave, phases the signal in and then dramatically out. Contr",
+      example: "with_fx :slicer do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    panslicer: {
+      signature: ":panslicer",
+      description: "Slice the pan automatically from left to right. Behaves similarly to slicer and wobble FX but modifies stereo panning of sound in left and right speakers. Default slice wave form is square (hard slicing between left and right) however other wave forms can be set with the `wave:` ",
+      example: "with_fx :panslicer do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    wobble: {
+      signature: ":wobble",
+      description: "Versatile wobble FX. Will repeatedly modulate a range of filters (rlpf, rhpf) between two cutoff values using a range of control wave forms (saw, pulse, tri, sine). You may alter the phase duration of the wobble, and the resonance of the filter. Combines well with the dsaw synth ",
+      example: "with_fx :wobble do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    ixi_techno: {
+      signature: ":ixi_techno",
+      description: "Moving resonant low pass filter between min and max cutoffs. Great for sweeping effects across long synths or samples.",
+      example: "with_fx :ixi_techno do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    compressor: {
+      signature: ":compressor",
+      description: "Compresses the dynamic range of the incoming signal. Equivalent to automatically turning the amp down when the signal gets too loud and then back up again when it's quiet. Useful for ensuring the containing signal doesn't overwhelm other aspects of the sound. Also a general purpo",
+      example: "with_fx :compressor do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    whammy: {
+      signature: ":whammy",
+      description: "A cheap sounding transposition effect, with a slightly robotic edge. Good for adding alien sounds and harmonies to everything from beeps to guitar samples. It's similar to pitch shift although not as smooth sounding.",
+      example: "with_fx :whammy do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    rlpf: {
+      signature: ":rlpf",
+      description: "Dampens the parts of the signal that are higher than the cutoff point (typically the crunchy fizzy harmonic overtones) and keeps the lower parts (typically the bass/mid of the sound). The resonant part of the resonant low pass filter emphasises/resonates the frequencies around th",
+      example: "with_fx :rlpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    nrlpf: {
+      signature: ":nrlpf",
+      description: "Dampens the parts of the signal that are higher than the cutoff point (typically the crunchy fizzy harmonic overtones) and keeps the lower parts (typically the bass/mid of the sound). The resonant part of the resonant low pass filter emphasises/resonates the frequencies around th",
+      example: "with_fx :nrlpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    rhpf: {
+      signature: ":rhpf",
+      description: "Dampens the parts of the signal that are lower than the cutoff point (typically the bass of the sound) and keeps the higher parts (typically the crunchy fizzy harmonic overtones). The resonant part of the resonant high pass filter emphasises/resonates the frequencies around the c",
+      example: "with_fx :rhpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    nrhpf: {
+      signature: ":nrhpf",
+      description: "Dampens the parts of the signal that are lower than the cutoff point (typically the bass of the sound) and keeps the higher parts (typically the crunchy fizzy harmonic overtones). The resonant part of the resonant high pass filter emphasises/resonates the frequencies around the c",
+      example: "with_fx :nrhpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    hpf: {
+      signature: ":hpf",
+      description: "Dampens the parts of the signal that are lower than the cutoff point (typically the bass of the sound) and keeps the higher parts (typically the crunchy fizzy harmonic overtones). Choose a lower cutoff to keep more of the bass/mid and a higher cutoff to make the sound more light ",
+      example: "with_fx :hpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    nhpf: {
+      signature: ":nhpf",
+      description: "A high pass filter chained to a normaliser. Ensures that the signal is both filtered by a standard high pass filter and then normalised to ensure the amplitude of the final output is constant. A high pass filter will reduce the amplitude of the resulting signal (as some of the so",
+      example: "with_fx :nhpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    lpf: {
+      signature: ":lpf",
+      description: "Dampens the parts of the signal that are higher than the cutoff point (typically the crunchy fizzy harmonic overtones) and keeps the lower parts (typically the bass/mid of the sound). Choose a higher cutoff to keep more of the high frequences/treble of the sound and a lower cutof",
+      example: "with_fx :lpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    nlpf: {
+      signature: ":nlpf",
+      description: "A low pass filter chained to a normaliser. Ensures that the signal is both filtered by a standard low pass filter and then normalised to ensure the amplitude of the final output is constant. A low pass filter will reduce the amplitude of the resulting signal (as some of the sound",
+      example: "with_fx :nlpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    normaliser: {
+      signature: ":normaliser",
+      description: "Raise or lower amplitude of sound to a specified level. Evens out the amplitude of incoming sound across the frequency spectrum by flattening all dynamics.",
+      example: "with_fx :normaliser do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    distortion: {
+      signature: ":distortion",
+      description: "Distorts the signal reducing clarity in favour of raw crunchy noise.",
+      example: "with_fx :distortion do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    pan: {
+      signature: ":pan",
+      description: "Specify where in the stereo field the sound should be heard. A value of -1 for pan will put the sound in the left speaker, a value of 1 will put the sound in the right speaker and values in between will shift the sound accordingly.",
+      example: "with_fx :pan do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    bpf: {
+      signature: ":bpf",
+      description: "Combines low pass and high pass filters to only allow a 'band' of frequencies through. If the band is very narrow (a low res value like 0.0001) then the BPF will reduce the original sound, almost down to a single frequency (controlled by the centre opt). With higher values for re",
+      example: "with_fx :bpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    nbpf: {
+      signature: ":nbpf",
+      description: "Like the Band Pass Filter but normalised. The normaliser is useful here as some volume is lost when filtering the original signal.",
+      example: "with_fx :nbpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    rbpf: {
+      signature: ":rbpf",
+      description: "Like the Band Pass Filter but with a resonance (slight volume boost) around the target frequency. This can produce an interesting whistling effect, especially when used with larger values for the res opt.",
+      example: "with_fx :rbpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    nrbpf: {
+      signature: ":nrbpf",
+      description: "Like the Band Pass Filter but normalised, with a resonance (slight volume boost) around the target frequency. This can produce an interesting whistling effect, especially when used with larger values for the res opt. The normaliser is useful here as some volume is lost when filte",
+      example: "with_fx :nrbpf do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    band_eq: {
+      signature: ":band_eq",
+      description: "Attenuate or Boost a frequency band",
+      example: "with_fx :band_eq do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    tanh: {
+      signature: ":tanh",
+      description: "Please write documentation!",
+      example: "with_fx :tanh do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    pitch_shift: {
+      signature: ":pitch_shift",
+      description: "Changes the pitch of a signal without affecting tempo. Does this mainly through the pitch parameter which takes a midi number to transpose by. You can also play with the other params to produce some interesting textures and sounds.",
+      example: "with_fx :pitch_shift do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    ring_mod: {
+      signature: ":ring_mod",
+      description: "Attack of the Daleks! Ring mod is a classic effect often used on soundtracks to evoke robots or aliens as it sounds hollow or metallic. We take a 'carrier' signal (a sine wave controlled by the freq opt) and modulate its amplitude using the signal given inside the fx block. This ",
+      example: "with_fx :ring_mod do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    octaver: {
+      signature: ":octaver",
+      description: "This effect adds three pitches based on the input sound. The first is the original sound transposed up an octave (super_amp), the second is the original sound transposed down an octave (sub_amp) and the third is the original sound transposed down two octaves (subsub_amp). The way",
+      example: "with_fx :octaver do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    vowel: {
+      signature: ":vowel",
+      description: "This effect filters the input to match a human voice singing a certain vowel sound. Human singing voice sounds are easily achieved with a source of a saw wave with a little vibrato.",
+      example: "with_fx :vowel do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    },
+    flanger: {
+      signature: ":flanger",
+      description: "Mix the incoming signal with a copy of itself which has a rate modulating faster and slower than the original. Creates a swirling/whooshing effect.",
+      example: "with_fx :flanger do\n  play :c4\nend",
+      kind: "fx",
+      category: "fx",
+      sourceUrl: "https://sonic-pi.net/tutorial.html#section-7"
+    }
+  },
+  meta: {
+    fetchedAt: "2026-04-18",
+    source: "https://raw.githubusercontent.com/sonic-pi-net/sonic-pi/stable"
+  }
+};
+
+// src/monaco/docs/sonicpi.ts
+validateDocsIndex("sonicpi.json", sonicpi_default);
+var SONICPI_DOCS_INDEX = sonicpi_default;
+function registerSonicPiProviders(monaco) {
+  return registerRuntimeProviders(monaco, SONICPI_DOCS_INDEX, {
+    hover: true,
+    dotCompletion: false,
+    identifierCompletion: true
   });
 }
 
@@ -6858,30 +9268,299 @@ var STRUDEL_DOCS = {
     example: 'note("c4 e4").room(0.5).orbit(1)'
   }
 };
+var STRUDEL_DOCS_INDEX = {
+  runtime: "strudel",
+  docs: STRUDEL_DOCS,
+  meta: {
+    source: "hand-curated",
+    // Strudel's jsdoc isn't published with per-function permalinks, so
+    // hovers fall back to the main function reference page — the user
+    // lands inside the searchable function browser.
+    docsBaseUrl: "https://strudel.cc/functions/"
+  }
+};
 function registerStrudelHover(monaco) {
-  return monaco.languages.registerHoverProvider("strudel", {
-    provideHover(model, position) {
-      const word = model.getWordAtPosition(position);
-      if (!word) return null;
-      const doc = STRUDEL_DOCS[word.word];
-      if (!doc) return null;
-      const contents = [
-        { value: `\`\`\`typescript
-${doc.signature}
-\`\`\`` },
-        { value: doc.description },
-        { value: `**Example:** \`${doc.example}\`` }
-      ];
-      return {
-        range: new monaco.Range(
-          position.lineNumber,
-          word.startColumn,
-          position.lineNumber,
-          word.endColumn
-        ),
-        contents
-      };
+  return createHoverProvider(monaco, STRUDEL_DOCS_INDEX);
+}
+
+// src/monaco/docs/tokenizer-utils.ts
+function buildIdentifierAlternation(index, opts = {}) {
+  const { includeKinds, excludeKinds, filter: filter2, extra = [] } = opts;
+  const names = /* @__PURE__ */ new Set();
+  for (const [name2, doc] of Object.entries(index.docs)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name2)) continue;
+    if (includeKinds && (!doc.kind || !includeKinds.includes(doc.kind))) continue;
+    if (excludeKinds && doc.kind && excludeKinds.includes(doc.kind)) continue;
+    if (filter2 && !filter2(name2, doc)) continue;
+    names.add(name2);
+  }
+  for (const n of extra) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(n)) names.add(n);
+  return [...names].sort((a, b) => b.length - a.length || a.localeCompare(b)).map(escapeForRegex).join("|");
+}
+function escapeForRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function keywordRule(alternation, token) {
+  if (!alternation) return [];
+  return [[new RegExp(`\\b(${alternation})\\b`), token]];
+}
+function methodRule(alternation, token) {
+  if (!alternation) return [];
+  return [[new RegExp(`\\.(${alternation})\\b`), token]];
+}
+
+// src/monaco/language.ts
+function registerSonicPiLanguage(monaco) {
+  const langs = monaco.languages.getLanguages();
+  if (langs.some((l) => l.id === "sonicpi")) return;
+  monaco.languages.register({ id: "sonicpi" });
+  const MUSIC_HELPER_NAMES = /* @__PURE__ */ new Set([
+    "choose",
+    "rrand",
+    "rrand_i",
+    "rand",
+    "rand_i",
+    "dice",
+    "one_in",
+    "ring",
+    "knit",
+    "range",
+    "line",
+    "spread",
+    "tick",
+    "look",
+    "shuffle",
+    "sort_by",
+    "reflect",
+    "stretch",
+    "repeat",
+    "mirror"
+  ]);
+  const musicFns = buildIdentifierAlternation(SONICPI_DOCS_INDEX, {
+    excludeKinds: ["synth", "fx", "sample"],
+    filter: (name2, doc) => doc.category === "western_theory" || doc.category === "maths" || MUSIC_HELPER_NAMES.has(name2)
+  });
+  const dslFns = buildIdentifierAlternation(SONICPI_DOCS_INDEX, {
+    excludeKinds: ["synth", "fx", "sample"],
+    filter: (name2, doc) => doc.category !== "western_theory" && doc.category !== "maths" && !MUSIC_HELPER_NAMES.has(name2),
+    extra: ["puts", "print"]
+  });
+  monaco.languages.setMonarchTokensProvider("sonicpi", {
+    defaultToken: "",
+    tokenPostfix: ".sonicpi",
+    keywords: [
+      "do",
+      "end",
+      "if",
+      "else",
+      "elsif",
+      "unless",
+      "loop",
+      "while",
+      "until",
+      "for",
+      "in",
+      "begin",
+      "rescue",
+      "ensure",
+      "true",
+      "false",
+      "nil",
+      "and",
+      "or",
+      "not"
+    ],
+    tokenizer: {
+      root: [
+        // Ruby comment
+        [/#.*$/, "comment"],
+        // Ruby symbols :name
+        [/:\w+/, "sonicpi.symbol"],
+        // Keyword args (release:, amp:, rate:) — BEFORE the fn rule so
+        // `amp:` doesn't get classified as the `amp` function.
+        [/\b[a-z_]\w*:/, "sonicpi.kwarg"],
+        // Keywords first — `end` / `do` would otherwise match the function
+        // list (Sonic Pi has many fns named alike, but these are lexical).
+        [/\b(do|end|if|else|elsif|unless|loop|while|until|for|in|true|false|nil|and|or|not|begin|rescue|ensure|return|yield|then|when|case|break|next|redo|retry|module|class|def|lambda|proc|self)\b/, "keyword"],
+        // Music helpers (mathy / pitch / randomness) — pink-tinted class.
+        [new RegExp(`\\b(${musicFns})\\b`), "sonicpi.music"],
+        // DSL / sound / MIDI functions — blue-tinted class.
+        [new RegExp(`\\b(${dslFns})\\b`), "sonicpi.function"],
+        // Note names: c3, eb4, f#2
+        [/\b[a-gA-G][bs#]?\d\b/, "sonicpi.note"],
+        // Identifier fallthrough — user variables, iterator names, etc.
+        [/[a-zA-Z_][\w]*/, "identifier"],
+        // Numbers
+        [/0x[\da-fA-F]+/, "number.hex"],
+        [/\d+(\.\d+)?([eE][+-]?\d+)?/, "number"],
+        // Strings
+        [/"/, { token: "string.quote", next: "@string_double" }],
+        [/'/, { token: "string.quote", next: "@string_single" }],
+        // Operators + delimiters
+        [/=>|<=>|==|!=|<=|>=|&&|\|\||\.\.\.?/, "keyword.operator"],
+        [/[=!<>]=?/, "keyword.operator"],
+        [/[+\-*/%&|^~]=?/, "keyword.operator"],
+        [/[{}()[\]]/, "@brackets"],
+        [/[;,.]/, "delimiter"]
+      ],
+      string_double: [
+        [/#\{/, { token: "string.interpolation", next: "@interpolation" }],
+        [/\\./, "string.escape"],
+        [/[^"#\\]+/, "string"],
+        [/#/, "string"],
+        [/"/, { token: "string.quote", next: "@pop" }]
+      ],
+      string_single: [
+        [/\\./, "string.escape"],
+        [/[^'\\]+/, "string"],
+        [/'/, { token: "string.quote", next: "@pop" }]
+      ],
+      interpolation: [
+        [/\}/, { token: "string.interpolation", next: "@pop" }],
+        { include: "root" }
+      ]
     }
+  });
+  monaco.languages.setLanguageConfiguration("sonicpi", {
+    comments: {
+      lineComment: "#"
+    },
+    brackets: [
+      ["{", "}"],
+      ["[", "]"],
+      ["(", ")"]
+    ],
+    autoClosingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" }
+    ]
+  });
+}
+function registerStrudelLanguage(monaco) {
+  const langs = monaco.languages.getLanguages();
+  if (langs.some((l) => l.id === "strudel")) return;
+  monaco.languages.register({ id: "strudel" });
+  const strudelFns = buildIdentifierAlternation(STRUDEL_DOCS_INDEX, {
+    extra: [
+      "sub",
+      "add",
+      "mul",
+      "div",
+      "mod",
+      "abs",
+      "sine",
+      "saw",
+      "square",
+      "tri",
+      "setcps",
+      "setCps",
+      "cpm",
+      "loopBegin",
+      "loopEnd",
+      "n",
+      "ftype",
+      "fanchor"
+    ]
+  });
+  monaco.languages.setMonarchTokensProvider("strudel", {
+    defaultToken: "",
+    tokenPostfix: ".strudel",
+    keywords: [
+      "const",
+      "let",
+      "var",
+      "await",
+      "async",
+      "return",
+      "if",
+      "else",
+      "for",
+      "while",
+      "function",
+      "class",
+      "import",
+      "export",
+      "from"
+    ],
+    tokenizer: {
+      root: [
+        // $: pattern-start marker
+        [/\$\s*:/, "strudel.pattern-start"],
+        // setcps / setCps tempo
+        [/\bsetcps\b|\bsetCps\b/, "strudel.tempo"],
+        // Note names: c3, eb4, f#2, C#5
+        [/\b[a-gA-G][b#]?\d\b/, "strudel.note"],
+        // Strudel function names (must come before keywords check)
+        [new RegExp(`\\b(${strudelFns})\\b`), "strudel.function"],
+        // JS keywords
+        [
+          /\b(const|let|var|await|async|return|if|else|for|while|function|class|import|export|from)\b/,
+          "keyword"
+        ],
+        // Line comment
+        [/\/\/.*$/, "comment"],
+        // Block comment
+        [/\/\*/, "comment", "@block_comment"],
+        // Strings (mini-notation)
+        [/"/, "string", "@mini_string_double"],
+        [/'/, "string", "@mini_string_single"],
+        [/`/, "string", "@template_string"],
+        // Numbers
+        [/\b\d+(\.\d+)?\b/, "number"]
+      ],
+      block_comment: [
+        [/[^/*]+/, "comment"],
+        [/\*\//, "comment", "@pop"],
+        [/[/*]/, "comment"]
+      ],
+      mini_string_double: [
+        [/[~*!%?@<>\[\]{}|,_]/, "strudel.mini.operator"],
+        [/[a-gA-G][b#]?\d?/, "strudel.mini.note"],
+        [/\d+(\.\d+)?/, "strudel.mini.number"],
+        [/"/, "string", "@pop"],
+        [/[^"]+/, "string"]
+      ],
+      mini_string_single: [
+        [/[~*!%?@<>\[\]{}|,_]/, "strudel.mini.operator"],
+        [/[a-gA-G][b#]?\d?/, "strudel.mini.note"],
+        [/\d+(\.\d+)?/, "strudel.mini.number"],
+        [/'/, "string", "@pop"],
+        [/[^']+/, "string"]
+      ],
+      template_string: [
+        [/`/, "string", "@pop"],
+        [/[^`]+/, "string"]
+      ]
+    }
+  });
+  monaco.languages.setLanguageConfiguration("strudel", {
+    comments: {
+      lineComment: "//",
+      blockComment: ["/*", "*/"]
+    },
+    brackets: [
+      ["{", "}"],
+      ["[", "]"],
+      ["(", ")"]
+    ],
+    autoClosingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: "`", close: "`" }
+    ],
+    surroundingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" }
+    ]
   });
 }
 
@@ -6955,6 +9634,4399 @@ function registerStrudelNoteCompletions(monaco) {
   });
 }
 
+// src/monaco/docs/data/p5.json
+var p5_default = {
+  runtime: "p5js",
+  docs: {
+    describe: {
+      signature: "describe(text: String, display?: Constant)",
+      description: "Creates a screen reader-accessible description of the canvas.",
+      example: "describe('A pink square with a red heart in the bottom-right corner.')",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/describe"
+    },
+    describeElement: {
+      signature: "describeElement(name: String, text: String, display?: Constant)",
+      description: "Creates a screen reader-accessible description of elements in the canvas.",
+      example: "describeElement('Circle', 'A yellow circle in the top-left corner.')",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/describeElement"
+    },
+    textOutput: {
+      signature: "textOutput(display?: Constant)",
+      description: "Creates a screen reader-accessible description of shapes on the canvas.",
+      example: "textOutput()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/textOutput"
+    },
+    gridOutput: {
+      signature: "gridOutput(display?: Constant)",
+      description: "Creates a screen reader-accessible description of shapes on the canvas.",
+      example: "gridOutput()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/gridOutput"
+    },
+    alpha: {
+      signature: "alpha(color: p5.Color|Number[]|String)",
+      description: "Gets the alpha (transparency) value of a color.",
+      example: "let alphaValue = alpha(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/alpha"
+    },
+    blue: {
+      signature: "blue(color: p5.Color|Number[]|String)",
+      description: "Gets the blue value of a color.",
+      example: "let blueValue = blue(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/blue"
+    },
+    brightness: {
+      signature: "brightness(color: p5.Color|Number[]|String)",
+      description: "Gets the brightness value of a color.",
+      example: "let brightValue = brightness(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/brightness"
+    },
+    color: {
+      signature: "color(gray: Number, alpha?: Number)",
+      description: "Creates a p5.",
+      example: "let c = color(255, 204, 0)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/color"
+    },
+    green: {
+      signature: "green(color: p5.Color|Number[]|String)",
+      description: "Gets the green value of a color.",
+      example: "let greenValue = green(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/green"
+    },
+    hue: {
+      signature: "hue(color: p5.Color|Number[]|String)",
+      description: "Gets the hue value of a color.",
+      example: "let hueValue = hue(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/hue"
+    },
+    lerpColor: {
+      signature: "lerpColor(c1: p5.Color, c2: p5.Color, amt: Number)",
+      description: "Blends two colors to find a third color between them.",
+      example: "let interA = lerpColor(from, to, 0.33)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/lerpColor"
+    },
+    paletteLerp: {
+      signature: "paletteLerp(colors_stops: [p5.Color, Number][], amt: Number)",
+      description: "Blends multiple colors to find a color between them.",
+      example: "background(paletteLerp([",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/paletteLerp"
+    },
+    lightness: {
+      signature: "lightness(color: p5.Color|Number[]|String)",
+      description: "Gets the lightness value of a color.",
+      example: "let lightValue = lightness(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/lightness"
+    },
+    red: {
+      signature: "red(color: p5.Color|Number[]|String)",
+      description: "Gets the red value of a color.",
+      example: "let redValue = red(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/red"
+    },
+    saturation: {
+      signature: "saturation(color: p5.Color|Number[]|String)",
+      description: "Gets the saturation value of a color.",
+      example: "let satValue = saturation(c)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/saturation"
+    },
+    beginClip: {
+      signature: "beginClip(options?: Object)",
+      description: "Starts defining a shape that will mask any shapes drawn afterward.",
+      example: "beginClip()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/beginClip"
+    },
+    endClip: {
+      signature: "endClip()",
+      description: "Ends defining a mask that was started with beginClip().",
+      example: "endClip()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/endClip"
+    },
+    clip: {
+      signature: "clip(callback: Function, options?: Object)",
+      description: "Defines a shape that will mask any shapes drawn afterward.",
+      example: "clip(mask)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/clip"
+    },
+    background: {
+      signature: "background(color: p5.Color)",
+      description: "Sets the color used for the background of the canvas.",
+      example: "background(51)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/background"
+    },
+    clear: {
+      signature: "clear(r?: Number, g?: Number, b?: Number, a?: Number)",
+      description: "Clears the pixels on the canvas.",
+      example: "clear()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/clear"
+    },
+    colorMode: {
+      signature: "colorMode(mode: Constant, max?: Number)",
+      description: "Changes the way color values are interpreted.",
+      example: "colorMode(RGB, 100)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/colorMode"
+    },
+    fill: {
+      signature: "fill(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Sets the color used to fill shapes.",
+      example: "fill(51)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/fill"
+    },
+    noFill: {
+      signature: "noFill()",
+      description: "Disables setting the fill color for shapes.",
+      example: "noFill()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/noFill"
+    },
+    noStroke: {
+      signature: "noStroke()",
+      description: "Disables drawing points, lines, and the outlines of shapes.",
+      example: "noStroke()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/noStroke"
+    },
+    stroke: {
+      signature: "stroke(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Sets the color used to draw points, lines, and the outlines of shapes.",
+      example: "stroke(51)",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/stroke"
+    },
+    erase: {
+      signature: "erase(strengthFill?: Number, strengthStroke?: Number)",
+      description: "Starts using shapes to erase parts of the canvas.",
+      example: "erase()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/erase"
+    },
+    noErase: {
+      signature: "noErase()",
+      description: "Ends erasing that was started with erase().",
+      example: "noErase()",
+      kind: "function",
+      category: "Color",
+      sourceUrl: "https://p5js.org/reference/#/p5/noErase"
+    },
+    arc: {
+      signature: "arc(x: Number, y: Number, w: Number, h: Number, start: Number, stop: Number, mode?: Constant, detail?: Integer)",
+      description: "Draws an arc.",
+      example: "arc(50, 50, 80, 80, 0, PI + HALF_PI)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/arc"
+    },
+    ellipse: {
+      signature: "ellipse(x: Number, y: Number, w: Number, h?: Number)",
+      description: "Draws an ellipse (oval).",
+      example: "ellipse(50, 50, 80, 80)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/ellipse"
+    },
+    circle: {
+      signature: "circle(x: Number, y: Number, d: Number)",
+      description: "Draws a circle.",
+      example: "circle(50, 50, 25)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/circle"
+    },
+    line: {
+      signature: "line(x1: Number, y1: Number, x2: Number, y2: Number)",
+      description: "Draws a straight line between two points.",
+      example: "line(30, 20, 85, 75)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/line"
+    },
+    point: {
+      signature: "point(x: Number, y: Number, z?: Number)",
+      description: "Draws a single point in space.",
+      example: "point(30, 20)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/point"
+    },
+    quad: {
+      signature: "quad(x1: Number, y1: Number, x2: Number, y2: Number, x3: Number, y3: Number, x4: Number, y4: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a quadrilateral (four-sided shape).",
+      example: "quad(20, 20, 80, 20, 80, 80, 20, 80)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/quad"
+    },
+    rect: {
+      signature: "rect(x: Number, y: Number, w: Number, h?: Number, tl?: Number, tr?: Number, br?: Number, bl?: Number)",
+      description: "Draws a rectangle.",
+      example: "rect(30, 20, 55, 55)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/rect"
+    },
+    square: {
+      signature: "square(x: Number, y: Number, s: Number, tl?: Number, tr?: Number, br?: Number, bl?: Number)",
+      description: "Draws a square.",
+      example: "square(30, 20, 55)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/square"
+    },
+    triangle: {
+      signature: "triangle(x1: Number, y1: Number, x2: Number, y2: Number, x3: Number, y3: Number)",
+      description: "Draws a triangle.",
+      example: "triangle(30, 75, 58, 20, 86, 75)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/triangle"
+    },
+    ellipseMode: {
+      signature: "ellipseMode(mode: Constant)",
+      description: "Changes where ellipses, circles, and arcs are drawn.",
+      example: "ellipseMode(RADIUS)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/ellipseMode"
+    },
+    noSmooth: {
+      signature: "noSmooth()",
+      description: "Draws certain features with jagged (aliased) edges.",
+      example: "noSmooth()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/noSmooth"
+    },
+    rectMode: {
+      signature: "rectMode(mode: Constant)",
+      description: "Changes where rectangles and squares are drawn.",
+      example: "rectMode(CORNER)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/rectMode"
+    },
+    smooth: {
+      signature: "smooth()",
+      description: "Draws certain features with smooth (antialiased) edges.",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/smooth"
+    },
+    strokeCap: {
+      signature: "strokeCap(cap: Constant)",
+      description: "Sets the style for rendering the ends of lines.",
+      example: "strokeCap(ROUND)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/strokeCap"
+    },
+    strokeJoin: {
+      signature: "strokeJoin(join: Constant)",
+      description: "Sets the style of the joints that connect line segments.",
+      example: "strokeJoin(MITER)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/strokeJoin"
+    },
+    strokeWeight: {
+      signature: "strokeWeight(weight: Number)",
+      description: "Sets the width of the stroke used for points, lines, and the outlines of shapes.",
+      example: "strokeWeight(4)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/strokeWeight"
+    },
+    bezier: {
+      signature: "bezier(x1: Number, y1: Number, x2: Number, y2: Number, x3: Number, y3: Number, x4: Number, y4: Number)",
+      description: "Draws a B\xE9zier curve.",
+      example: "bezier(85, 20, 10, 10, 90, 90, 15, 80)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezier"
+    },
+    bezierDetail: {
+      signature: "bezierDetail(detail: Number)",
+      description: "Sets the number of segments used to draw B\xE9zier curves in WebGL mode.",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezierDetail"
+    },
+    bezierPoint: {
+      signature: "bezierPoint(a: Number, b: Number, c: Number, d: Number, t: Number)",
+      description: "Calculates coordinates along a B\xE9zier curve using interpolation.",
+      example: "let x = bezierPoint(x1, x2, x3, x4, 0)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezierPoint"
+    },
+    bezierTangent: {
+      signature: "bezierTangent(a: Number, b: Number, c: Number, d: Number, t: Number)",
+      description: "Calculates coordinates along a line that's tangent to a B\xE9zier curve.",
+      example: "let tx = 0.1 * bezierTangent(x1, x2, x3, x4, 0)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezierTangent"
+    },
+    curve: {
+      signature: "curve(x1: Number, y1: Number, x2: Number, y2: Number, x3: Number, y3: Number, x4: Number, y4: Number)",
+      description: "Draws a curve using a Catmull-Rom spline.",
+      example: "curve(5, 26, 73, 24, 73, 61, 15, 65)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curve"
+    },
+    curveDetail: {
+      signature: "curveDetail(resolution: Number)",
+      description: "Sets the number of segments used to draw spline curves in WebGL mode.",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curveDetail"
+    },
+    curveTightness: {
+      signature: "curveTightness(amount: Number)",
+      description: "Adjusts the way curve() and curveVertex() draw.",
+      example: "curveTightness(t)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curveTightness"
+    },
+    curvePoint: {
+      signature: "curvePoint(a: Number, b: Number, c: Number, d: Number, t: Number)",
+      description: "Calculates coordinates along a spline curve using interpolation.",
+      example: "let x = curvePoint(x1, x2, x3, x4, 0)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curvePoint"
+    },
+    curveTangent: {
+      signature: "curveTangent(a: Number, b: Number, c: Number, d: Number, t: Number)",
+      description: "Calculates coordinates along a line that's tangent to a spline curve.",
+      example: "let tx = 0.2 * curveTangent(x1, x2, x3, x4, 0)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curveTangent"
+    },
+    beginContour: {
+      signature: "beginContour()",
+      description: "Begins creating a hole within a flat shape.",
+      example: "beginContour()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/beginContour"
+    },
+    beginShape: {
+      signature: "beginShape(kind?: Constant)",
+      description: "Begins adding vertices to a custom shape.",
+      example: "beginShape()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/beginShape"
+    },
+    bezierVertex: {
+      signature: "bezierVertex(x2: Number, y2: Number, x3: Number, y3: Number, x4: Number, y4: Number)",
+      description: "Adds a B\xE9zier curve segment to a custom shape.",
+      example: "bezierVertex(80, 0, 80, 75, 30, 75)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/bezierVertex"
+    },
+    curveVertex: {
+      signature: "curveVertex(x: Number, y: Number)",
+      description: "Adds a spline curve segment to a custom shape.",
+      example: "curveVertex(32, 91)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/curveVertex"
+    },
+    endContour: {
+      signature: "endContour()",
+      description: "Stops creating a hole within a flat shape.",
+      example: "endContour()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/endContour"
+    },
+    endShape: {
+      signature: "endShape(mode?: Constant, count?: Integer)",
+      description: "Stops adding vertices to a custom shape.",
+      example: "endShape(CLOSE)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/endShape"
+    },
+    quadraticVertex: {
+      signature: "quadraticVertex(cx: Number, cy: Number, x3: Number, y3: Number)",
+      description: "Adds a quadratic B\xE9zier curve segment to a custom shape.",
+      example: "quadraticVertex(80, 20, 50, 50)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/quadraticVertex"
+    },
+    vertex: {
+      signature: "vertex(x: Number, y: Number)",
+      description: "Adds a vertex to a custom shape.",
+      example: "vertex(30, 20)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/vertex"
+    },
+    normal: {
+      signature: "normal(vector: p5.Vector)",
+      description: "Sets the normal vector for vertices in a custom 3D shape.",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/normal"
+    },
+    VERSION: {
+      signature: "VERSION",
+      description: "Version of this p5.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/VERSION"
+    },
+    P2D: {
+      signature: "P2D",
+      description: "The default, two-dimensional renderer.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/P2D"
+    },
+    WEBGL: {
+      signature: "WEBGL",
+      description: "One of the two render modes in p5.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/WEBGL"
+    },
+    WEBGL2: {
+      signature: "WEBGL2",
+      description: "One of the two possible values of a WebGL canvas (either WEBGL or WEBGL2), which can be used to determine what capabilities the rendering environment has.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/WEBGL2"
+    },
+    ARROW: {
+      signature: "ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ARROW"
+    },
+    CROSS: {
+      signature: "CROSS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CROSS"
+    },
+    HAND: {
+      signature: "HAND",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HAND"
+    },
+    MOVE: {
+      signature: "MOVE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/MOVE"
+    },
+    TEXT: {
+      signature: "TEXT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TEXT"
+    },
+    WAIT: {
+      signature: "WAIT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/WAIT"
+    },
+    HALF_PI: {
+      signature: "HALF_PI",
+      description: "A `Number` constant that's approximately 1.",
+      example: "arc(50, 50, 80, 80, 0, HALF_PI)",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HALF_PI"
+    },
+    PI: {
+      signature: "PI",
+      description: "A `Number` constant that's approximately 3.",
+      example: "arc(50, 50, 80, 80, 0, PI)",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/PI"
+    },
+    QUARTER_PI: {
+      signature: "QUARTER_PI",
+      description: "A `Number` constant that's approximately 0.",
+      example: "arc(50, 50, 80, 80, 0, QUARTER_PI)",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/QUARTER_PI"
+    },
+    TAU: {
+      signature: "TAU",
+      description: "A `Number` constant that's approximately 6.",
+      example: "arc(50, 50, 80, 80, 0, TAU)",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TAU"
+    },
+    TWO_PI: {
+      signature: "TWO_PI",
+      description: "A `Number` constant that's approximately 6.",
+      example: "arc(50, 50, 80, 80, 0, TWO_PI)",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TWO_PI"
+    },
+    DEGREES: {
+      signature: "DEGREES",
+      description: "A `String` constant that's used to set the angleMode().",
+      example: "angleMode(DEGREES)",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DEGREES"
+    },
+    RADIANS: {
+      signature: "RADIANS",
+      description: "A `String` constant that's used to set the angleMode().",
+      example: "angleMode(RADIANS)",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RADIANS"
+    },
+    CORNER: {
+      signature: "CORNER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CORNER"
+    },
+    CORNERS: {
+      signature: "CORNERS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CORNERS"
+    },
+    RADIUS: {
+      signature: "RADIUS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RADIUS"
+    },
+    RIGHT: {
+      signature: "RIGHT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RIGHT"
+    },
+    LEFT: {
+      signature: "LEFT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LEFT"
+    },
+    CENTER: {
+      signature: "CENTER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CENTER"
+    },
+    TOP: {
+      signature: "TOP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TOP"
+    },
+    BOTTOM: {
+      signature: "BOTTOM",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BOTTOM"
+    },
+    BASELINE: {
+      signature: "BASELINE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BASELINE"
+    },
+    POINTS: {
+      signature: "POINTS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/POINTS"
+    },
+    LINES: {
+      signature: "LINES",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LINES"
+    },
+    LINE_STRIP: {
+      signature: "LINE_STRIP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LINE_STRIP"
+    },
+    LINE_LOOP: {
+      signature: "LINE_LOOP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LINE_LOOP"
+    },
+    TRIANGLES: {
+      signature: "TRIANGLES",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TRIANGLES"
+    },
+    TRIANGLE_FAN: {
+      signature: "TRIANGLE_FAN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TRIANGLE_FAN"
+    },
+    TRIANGLE_STRIP: {
+      signature: "TRIANGLE_STRIP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TRIANGLE_STRIP"
+    },
+    QUADS: {
+      signature: "QUADS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/QUADS"
+    },
+    QUAD_STRIP: {
+      signature: "QUAD_STRIP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/QUAD_STRIP"
+    },
+    TESS: {
+      signature: "TESS",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TESS"
+    },
+    CLOSE: {
+      signature: "CLOSE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CLOSE"
+    },
+    OPEN: {
+      signature: "OPEN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/OPEN"
+    },
+    CHORD: {
+      signature: "CHORD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CHORD"
+    },
+    PIE: {
+      signature: "PIE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/PIE"
+    },
+    PROJECT: {
+      signature: "PROJECT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/PROJECT"
+    },
+    SQUARE: {
+      signature: "SQUARE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SQUARE"
+    },
+    ROUND: {
+      signature: "ROUND",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ROUND"
+    },
+    BEVEL: {
+      signature: "BEVEL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BEVEL"
+    },
+    MITER: {
+      signature: "MITER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/MITER"
+    },
+    RGB: {
+      signature: "RGB",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RGB"
+    },
+    HSB: {
+      signature: "HSB",
+      description: "HSB (hue, saturation, brightness) is a type of color model.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HSB"
+    },
+    HSL: {
+      signature: "HSL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HSL"
+    },
+    AUTO: {
+      signature: "AUTO",
+      description: "AUTO allows us to automatically set the width or height of an element (but not both), based on the current height and width of the element.",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/AUTO"
+    },
+    ALT: {
+      signature: "ALT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ALT"
+    },
+    BACKSPACE: {
+      signature: "BACKSPACE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BACKSPACE"
+    },
+    CONTROL: {
+      signature: "CONTROL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CONTROL"
+    },
+    DELETE: {
+      signature: "DELETE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DELETE"
+    },
+    DOWN_ARROW: {
+      signature: "DOWN_ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DOWN_ARROW"
+    },
+    ENTER: {
+      signature: "ENTER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ENTER"
+    },
+    ESCAPE: {
+      signature: "ESCAPE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ESCAPE"
+    },
+    LEFT_ARROW: {
+      signature: "LEFT_ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LEFT_ARROW"
+    },
+    OPTION: {
+      signature: "OPTION",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/OPTION"
+    },
+    RETURN: {
+      signature: "RETURN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RETURN"
+    },
+    RIGHT_ARROW: {
+      signature: "RIGHT_ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RIGHT_ARROW"
+    },
+    SHIFT: {
+      signature: "SHIFT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SHIFT"
+    },
+    TAB: {
+      signature: "TAB",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TAB"
+    },
+    UP_ARROW: {
+      signature: "UP_ARROW",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/UP_ARROW"
+    },
+    BLEND: {
+      signature: "BLEND",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BLEND"
+    },
+    REMOVE: {
+      signature: "REMOVE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/REMOVE"
+    },
+    ADD: {
+      signature: "ADD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ADD"
+    },
+    DARKEST: {
+      signature: "DARKEST",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DARKEST"
+    },
+    LIGHTEST: {
+      signature: "LIGHTEST",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LIGHTEST"
+    },
+    DIFFERENCE: {
+      signature: "DIFFERENCE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DIFFERENCE"
+    },
+    SUBTRACT: {
+      signature: "SUBTRACT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SUBTRACT"
+    },
+    EXCLUSION: {
+      signature: "EXCLUSION",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/EXCLUSION"
+    },
+    MULTIPLY: {
+      signature: "MULTIPLY",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/MULTIPLY"
+    },
+    SCREEN: {
+      signature: "SCREEN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SCREEN"
+    },
+    REPLACE: {
+      signature: "REPLACE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/REPLACE"
+    },
+    OVERLAY: {
+      signature: "OVERLAY",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/OVERLAY"
+    },
+    HARD_LIGHT: {
+      signature: "HARD_LIGHT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HARD_LIGHT"
+    },
+    SOFT_LIGHT: {
+      signature: "SOFT_LIGHT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SOFT_LIGHT"
+    },
+    DODGE: {
+      signature: "DODGE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DODGE"
+    },
+    BURN: {
+      signature: "BURN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BURN"
+    },
+    THRESHOLD: {
+      signature: "THRESHOLD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/THRESHOLD"
+    },
+    GRAY: {
+      signature: "GRAY",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/GRAY"
+    },
+    OPAQUE: {
+      signature: "OPAQUE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/OPAQUE"
+    },
+    INVERT: {
+      signature: "INVERT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/INVERT"
+    },
+    POSTERIZE: {
+      signature: "POSTERIZE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/POSTERIZE"
+    },
+    DILATE: {
+      signature: "DILATE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/DILATE"
+    },
+    ERODE: {
+      signature: "ERODE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ERODE"
+    },
+    BLUR: {
+      signature: "BLUR",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BLUR"
+    },
+    NORMAL: {
+      signature: "NORMAL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/NORMAL"
+    },
+    ITALIC: {
+      signature: "ITALIC",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/ITALIC"
+    },
+    BOLD: {
+      signature: "BOLD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BOLD"
+    },
+    BOLDITALIC: {
+      signature: "BOLDITALIC",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BOLDITALIC"
+    },
+    CHAR: {
+      signature: "CHAR",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CHAR"
+    },
+    WORD: {
+      signature: "WORD",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/WORD"
+    },
+    LINEAR: {
+      signature: "LINEAR",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LINEAR"
+    },
+    QUADRATIC: {
+      signature: "QUADRATIC",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/QUADRATIC"
+    },
+    BEZIER: {
+      signature: "BEZIER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/BEZIER"
+    },
+    CURVE: {
+      signature: "CURVE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CURVE"
+    },
+    STROKE: {
+      signature: "STROKE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/STROKE"
+    },
+    FILL: {
+      signature: "FILL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/FILL"
+    },
+    TEXTURE: {
+      signature: "TEXTURE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/TEXTURE"
+    },
+    IMMEDIATE: {
+      signature: "IMMEDIATE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/IMMEDIATE"
+    },
+    IMAGE: {
+      signature: "IMAGE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/IMAGE"
+    },
+    NEAREST: {
+      signature: "NEAREST",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/NEAREST"
+    },
+    REPEAT: {
+      signature: "REPEAT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/REPEAT"
+    },
+    CLAMP: {
+      signature: "CLAMP",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CLAMP"
+    },
+    MIRROR: {
+      signature: "MIRROR",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/MIRROR"
+    },
+    FLAT: {
+      signature: "FLAT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/FLAT"
+    },
+    SMOOTH: {
+      signature: "SMOOTH",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/SMOOTH"
+    },
+    LANDSCAPE: {
+      signature: "LANDSCAPE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LANDSCAPE"
+    },
+    PORTRAIT: {
+      signature: "PORTRAIT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/PORTRAIT"
+    },
+    GRID: {
+      signature: "GRID",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/GRID"
+    },
+    AXES: {
+      signature: "AXES",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/AXES"
+    },
+    LABEL: {
+      signature: "LABEL",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/LABEL"
+    },
+    FALLBACK: {
+      signature: "FALLBACK",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/FALLBACK"
+    },
+    CONTAIN: {
+      signature: "CONTAIN",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/CONTAIN"
+    },
+    COVER: {
+      signature: "COVER",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/COVER"
+    },
+    UNSIGNED_BYTE: {
+      signature: "UNSIGNED_BYTE",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/UNSIGNED_BYTE"
+    },
+    UNSIGNED_INT: {
+      signature: "UNSIGNED_INT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/UNSIGNED_INT"
+    },
+    FLOAT: {
+      signature: "FLOAT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/FLOAT"
+    },
+    HALF_FLOAT: {
+      signature: "HALF_FLOAT",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/HALF_FLOAT"
+    },
+    RGBA: {
+      signature: "RGBA",
+      description: "",
+      kind: "variable",
+      category: "Constants",
+      sourceUrl: "https://p5js.org/reference/#/p5/RGBA"
+    },
+    print: {
+      signature: "print(contents: Any)",
+      description: "Displays text in the web browser's console.",
+      example: "print('hello, world')",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/print"
+    },
+    frameCount: {
+      signature: "frameCount",
+      description: "A `Number` variable that tracks the number of frames drawn since the sketch started.",
+      example: "text(frameCount, 50, 50)",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/frameCount"
+    },
+    deltaTime: {
+      signature: "deltaTime",
+      description: "A `Number` variable that tracks the number of milliseconds it took to draw the last frame.",
+      example: "let deltaX = speed * deltaTime",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/deltaTime"
+    },
+    focused: {
+      signature: "focused",
+      description: "A `Boolean` variable that's `true` if the browser is focused and `false` if not.",
+      example: "if (focused === true) {",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/focused"
+    },
+    cursor: {
+      signature: "cursor(type: String|Constant, x?: Number, y?: Number)",
+      description: "Changes the cursor's appearance.",
+      example: "cursor(CROSS)",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/cursor"
+    },
+    frameRate: {
+      signature: "frameRate(fps: Number)",
+      description: "Sets the number of frames to draw per second.",
+      example: "frameRate(10)",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/frameRate"
+    },
+    getTargetFrameRate: {
+      signature: "getTargetFrameRate()",
+      description: "Returns the target frame rate.",
+      example: "let fps = getTargetFrameRate()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/getTargetFrameRate"
+    },
+    noCursor: {
+      signature: "noCursor()",
+      description: "Hides the cursor from view.",
+      example: "noCursor()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/noCursor"
+    },
+    webglVersion: {
+      signature: "webglVersion",
+      description: "A `String` variable with the WebGL version in use.",
+      example: "text(webglVersion, 42, 54)",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/webglVersion"
+    },
+    displayWidth: {
+      signature: "displayWidth",
+      description: "A `Number` variable that stores the width of the screen display.",
+      example: "createCanvas(displayWidth, displayHeight)",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/displayWidth"
+    },
+    displayHeight: {
+      signature: "displayHeight",
+      description: "A `Number` variable that stores the height of the screen display.",
+      example: "createCanvas(displayWidth, displayHeight)",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/displayHeight"
+    },
+    windowWidth: {
+      signature: "windowWidth",
+      description: "A `Number` variable that stores the width of the browser's viewport.",
+      example: "createCanvas(windowWidth, windowHeight)",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/windowWidth"
+    },
+    windowHeight: {
+      signature: "windowHeight",
+      description: "A `Number` variable that stores the height of the browser's viewport.",
+      example: "createCanvas(windowWidth, windowHeight)",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/windowHeight"
+    },
+    windowResized: {
+      signature: "windowResized(event?: Event)",
+      description: "A function that's called when the browser window is resized.",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/windowResized"
+    },
+    width: {
+      signature: "width",
+      description: "A `Number` variable that stores the width of the canvas in pixels.",
+      example: "text(width, 42, 54)",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/width"
+    },
+    height: {
+      signature: "height",
+      description: "A `Number` variable that stores the height of the canvas in pixels.",
+      example: "text(height, 42, 54)",
+      kind: "variable",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/height"
+    },
+    fullscreen: {
+      signature: "fullscreen(val?: Boolean)",
+      description: "Toggles full-screen mode or returns the current mode.",
+      example: "let fs = fullscreen()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/fullscreen"
+    },
+    pixelDensity: {
+      signature: "pixelDensity(val?: Number)",
+      description: "Sets the pixel density or returns the current density.",
+      example: "pixelDensity(1)",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/pixelDensity"
+    },
+    displayDensity: {
+      signature: "displayDensity()",
+      description: "Returns the display's current pixel density.",
+      example: "let d = displayDensity()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/displayDensity"
+    },
+    getURL: {
+      signature: "getURL()",
+      description: "Returns the sketch's current URL as a `String`.",
+      example: "let url = getURL()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/getURL"
+    },
+    getURLPath: {
+      signature: "getURLPath()",
+      description: "Returns the current URL path as an `Array` of `String`s.",
+      example: "let path = getURLPath()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/getURLPath"
+    },
+    getURLParams: {
+      signature: "getURLParams()",
+      description: "Returns the current URL parameters in an `Object`.",
+      example: "let params = getURLParams()",
+      kind: "function",
+      category: "Environment",
+      sourceUrl: "https://p5js.org/reference/#/p5/getURLParams"
+    },
+    preload: {
+      signature: "preload()",
+      description: "A function that's called once to load assets before the sketch runs.",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/preload"
+    },
+    setup: {
+      signature: "setup()",
+      description: "A function that's called once when the sketch begins running.",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/setup"
+    },
+    draw: {
+      signature: "draw()",
+      description: "A function that's called repeatedly while the sketch runs.",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/draw"
+    },
+    remove: {
+      signature: "remove()",
+      description: "Removes the sketch from the web page.",
+      example: "remove()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/remove"
+    },
+    disableFriendlyErrors: {
+      signature: "disableFriendlyErrors",
+      description: "Turns off the parts of the Friendly Error System (FES) that impact performance.",
+      kind: "variable",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/disableFriendlyErrors"
+    },
+    let: {
+      signature: "let",
+      description: "Declares a new variable.",
+      example: "let message = 'Hello, \u{1F30D}!'",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/let"
+    },
+    if: {
+      signature: "if",
+      description: "A way to choose whether to run a block of code.",
+      example: "if (mouseIsPressed === true) {",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/if"
+    },
+    function: {
+      signature: "function",
+      description: "A named group of statements.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/function"
+    },
+    Boolean: {
+      signature: "Boolean",
+      description: "A value that's either `true` or `false`.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/Boolean"
+    },
+    String: {
+      signature: "String",
+      description: "A sequence of text characters.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/String"
+    },
+    Number: {
+      signature: "Number",
+      description: "A number that can be positive, negative, or zero.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/Number"
+    },
+    Object: {
+      signature: "Object",
+      description: "A container for data that's stored as key-value pairs.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/Object"
+    },
+    Array: {
+      signature: "Array",
+      description: "A list that keeps several pieces of data in order.",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/Array"
+    },
+    class: {
+      signature: "class",
+      description: "A template for creating objects of a particular type.",
+      example: "class Frog {",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/class"
+    },
+    for: {
+      signature: "for",
+      description: "A way to repeat a block of code when the number of iterations is known.",
+      example: "for (let x = 10; x < 100; x += 20) {",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/for"
+    },
+    while: {
+      signature: "while",
+      description: "A way to repeat a block of code.",
+      example: "while (x < 100) {",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/while"
+    },
+    console: {
+      signature: "console",
+      description: "Prints a message to the web browser's console.",
+      example: "console.log('Hello!')",
+      kind: "variable",
+      category: "Foundation",
+      sourceUrl: "https://p5js.org/reference/#/p5/console"
+    },
+    createCanvas: {
+      signature: "createCanvas(width?: Number, height?: Number, renderer?: Constant, canvas?: HTMLCanvasElement)",
+      description: "Creates a canvas element on the web page.",
+      example: "createCanvas(100, 100)",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/createCanvas"
+    },
+    resizeCanvas: {
+      signature: "resizeCanvas(width: Number, height: Number, noRedraw?: Boolean)",
+      description: "Resizes the canvas to a given width and height.",
+      example: "resizeCanvas(50, 50)",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/resizeCanvas"
+    },
+    noCanvas: {
+      signature: "noCanvas()",
+      description: "Removes the default canvas.",
+      example: "noCanvas()",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/noCanvas"
+    },
+    createGraphics: {
+      signature: "createGraphics(width: Number, height: Number, renderer?: Constant, canvas?: HTMLCanvasElement)",
+      description: "Creates a p5.",
+      example: "pg = createGraphics(50, 50)",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/createGraphics"
+    },
+    createFramebuffer: {
+      signature: "createFramebuffer(options?: Object)",
+      description: "Creates and a new p5.",
+      example: "myBuffer = createFramebuffer()",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/createFramebuffer"
+    },
+    clearDepth: {
+      signature: "clearDepth(depth?: Number)",
+      description: "Clears the depth buffer in WebGL mode.",
+      example: "clearDepth()",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/clearDepth"
+    },
+    blendMode: {
+      signature: "blendMode(mode: Constant)",
+      description: "Sets the way colors blend when added to the canvas.",
+      example: "blendMode(BLEND)",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/blendMode"
+    },
+    drawingContext: {
+      signature: "drawingContext",
+      description: "A system variable that provides direct access to the sketch's `&lt;canvas&gt;` element.",
+      example: "drawingContext.shadowOffsetX = 5",
+      kind: "variable",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/drawingContext"
+    },
+    noLoop: {
+      signature: "noLoop()",
+      description: "Stops the code in draw() from running repeatedly.",
+      example: "noLoop()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/noLoop"
+    },
+    loop: {
+      signature: "loop()",
+      description: "Resumes the draw loop after noLoop() has been called.",
+      example: "loop()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/loop"
+    },
+    isLooping: {
+      signature: "isLooping()",
+      description: "Returns `true` if the draw loop is running and `false` if not.",
+      example: "if (isLooping() === true) {",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/isLooping"
+    },
+    push: {
+      signature: "push()",
+      description: "Begins a drawing group that contains its own styles and transformations.",
+      example: "push()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/push"
+    },
+    pop: {
+      signature: "pop()",
+      description: "Ends a drawing group that contains its own styles and transformations.",
+      example: "pop()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/pop"
+    },
+    redraw: {
+      signature: "redraw(n?: Integer)",
+      description: "Runs the code in draw() once.",
+      example: "redraw()",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/redraw"
+    },
+    p5: {
+      signature: "p5(sketch: Object, node: String|HTMLElement)",
+      description: 'Creates a new sketch in "instance" mode.',
+      example: "new p5(sketch)",
+      kind: "function",
+      category: "Structure",
+      sourceUrl: "https://p5js.org/reference/#/p5/p5"
+    },
+    applyMatrix: {
+      signature: "applyMatrix(arr: Array)",
+      description: "Applies a transformation matrix to the coordinate system.",
+      example: "applyMatrix(1, 0, 0, 1, 50, 50)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/applyMatrix"
+    },
+    resetMatrix: {
+      signature: "resetMatrix()",
+      description: "Clears all transformations applied to the coordinate system.",
+      example: "resetMatrix()",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/resetMatrix"
+    },
+    rotate: {
+      signature: "rotate(angle: Number, axis?: p5.Vector|Number[])",
+      description: "Rotates the coordinate system.",
+      example: "rotate(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotate"
+    },
+    rotateX: {
+      signature: "rotateX(angle: Number)",
+      description: "Rotates the coordinate system about the x-axis in WebGL mode.",
+      example: "rotateX(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotateX"
+    },
+    rotateY: {
+      signature: "rotateY(angle: Number)",
+      description: "Rotates the coordinate system about the y-axis in WebGL mode.",
+      example: "rotateY(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotateY"
+    },
+    rotateZ: {
+      signature: "rotateZ(angle: Number)",
+      description: "Rotates the coordinate system about the z-axis in WebGL mode.",
+      example: "rotateZ(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotateZ"
+    },
+    scale: {
+      signature: "scale(s: Number|p5.Vector|Number[], y?: Number, z?: Number)",
+      description: "Scales the coordinate system.",
+      example: "scale(0.5)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/scale"
+    },
+    shearX: {
+      signature: "shearX(angle: Number)",
+      description: "Shears the x-axis so that shapes appear skewed.",
+      example: "shearX(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/shearX"
+    },
+    shearY: {
+      signature: "shearY(angle: Number)",
+      description: "Shears the y-axis so that shapes appear skewed.",
+      example: "shearY(QUARTER_PI)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/shearY"
+    },
+    translate: {
+      signature: "translate(x: Number, y: Number, z?: Number)",
+      description: "Translates the coordinate system.",
+      example: "translate(50, 50)",
+      kind: "function",
+      category: "Transform",
+      sourceUrl: "https://p5js.org/reference/#/p5/translate"
+    },
+    storeItem: {
+      signature: "storeItem(key: String, value: String|Number|Boolean|Object|Array)",
+      description: "Stores a value in the web browser's local storage.",
+      example: "storeItem('name', 'Feist')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/storeItem"
+    },
+    getItem: {
+      signature: "getItem(key: String)",
+      description: "Returns a value in the web browser's local storage.",
+      example: "let name = getItem('name')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/getItem"
+    },
+    clearStorage: {
+      signature: "clearStorage()",
+      description: "Removes all items in the web browser's local storage.",
+      example: "clearStorage()",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/clearStorage"
+    },
+    removeItem: {
+      signature: "removeItem(key: String)",
+      description: "Removes an item from the web browser's local storage.",
+      example: "removeItem('score')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/removeItem"
+    },
+    createStringDict: {
+      signature: "createStringDict(key: String, value: String)",
+      description: "Creates a new instance of p5.",
+      example: "let myDictionary = createStringDict('p5', 'js')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/createStringDict"
+    },
+    createNumberDict: {
+      signature: "createNumberDict(key: Number, value: Number)",
+      description: "Creates a new instance of p5.",
+      example: "let myDictionary = createNumberDict(100, 42)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/createNumberDict"
+    },
+    select: {
+      signature: "select(selectors: String, container?: String|p5.Element|HTMLElement)",
+      description: "Searches the page for the first element that matches the given CSS selector string.",
+      example: "let cnv = select('canvas')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/select"
+    },
+    selectAll: {
+      signature: "selectAll(selectors: String, container?: String|p5.Element|HTMLElement)",
+      description: "Searches the page for all elements that matches the given CSS selector string.",
+      example: "let buttons = selectAll('button')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/selectAll"
+    },
+    removeElements: {
+      signature: "removeElements()",
+      description: "Removes all elements created by p5.",
+      example: "removeElements()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/removeElements"
+    },
+    changed: {
+      signature: "changed(fxn: Function|Boolean)",
+      description: "Calls a function when the element changes.",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/changed"
+    },
+    input: {
+      signature: "input(fxn: Function|Boolean)",
+      description: "Calls a function when the element receives input.",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/input"
+    },
+    createDiv: {
+      signature: "createDiv(html?: String)",
+      description: "Creates a `&lt;div&gt;&lt;/div&gt;` element.",
+      example: "let div = createDiv('p5*js')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createDiv"
+    },
+    createP: {
+      signature: "createP(html?: String)",
+      description: "Creates a paragraph element.",
+      example: "let p = createP('Tell me a story.')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createP"
+    },
+    createSpan: {
+      signature: "createSpan(html?: String)",
+      description: "Creates a `&lt;span&gt;&lt;/span&gt;` element.",
+      example: "let span = createSpan('p5*js')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createSpan"
+    },
+    createImg: {
+      signature: "createImg(src: String, alt: String)",
+      description: "Creates an `&lt;img&gt;` element that can appear outside of the canvas.",
+      example: "let img = createImg(",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createImg"
+    },
+    createA: {
+      signature: "createA(href: String, html: String, target?: String)",
+      description: "Creates an `&lt;a&gt;&lt;/a&gt;` element that links to another web page.",
+      example: "let a = createA('https://p5js.org/', 'p5*js')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createA"
+    },
+    createSlider: {
+      signature: "createSlider(min: Number, max: Number, value?: Number, step?: Number)",
+      description: "Creates a slider `&lt;input&gt;&lt;/input&gt;` element.",
+      example: "slider = createSlider(0, 255)",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createSlider"
+    },
+    createButton: {
+      signature: "createButton(label: String, value?: String)",
+      description: "Creates a `&lt;button&gt;&lt;/button&gt;` element.",
+      example: "let button = createButton('click me')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createButton"
+    },
+    createCheckbox: {
+      signature: "createCheckbox(label?: String, value?: Boolean)",
+      description: "Creates a checkbox `&lt;input&gt;&lt;/input&gt;` element.",
+      example: "checkbox = createCheckbox()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createCheckbox"
+    },
+    createSelect: {
+      signature: "createSelect(multiple?: Boolean)",
+      description: "Creates a dropdown menu `&lt;select&gt;&lt;/select&gt;` element.",
+      example: "mySelect = createSelect()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createSelect"
+    },
+    createRadio: {
+      signature: "createRadio(containerElement?: Object)",
+      description: "Creates a radio button element.",
+      example: "myRadio = createRadio()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createRadio"
+    },
+    createColorPicker: {
+      signature: "createColorPicker(value?: String|p5.Color)",
+      description: "Creates a color picker element.",
+      example: "myPicker = createColorPicker('deeppink')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createColorPicker"
+    },
+    createInput: {
+      signature: "createInput(value?: String, type?: String)",
+      description: "Creates a text `&lt;input&gt;&lt;/input&gt;` element.",
+      example: "myInput = createInput()",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createInput"
+    },
+    createFileInput: {
+      signature: "createFileInput(callback: Function, multiple?: Boolean)",
+      description: "Creates an `&lt;input&gt;&lt;/input&gt;` element of type `'file'`.",
+      example: "input = createFileInput(handleImage)",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createFileInput"
+    },
+    createVideo: {
+      signature: "createVideo(src: String|String[], callback?: Function)",
+      description: "Creates a `&lt;video&gt;` element for simple audio/video playback.",
+      example: "let video = createVideo('assets/small.mp4')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createVideo"
+    },
+    createAudio: {
+      signature: "createAudio(src?: String|String[], callback?: Function)",
+      description: "Creates a hidden `&lt;audio&gt;` element for simple audio playback.",
+      example: "let beat = createAudio('assets/beat.mp3')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createAudio"
+    },
+    createCapture: {
+      signature: "createCapture(type?: String|Constant|Object, flipped?: Object, callback?: Function)",
+      description: 'Creates a `&lt;video&gt;` element that "captures" the audio/video stream from the webcam and microphone.',
+      example: "createCapture(VIDEO)",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createCapture"
+    },
+    createElement: {
+      signature: "createElement(tag: String, content?: String)",
+      description: "Creates a new p5.",
+      example: "createElement('h5')",
+      kind: "function",
+      category: "DOM",
+      sourceUrl: "https://p5js.org/reference/#/p5/createElement"
+    },
+    deviceOrientation: {
+      signature: "deviceOrientation",
+      description: "The system variable deviceOrientation always contains the orientation of the device.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/deviceOrientation"
+    },
+    accelerationX: {
+      signature: "accelerationX",
+      description: "The system variable accelerationX always contains the acceleration of the device along the x axis.",
+      example: "ellipse(width / 2, height / 2, accelerationX)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/accelerationX"
+    },
+    accelerationY: {
+      signature: "accelerationY",
+      description: "The system variable accelerationY always contains the acceleration of the device along the y axis.",
+      example: "ellipse(width / 2, height / 2, accelerationY)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/accelerationY"
+    },
+    accelerationZ: {
+      signature: "accelerationZ",
+      description: "The system variable accelerationZ always contains the acceleration of the device along the z axis.",
+      example: "ellipse(width / 2, height / 2, accelerationZ)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/accelerationZ"
+    },
+    pAccelerationX: {
+      signature: "pAccelerationX",
+      description: "The system variable pAccelerationX always contains the acceleration of the device along the x axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pAccelerationX"
+    },
+    pAccelerationY: {
+      signature: "pAccelerationY",
+      description: "The system variable pAccelerationY always contains the acceleration of the device along the y axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pAccelerationY"
+    },
+    pAccelerationZ: {
+      signature: "pAccelerationZ",
+      description: "The system variable pAccelerationZ always contains the acceleration of the device along the z axis in the frame previous to the current frame.",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pAccelerationZ"
+    },
+    rotationX: {
+      signature: "rotationX",
+      description: "The system variable rotationX always contains the rotation of the device along the x axis.",
+      example: "rotateX(radians(rotationX))",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotationX"
+    },
+    rotationY: {
+      signature: "rotationY",
+      description: "The system variable rotationY always contains the rotation of the device along the y axis.",
+      example: "rotateY(radians(rotationY))",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotationY"
+    },
+    rotationZ: {
+      signature: "rotationZ",
+      description: "The system variable rotationZ always contains the rotation of the device along the z axis.",
+      example: "rotateZ(radians(rotationZ))",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/rotationZ"
+    },
+    pRotationX: {
+      signature: "pRotationX",
+      description: "The system variable pRotationX always contains the rotation of the device along the x axis in the frame previous to the current frame.",
+      example: "let pRX = pRotationX + 180",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pRotationX"
+    },
+    pRotationY: {
+      signature: "pRotationY",
+      description: "The system variable pRotationY always contains the rotation of the device along the y axis in the frame previous to the current frame.",
+      example: "let pRY = pRotationY + 180",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pRotationY"
+    },
+    pRotationZ: {
+      signature: "pRotationZ",
+      description: "The system variable pRotationZ always contains the rotation of the device along the z axis in the frame previous to the current frame.",
+      example: "(rotationZ - pRotationZ > 0 && rotationZ - pRotationZ < 270) ||",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pRotationZ"
+    },
+    turnAxis: {
+      signature: "turnAxis",
+      description: "When a device is rotated, the axis that triggers the deviceTurned() method is stored in the turnAxis variable.",
+      example: "if (turnAxis === 'X') {",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/turnAxis"
+    },
+    setMoveThreshold: {
+      signature: "setMoveThreshold(value: Number)",
+      description: "The setMoveThreshold() function is used to set the movement threshold for the deviceMoved() function.",
+      example: "setMoveThreshold(threshold)",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/setMoveThreshold"
+    },
+    setShakeThreshold: {
+      signature: "setShakeThreshold(value: Number)",
+      description: "The setShakeThreshold() function is used to set the movement threshold for the deviceShaken() function.",
+      example: "setShakeThreshold(threshold)",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/setShakeThreshold"
+    },
+    deviceMoved: {
+      signature: "deviceMoved()",
+      description: "The deviceMoved() function is called when the device is moved by more than the threshold value along X, Y or Z axis.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/deviceMoved"
+    },
+    deviceTurned: {
+      signature: "deviceTurned()",
+      description: "The deviceTurned() function is called when the device rotates by more than 90 degrees continuously.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/deviceTurned"
+    },
+    deviceShaken: {
+      signature: "deviceShaken()",
+      description: "The deviceShaken() function is called when the device total acceleration changes of accelerationX and accelerationY values is more than the threshold value.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/deviceShaken"
+    },
+    keyIsPressed: {
+      signature: "keyIsPressed",
+      description: "A `Boolean` system variable that's `true` if any key is currently pressed and `false` if not.",
+      example: "if (keyIsPressed === true) {",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyIsPressed"
+    },
+    key: {
+      signature: "key",
+      description: "A `String` system variable that contains the value of the last key typed.",
+      example: "'A gray square. The last key pressed is displayed at the center.'",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/key"
+    },
+    keyCode: {
+      signature: "keyCode",
+      description: "A `Number` system variable that contains the code of the last key typed.",
+      example: "text(`${key} : ${keyCode}`, 50, 50)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyCode"
+    },
+    keyPressed: {
+      signature: "keyPressed(event?: KeyboardEvent)",
+      description: "A function that's called once when any key is pressed.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyPressed"
+    },
+    keyReleased: {
+      signature: "keyReleased(event?: KeyboardEvent)",
+      description: "A function that's called once when any key is released.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyReleased"
+    },
+    keyTyped: {
+      signature: "keyTyped(event?: KeyboardEvent)",
+      description: "A function that's called once when keys with printable characters are pressed.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyTyped"
+    },
+    keyIsDown: {
+      signature: "keyIsDown(code: Number)",
+      description: "Returns `true` if the key it\u2019s checking is pressed and `false` if not.",
+      example: "if (keyIsDown(LEFT_ARROW) === true) {",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/keyIsDown"
+    },
+    movedX: {
+      signature: "movedX",
+      description: "A `Number` system variable that tracks the mouse's horizontal movement.",
+      example: "if (movedX > 0) {",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/movedX"
+    },
+    movedY: {
+      signature: "movedY",
+      description: "A `Number` system variable that tracks the mouse's vertical movement.",
+      example: "if (movedY > 0) {",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/movedY"
+    },
+    mouseX: {
+      signature: "mouseX",
+      description: "A `Number` system variable that tracks the mouse's horizontal position.",
+      example: "line(mouseX, 0, mouseX, 100)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseX"
+    },
+    mouseY: {
+      signature: "mouseY",
+      description: "A `Number` system variable that tracks the mouse's vertical position.",
+      example: "line(0, mouseY, 100, mouseY)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseY"
+    },
+    pmouseX: {
+      signature: "pmouseX",
+      description: "A `Number` system variable that tracks the mouse's previous horizontal position.",
+      example: "line(pmouseX, pmouseY, mouseX, mouseY)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pmouseX"
+    },
+    pmouseY: {
+      signature: "pmouseY",
+      description: "A `Number` system variable that tracks the mouse's previous vertical position.",
+      example: "line(pmouseX, pmouseY, mouseX, mouseY)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pmouseY"
+    },
+    winMouseX: {
+      signature: "winMouseX",
+      description: "A `Number` variable that tracks the mouse's horizontal position within the browser.",
+      example: "text(`x: ${winMouseX} y: ${winMouseY}`, 50, 50)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/winMouseX"
+    },
+    winMouseY: {
+      signature: "winMouseY",
+      description: "A `Number` variable that tracks the mouse's vertical position within the browser.",
+      example: "text(`x: ${winMouseX} y: ${winMouseY}`, 50, 50)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/winMouseY"
+    },
+    pwinMouseX: {
+      signature: "pwinMouseX",
+      description: "A `Number` variable that tracks the mouse's previous horizontal position within the browser.",
+      example: "let d = winMouseX - pwinMouseX",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pwinMouseX"
+    },
+    pwinMouseY: {
+      signature: "pwinMouseY",
+      description: "A `Number` variable that tracks the mouse's previous vertical position within the browser.",
+      example: "let d = winMouseY - pwinMouseY",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/pwinMouseY"
+    },
+    mouseButton: {
+      signature: "mouseButton",
+      description: "A String system variable that contains the value of the last mouse button pressed.",
+      example: "text(mouseButton, 50, 50)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseButton"
+    },
+    mouseIsPressed: {
+      signature: "mouseIsPressed",
+      description: "A `Boolean` system variable that's `true` if the mouse is pressed and `false` if not.",
+      example: "text(mouseIsPressed, 25, 50)",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseIsPressed"
+    },
+    mouseMoved: {
+      signature: "mouseMoved(event?: MouseEvent)",
+      description: "A function that's called when the mouse moves.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseMoved"
+    },
+    mouseDragged: {
+      signature: "mouseDragged(event?: MouseEvent)",
+      description: "A function that's called when the mouse moves while a button is pressed.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseDragged"
+    },
+    mousePressed: {
+      signature: "mousePressed(event?: MouseEvent)",
+      description: "A function that's called once when a mouse button is pressed.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mousePressed"
+    },
+    mouseReleased: {
+      signature: "mouseReleased(event?: MouseEvent)",
+      description: "A function that's called once when a mouse button is released.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseReleased"
+    },
+    mouseClicked: {
+      signature: "mouseClicked(event?: MouseEvent)",
+      description: "A function that's called once after a mouse button is pressed and released.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseClicked"
+    },
+    doubleClicked: {
+      signature: "doubleClicked(event?: MouseEvent)",
+      description: "A function that's called once when a mouse button is clicked twice quickly.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/doubleClicked"
+    },
+    mouseWheel: {
+      signature: "mouseWheel(event?: WheelEvent)",
+      description: "A function that's called once when the mouse wheel moves.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/mouseWheel"
+    },
+    requestPointerLock: {
+      signature: "requestPointerLock()",
+      description: "Locks the mouse pointer to its current position and makes it invisible.",
+      example: "requestPointerLock()",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/requestPointerLock"
+    },
+    exitPointerLock: {
+      signature: "exitPointerLock()",
+      description: "Exits a pointer lock started with requestPointerLock.",
+      example: "exitPointerLock()",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/exitPointerLock"
+    },
+    touches: {
+      signature: "touches",
+      description: "An `Array` of all the current touch points on a touchscreen device.",
+      example: "'A gray square. White circles appear where the user touches the square.'",
+      kind: "variable",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/touches"
+    },
+    touchStarted: {
+      signature: "touchStarted(event?: TouchEvent)",
+      description: "A function that's called once each time the user touches the screen.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/touchStarted"
+    },
+    touchMoved: {
+      signature: "touchMoved(event?: TouchEvent)",
+      description: "A function that's called when the user touches the screen and moves.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/touchMoved"
+    },
+    touchEnded: {
+      signature: "touchEnded(event?: TouchEvent)",
+      description: "A function that's called once each time a screen touch ends.",
+      kind: "function",
+      category: "Events",
+      sourceUrl: "https://p5js.org/reference/#/p5/touchEnded"
+    },
+    createImage: {
+      signature: "createImage(width: Integer, height: Integer)",
+      description: "Creates a new p5.",
+      example: "let img = createImage(66, 66)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/createImage"
+    },
+    saveCanvas: {
+      signature: "saveCanvas(selectedCanvas: p5.Framebuffer|p5.Element|HTMLCanvasElement, filename?: String, extension?: String)",
+      description: "Saves the current canvas as an image.",
+      example: "saveCanvas()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveCanvas"
+    },
+    saveFrames: {
+      signature: "saveFrames(filename: String, extension: String, duration: Number, framerate: Number, callback?: Function(Array))",
+      description: "Captures a sequence of frames from the canvas that can be saved as images.",
+      example: "saveFrames('frame', 'png', 1, 5)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveFrames"
+    },
+    loadImage: {
+      signature: "loadImage(path: String, successCallback?: function(p5.Image), failureCallback?: Function(Event))",
+      description: "Loads an image to create a p5.",
+      example: "img = loadImage('assets/laDefense.jpg')",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadImage"
+    },
+    saveGif: {
+      signature: "saveGif(filename: String, duration: Number, options?: Object)",
+      description: "Generates a gif from a sketch and saves it to a file.",
+      example: "saveGif('mySketch', 5)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveGif"
+    },
+    image: {
+      signature: "image(img: p5.Image|p5.Element|p5.Texture|p5.Framebuffer|p5.FramebufferTexture, x: Number, y: Number, width?: Number, height?: Number)",
+      description: "Draws an image to the canvas.",
+      example: "image(img, 0, 0)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/image"
+    },
+    tint: {
+      signature: "tint(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Tints images using a color.",
+      example: "tint('red')",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/tint"
+    },
+    noTint: {
+      signature: "noTint()",
+      description: "Removes the current tint set by tint().",
+      example: "noTint()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/noTint"
+    },
+    imageMode: {
+      signature: "imageMode(mode: Constant)",
+      description: "Changes the location from which images are drawn when image() is called.",
+      example: "imageMode(CORNER)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/imageMode"
+    },
+    pixels: {
+      signature: "pixels",
+      description: "An array containing the color of each pixel on the canvas.",
+      example: "pixels[index] = 0",
+      kind: "variable",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/pixels"
+    },
+    blend: {
+      signature: "blend(srcImage: p5.Image, sx: Integer, sy: Integer, sw: Integer, sh: Integer, dx: Integer, dy: Integer, dw: Integer, dh: Integer, blendMode: Constant)",
+      description: "Copies a region of pixels from one image to another.",
+      example: "blend(img1, 0, 0, 33, 100, 67, 0, 33, 100, LIGHTEST)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/blend"
+    },
+    copy: {
+      signature: "copy(srcImage: p5.Image|p5.Element, sx: Integer, sy: Integer, sw: Integer, sh: Integer, dx: Integer, dy: Integer, dw: Integer, dh: Integer)",
+      description: "Copies pixels from a source image to a region of the canvas.",
+      example: "copy(img, 7, 22, 10, 10, 35, 25, 50, 50)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/copy"
+    },
+    filter: {
+      signature: "filter(filterType: Constant, filterParam?: Number, useWebGL?: Boolean)",
+      description: "Applies an image filter to the canvas.",
+      example: "filter(INVERT)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/filter"
+    },
+    get: {
+      signature: "get(x: Number, y: Number, w: Number, h: Number)",
+      description: "Gets a pixel or a region of pixels from the canvas.",
+      example: "let c = get()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/get"
+    },
+    loadPixels: {
+      signature: "loadPixels()",
+      description: "Loads the current value of each pixel on the canvas into the pixels array.",
+      example: "loadPixels()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadPixels"
+    },
+    set: {
+      signature: "set(x: Number, y: Number, c: Number|Number[]|Object)",
+      description: "Sets the color of a pixel or draws an image to the canvas.",
+      example: "set(30, 20, 0)",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/set"
+    },
+    updatePixels: {
+      signature: "updatePixels(x?: Number, y?: Number, w?: Number, h?: Number)",
+      description: "Updates the canvas with the RGBA values in the pixels array.",
+      example: "updatePixels()",
+      kind: "function",
+      category: "Image",
+      sourceUrl: "https://p5js.org/reference/#/p5/updatePixels"
+    },
+    loadJSON: {
+      signature: "loadJSON(path: String, successCallback?: Function, errorCallback?: Function)",
+      description: "Loads a JSON file to create an `Object`.",
+      example: "myData = loadJSON('assets/data.json')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadJSON"
+    },
+    loadStrings: {
+      signature: "loadStrings(path: String, successCallback?: Function, errorCallback?: Function)",
+      description: "Loads a text file to create an `Array`.",
+      example: "myData = loadStrings('assets/test.txt')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadStrings"
+    },
+    loadTable: {
+      signature: "loadTable(filename: String, extension?: String, header?: String, callback?: Function, errorCallback?: Function)",
+      description: "Reads the contents of a file or URL and creates a p5.",
+      example: "table = loadTable('assets/mammals.csv', 'csv', 'header')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadTable"
+    },
+    loadXML: {
+      signature: "loadXML(path: String, successCallback?: Function, errorCallback?: Function)",
+      description: "Loads an XML file to create a p5.",
+      example: "myXML = loadXML('assets/animals.xml')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadXML"
+    },
+    loadBytes: {
+      signature: "loadBytes(file: String, callback?: Function, errorCallback?: Function)",
+      description: "This method is suitable for fetching files up to size of 64MB.",
+      example: "data = loadBytes('assets/mammals.xml')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadBytes"
+    },
+    httpGet: {
+      signature: "httpGet(path: String, datatype?: String, data?: Object|Boolean, callback?: Function, errorCallback?: Function)",
+      description: "Method for executing an HTTP GET request.",
+      example: "httpGet(url, 'jsonp', false, function(response) {",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/httpGet"
+    },
+    httpPost: {
+      signature: "httpPost(path: String, datatype?: String, data?: Object|Boolean, callback?: Function, errorCallback?: Function)",
+      description: "Method for executing an HTTP POST request.",
+      example: "httpPost(url, 'json', postData, function(result) {",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/httpPost"
+    },
+    httpDo: {
+      signature: "httpDo(path: String, method?: String, datatype?: String, data?: Object, callback?: Function, errorCallback?: Function)",
+      description: "Method for executing an HTTP request.",
+      example: "httpDo(",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/httpDo"
+    },
+    createWriter: {
+      signature: "createWriter(name: String, extension?: String)",
+      description: "Creates a new p5.",
+      example: "let myWriter = createWriter('xo.txt')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/createWriter"
+    },
+    save: {
+      signature: "save(objectOrFilename?: Object|String, filename?: String, options?: Boolean|String)",
+      description: "Saves a given element(image, text, json, csv, wav, or html) to the client's computer.",
+      example: "save(cnv, 'myCanvas.jpg')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/save"
+    },
+    saveJSON: {
+      signature: "saveJSON(json: Array|Object, filename: String, optimize?: Boolean)",
+      description: "Saves an `Object` or `Array` to a JSON file.",
+      example: "saveJSON(data, 'numbers.json')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveJSON"
+    },
+    saveStrings: {
+      signature: "saveStrings(list: String[], filename: String, extension?: String, isCRLF?: Boolean)",
+      description: "Saves an `Array` of `String`s to a file, one per line.",
+      example: "saveStrings(data, 'data.txt')",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveStrings"
+    },
+    saveTable: {
+      signature: "saveTable(Table: p5.Table, filename: String, options?: String)",
+      description: "Writes the contents of a Table object to a file.",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveTable"
+    },
+    abs: {
+      signature: "abs(n: Number)",
+      description: "Calculates the absolute value of a number.",
+      example: "let h = abs(mouseX - 50)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/abs"
+    },
+    ceil: {
+      signature: "ceil(n: Number)",
+      description: "Calculates the closest integer value that is greater than or equal to a number.",
+      example: "r = ceil(r)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/ceil"
+    },
+    constrain: {
+      signature: "constrain(n: Number, low: Number, high: Number)",
+      description: "Constrains a number between a minimum and maximum value.",
+      example: "let x = constrain(mouseX, 33, 67)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/constrain"
+    },
+    dist: {
+      signature: "dist(x1: Number, y1: Number, x2: Number, y2: Number)",
+      description: "Calculates the distance between two points.",
+      example: "let d = dist(x1, y1, x2, y2)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/dist"
+    },
+    exp: {
+      signature: "exp(n: Number)",
+      description: "Calculates the value of Euler's number e (2.",
+      example: "let d = exp(1)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/exp"
+    },
+    floor: {
+      signature: "floor(n: Number)",
+      description: "Calculates the closest integer value that is less than or equal to the value of a number.",
+      example: "r = floor(r)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/floor"
+    },
+    lerp: {
+      signature: "lerp(start: Number, stop: Number, amt: Number)",
+      description: "Calculates a number between two numbers at a specific increment.",
+      example: "let c = lerp(a, b, 0.2)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/lerp"
+    },
+    log: {
+      signature: "log(n: Number)",
+      description: "Calculates the natural logarithm (the base-e logarithm) of a number.",
+      example: "let d = log(50)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/log"
+    },
+    mag: {
+      signature: "mag(x: Number, y: Number)",
+      description: "Calculates the magnitude, or length, of a vector.",
+      example: "let m = mag(x, y)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/mag"
+    },
+    map: {
+      signature: "map(value: Number, start1: Number, stop1: Number, start2: Number, stop2: Number, withinBounds?: Boolean)",
+      description: "Re-maps a number from one range to another.",
+      example: "let x = map(mouseX, 0, 100, 0, 50)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/map"
+    },
+    max: {
+      signature: "max(n0: Number, n1: Number)",
+      description: "Returns the largest value in a sequence of numbers.",
+      example: "let m = max(10, 5, 20)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/max"
+    },
+    min: {
+      signature: "min(n0: Number, n1: Number)",
+      description: "Returns the smallest value in a sequence of numbers.",
+      example: "let m = min(10, 5, 20)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/min"
+    },
+    norm: {
+      signature: "norm(value: Number, start: Number, stop: Number)",
+      description: "Maps a number from one range to a value between 0 and 1.",
+      example: "let redValue = norm(mouseX, 0, 100)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/norm"
+    },
+    pow: {
+      signature: "pow(n: Number, e: Number)",
+      description: "Calculates exponential expressions such as 23.",
+      example: "let d = pow(base, 1)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/pow"
+    },
+    round: {
+      signature: "round(n: Number, decimals?: Number)",
+      description: "Calculates the integer closest to a number.",
+      example: "let x = round(4.2)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/round"
+    },
+    sq: {
+      signature: "sq(n: Number)",
+      description: "Calculates the square of a number.",
+      example: "let d = sq(3)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/sq"
+    },
+    sqrt: {
+      signature: "sqrt(n: Number)",
+      description: "Calculates the square root of a number.",
+      example: "let d = sqrt(16)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/sqrt"
+    },
+    fract: {
+      signature: "fract(n: Number)",
+      description: "Calculates the fractional part of a number.",
+      example: "let f = fract(n)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/fract"
+    },
+    createVector: {
+      signature: "createVector(x?: Number, y?: Number, z?: Number)",
+      description: "Creates a new p5.",
+      example: "let p1 = createVector(25, 25)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/createVector"
+    },
+    noise: {
+      signature: "noise(x: Number, y?: Number, z?: Number)",
+      description: "Returns random numbers that can be tuned to feel organic.",
+      example: "let x = 100 * noise(0.005 * frameCount)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/noise"
+    },
+    noiseDetail: {
+      signature: "noiseDetail(lod: Number, falloff: Number)",
+      description: "Adjusts the character of the noise produced by the noise() function.",
+      example: "noiseDetail(6, 0.25)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/noiseDetail"
+    },
+    noiseSeed: {
+      signature: "noiseSeed(seed: Number)",
+      description: "Sets the seed value for the noise() function.",
+      example: "noiseSeed(99)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/noiseSeed"
+    },
+    randomSeed: {
+      signature: "randomSeed(seed: Number)",
+      description: "Sets the seed value for the random() and randomGaussian() functions.",
+      example: "randomSeed(99)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/randomSeed"
+    },
+    random: {
+      signature: "random(min?: Number, max?: Number)",
+      description: "Returns a random number or a random element from an array.",
+      example: "let x = random(0, 100)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/random"
+    },
+    randomGaussian: {
+      signature: "randomGaussian(mean?: Number, sd?: Number)",
+      description: "Returns a random number fitting a Gaussian, or normal, distribution.",
+      example: "x = randomGaussian(50)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/randomGaussian"
+    },
+    acos: {
+      signature: "acos(value: Number)",
+      description: "Calculates the arc cosine of a number.",
+      example: "let ac = acos(c)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/acos"
+    },
+    asin: {
+      signature: "asin(value: Number)",
+      description: "Calculates the arc sine of a number.",
+      example: "let as = asin(s)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/asin"
+    },
+    atan: {
+      signature: "atan(value: Number)",
+      description: "Calculates the arc tangent of a number.",
+      example: "let at = atan(t)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/atan"
+    },
+    atan2: {
+      signature: "atan2(y: Number, x: Number)",
+      description: "Calculates the angle formed by a point, the origin, and the positive x-axis.",
+      example: "let a = atan2(mouseY, mouseX)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/atan2"
+    },
+    cos: {
+      signature: "cos(angle: Number)",
+      description: "Calculates the cosine of an angle.",
+      example: "let x = 30 * cos(frameCount * 0.05) + 50",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/cos"
+    },
+    sin: {
+      signature: "sin(angle: Number)",
+      description: "Calculates the sine of an angle.",
+      example: "let y = 30 * sin(frameCount * 0.05) + 50",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/sin"
+    },
+    tan: {
+      signature: "tan(angle: Number)",
+      description: "Calculates the tangent of an angle.",
+      example: "let y = 5 * tan(x * 0.1) + 50",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/tan"
+    },
+    degrees: {
+      signature: "degrees(radians: Number)",
+      description: "Converts an angle measured in radians to its value in degrees.",
+      example: "let deg = degrees(rad)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/degrees"
+    },
+    radians: {
+      signature: "radians(degrees: Number)",
+      description: "Converts an angle measured in degrees to its value in radians.",
+      example: "let rad = radians(deg)",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/radians"
+    },
+    angleMode: {
+      signature: "angleMode(mode: Constant)",
+      description: "Changes the unit system used to measure angles.",
+      kind: "function",
+      category: "Math",
+      sourceUrl: "https://p5js.org/reference/#/p5/angleMode"
+    },
+    textAlign: {
+      signature: "textAlign(horizAlign: Constant, vertAlign?: Constant)",
+      description: "Sets the way text is aligned when text() is called.",
+      example: "textAlign(RIGHT)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textAlign"
+    },
+    textLeading: {
+      signature: "textLeading(leading: Number)",
+      description: "Sets the spacing between lines of text when text() is called.",
+      example: "textLeading(30)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textLeading"
+    },
+    textSize: {
+      signature: "textSize(size: Number)",
+      description: "Sets the font size when text() is called.",
+      example: "textSize(12)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textSize"
+    },
+    textStyle: {
+      signature: "textStyle(style: Constant)",
+      description: "Sets the style for system fonts when text() is called.",
+      example: "textStyle(NORMAL)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textStyle"
+    },
+    textWidth: {
+      signature: "textWidth(str: String)",
+      description: "Calculates the maximum width of a string of text drawn when text() is called.",
+      example: "let w = textWidth(s)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textWidth"
+    },
+    textAscent: {
+      signature: "textAscent()",
+      description: "Calculates the ascent of the current font at its current size.",
+      example: "let a = textAscent() * fontScale",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textAscent"
+    },
+    textDescent: {
+      signature: "textDescent()",
+      description: "Calculates the descent of the current font at its current size.",
+      example: "let d = textDescent() * fontScale",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textDescent"
+    },
+    textWrap: {
+      signature: "textWrap(style: Constant)",
+      description: "Sets the style for wrapping text when text() is called.",
+      example: "textWrap(WORD)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textWrap"
+    },
+    loadFont: {
+      signature: "loadFont(path: String, successCallback?: Function, failureCallback?: Function)",
+      description: "Loads a font and creates a p5.",
+      example: "font = loadFont('assets/inconsolata.otf')",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadFont"
+    },
+    text: {
+      signature: "text(str: String|Object|Array|Number|Boolean, x: Number, y: Number, maxWidth?: Number, maxHeight?: Number)",
+      description: "Draws text to the canvas.",
+      example: "text('hi', 50, 50)",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/text"
+    },
+    textFont: {
+      signature: "textFont()",
+      description: "Sets the font used by the text() function.",
+      example: "textFont('Courier New')",
+      kind: "function",
+      category: "Typography",
+      sourceUrl: "https://p5js.org/reference/#/p5/textFont"
+    },
+    append: {
+      signature: "append(array: Array, value: Any)",
+      description: "Adds a value to the end of an array.",
+      example: "append(myArray, 'Peach')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/append"
+    },
+    arrayCopy: {
+      signature: "arrayCopy(src: Array, srcPosition: Integer, dst: Array, dstPosition: Integer, length: Integer)",
+      description: "Copies an array (or part of an array) to another array.",
+      example: "arrayCopy(src, srcPosition, dst, dstPosition, length)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/arrayCopy"
+    },
+    concat: {
+      signature: "concat(a: Array, b: Array)",
+      description: "Concatenates two arrays, maps to Array.",
+      example: "let arr3 = concat(arr1, arr2)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/concat"
+    },
+    reverse: {
+      signature: "reverse(list: Array)",
+      description: "Reverses the order of an array, maps to Array.",
+      example: "reverse(myArray)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/reverse"
+    },
+    shorten: {
+      signature: "shorten(list: Array)",
+      description: "Decreases an array by one element and returns the shortened array, maps to Array.",
+      example: "let newArray = shorten(myArray)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/shorten"
+    },
+    shuffle: {
+      signature: "shuffle(array: Array, bool?: Boolean)",
+      description: "Shuffles the elements of an array.",
+      example: "let shuffledColors = shuffle(colors)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/shuffle"
+    },
+    sort: {
+      signature: "sort(list: Array, count?: Integer)",
+      description: "Sorts an array of numbers from smallest to largest, or puts an array of words in alphabetical order.",
+      example: "words = sort(words, count)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/sort"
+    },
+    splice: {
+      signature: "splice(list: Array, value: Any, position: Integer)",
+      description: "Inserts a value or an array of values into an existing array.",
+      example: "splice(myArray, insArray, 3)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/splice"
+    },
+    subset: {
+      signature: "subset(list: Array, start: Integer, count?: Integer)",
+      description: "Extracts an array of elements from an existing array.",
+      example: "let sub1 = subset(myArray, 0, 3)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/subset"
+    },
+    float: {
+      signature: "float(str: String)",
+      description: "Converts a `String` to a floating point (decimal) `Number`.",
+      example: "let converted = float(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/float"
+    },
+    int: {
+      signature: "int(n: String|Boolean|Number)",
+      description: "Converts a `Boolean`, `String`, or decimal `Number` to an integer.",
+      example: "let converted = int(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/int"
+    },
+    str: {
+      signature: "str(n: String|Boolean|Number)",
+      description: "Converts a `Boolean` or `Number` to `String`.",
+      example: "let converted = str(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/str"
+    },
+    boolean: {
+      signature: "boolean(n: String|Boolean|Number)",
+      description: "Converts a `String` or `Number` to a `Boolean`.",
+      example: "let converted = boolean(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/boolean"
+    },
+    byte: {
+      signature: "byte(n: String|Boolean|Number)",
+      description: "Converts a `Boolean`, `String`, or `Number` to its byte value.",
+      example: "let converted = byte(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/byte"
+    },
+    char: {
+      signature: "char(n: String|Number)",
+      description: "Converts a `Number` or `String` to a single-character `String`.",
+      example: "let converted = char(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/char"
+    },
+    unchar: {
+      signature: "unchar(n: String)",
+      description: "Converts a single-character `String` to a `Number`.",
+      example: "let converted = unchar(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/unchar"
+    },
+    hex: {
+      signature: "hex(n: Number, digits?: Number)",
+      description: "Converts a `Number` to a `String` with its hexadecimal value.",
+      example: "let converted = hex(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/hex"
+    },
+    unhex: {
+      signature: "unhex(n: String)",
+      description: "Converts a `String` with a hexadecimal value to a `Number`.",
+      example: "let converted = unhex(original)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/unhex"
+    },
+    join: {
+      signature: "join(list: Array, separator: String)",
+      description: "Combines an array of strings into one string.",
+      example: "let combined = join(myWords, ' : ')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/join"
+    },
+    match: {
+      signature: "match(str: String, regexp: String)",
+      description: "Applies a regular expression to a string and returns an array with the first match.",
+      example: "let matches = match(string, '[a-z][0-9]')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/match"
+    },
+    matchAll: {
+      signature: "matchAll(str: String, regexp: String)",
+      description: "Applies a regular expression to a string and returns an array of matches.",
+      example: "let matches = matchAll(string, '[a-z][0-9]')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/matchAll"
+    },
+    nf: {
+      signature: "nf(num: Number|String, left?: Integer|String, right?: Integer|String)",
+      description: "Converts a `Number` into a `String` with a given number of digits.",
+      example: "let formatted = nf(number)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/nf"
+    },
+    nfc: {
+      signature: "nfc(num: Number|String, right?: Integer|String)",
+      description: "Converts a `Number` into a `String` with commas to mark units of 1,000.",
+      example: "let commas = nfc(number)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/nfc"
+    },
+    nfp: {
+      signature: "nfp(num: Number, left?: Integer, right?: Integer)",
+      description: "Converts a `Number` into a `String` with a plus or minus sign.",
+      example: "let p = nfp(positive)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/nfp"
+    },
+    nfs: {
+      signature: "nfs(num: Number, left?: Integer, right?: Integer)",
+      description: "Converts a positive `Number` into a `String` with an extra space in front.",
+      example: "let formatted = nfs(positive)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/nfs"
+    },
+    split: {
+      signature: "split(value: String, delim: String)",
+      description: "Splits a `String` into pieces and returns an array containing the pieces.",
+      example: "let words = split(string, '...')",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/split"
+    },
+    splitTokens: {
+      signature: "splitTokens(value: String, delim?: String)",
+      description: "Splits a `String` into pieces and returns an array containing the pieces.",
+      example: "let words = splitTokens(string)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/splitTokens"
+    },
+    trim: {
+      signature: "trim(str: String)",
+      description: "Removes whitespace from the start and end of a `String` without changing the middle.",
+      example: "let trimmed = trim(string)",
+      kind: "function",
+      category: "Data",
+      sourceUrl: "https://p5js.org/reference/#/p5/trim"
+    },
+    day: {
+      signature: "day()",
+      description: "Returns the current day as a number from 1\u201331.",
+      example: "let d = day()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/day"
+    },
+    hour: {
+      signature: "hour()",
+      description: "Returns the current hour as a number from 0\u201323.",
+      example: "let h = hour()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/hour"
+    },
+    minute: {
+      signature: "minute()",
+      description: "Returns the current minute as a number from 0\u201359.",
+      example: "let m = minute()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/minute"
+    },
+    millis: {
+      signature: "millis()",
+      description: "Returns the number of milliseconds since a sketch started running.",
+      example: "let ms = millis()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/millis"
+    },
+    month: {
+      signature: "month()",
+      description: "Returns the current month as a number from 1\u201312.",
+      example: "let m = month()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/month"
+    },
+    second: {
+      signature: "second()",
+      description: "Returns the current second as a number from 0\u201359.",
+      example: "let s = second()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/second"
+    },
+    year: {
+      signature: "year()",
+      description: "Returns the current year as a number such as 1999.",
+      example: "let y = year()",
+      kind: "function",
+      category: "IO",
+      sourceUrl: "https://p5js.org/reference/#/p5/year"
+    },
+    beginGeometry: {
+      signature: "beginGeometry()",
+      description: "Begins adding shapes to a new p5.",
+      example: "beginGeometry()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/beginGeometry"
+    },
+    endGeometry: {
+      signature: "endGeometry()",
+      description: "Stops adding shapes to a new p5.",
+      example: "shape = endGeometry()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/endGeometry"
+    },
+    buildGeometry: {
+      signature: "buildGeometry(callback: Function)",
+      description: "Creates a custom p5.",
+      example: "shape = buildGeometry(createShape)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/buildGeometry"
+    },
+    freeGeometry: {
+      signature: "freeGeometry(geometry: p5.Geometry)",
+      description: "Clears a p5.",
+      example: "freeGeometry(shape)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/freeGeometry"
+    },
+    plane: {
+      signature: "plane(width?: Number, height?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a plane.",
+      example: "plane()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/plane"
+    },
+    box: {
+      signature: "box(width?: Number, height?: Number, depth?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a box (rectangular prism).",
+      example: "box()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/box"
+    },
+    sphere: {
+      signature: "sphere(radius?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a sphere.",
+      example: "sphere()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/sphere"
+    },
+    cylinder: {
+      signature: "cylinder(radius?: Number, height?: Number, detailX?: Integer, detailY?: Integer, bottomCap?: Boolean, topCap?: Boolean)",
+      description: "Draws a cylinder.",
+      example: "cylinder()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/cylinder"
+    },
+    cone: {
+      signature: "cone(radius?: Number, height?: Number, detailX?: Integer, detailY?: Integer, cap?: Boolean)",
+      description: "Draws a cone.",
+      example: "cone()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/cone"
+    },
+    ellipsoid: {
+      signature: "ellipsoid(radiusX?: Number, radiusY?: Number, radiusZ?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws an ellipsoid.",
+      example: "ellipsoid(30)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/ellipsoid"
+    },
+    torus: {
+      signature: "torus(radius?: Number, tubeRadius?: Number, detailX?: Integer, detailY?: Integer)",
+      description: "Draws a torus.",
+      example: "torus()",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/torus"
+    },
+    orbitControl: {
+      signature: "orbitControl(sensitivityX?: Number, sensitivityY?: Number, sensitivityZ?: Number, options?: Object)",
+      description: "Allows the user to orbit around a 3D sketch using a mouse, trackpad, or touchscreen.",
+      example: "orbitControl()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/orbitControl"
+    },
+    debugMode: {
+      signature: "debugMode()",
+      description: "Adds a grid and an axes icon to clarify orientation in 3D sketches.",
+      example: "debugMode()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/debugMode"
+    },
+    noDebugMode: {
+      signature: "noDebugMode()",
+      description: "Turns off debugMode() in a 3D sketch.",
+      example: "noDebugMode()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/noDebugMode"
+    },
+    ambientLight: {
+      signature: "ambientLight(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Creates a light that shines from all directions.",
+      example: "ambientLight(80)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/ambientLight"
+    },
+    specularColor: {
+      signature: "specularColor(v1: Number, v2: Number, v3: Number)",
+      description: "Sets the specular color for lights.",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/specularColor"
+    },
+    directionalLight: {
+      signature: "directionalLight(v1: Number, v2: Number, v3: Number, x: Number, y: Number, z: Number)",
+      description: "Creates a light that shines in one direction.",
+      example: "directionalLight(255, 0, 0, 0, 1, 0)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/directionalLight"
+    },
+    pointLight: {
+      signature: "pointLight(v1: Number, v2: Number, v3: Number, x: Number, y: Number, z: Number)",
+      description: "Creates a light that shines from a point in all directions.",
+      example: "pointLight(255, 0, 0, 0, -150, 0)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/pointLight"
+    },
+    imageLight: {
+      signature: "imageLight(img: p5.image)",
+      description: "Creates an ambient light from an image.",
+      example: "imageLight(img)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/imageLight"
+    },
+    panorama: {
+      signature: "panorama(img: p5.Image)",
+      description: "Creates an immersive 3D background.",
+      example: "panorama(img)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/panorama"
+    },
+    lights: {
+      signature: "lights()",
+      description: "Places an ambient and directional light in the scene.",
+      example: "lights()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/lights"
+    },
+    lightFalloff: {
+      signature: "lightFalloff(constant: Number, linear: Number, quadratic: Number)",
+      description: "Sets the falloff rate for pointLight() and spotLight().",
+      example: "lightFalloff(2, 0, 0)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/lightFalloff"
+    },
+    spotLight: {
+      signature: "spotLight(v1: Number, v2: Number, v3: Number, x: Number, y: Number, z: Number, rx: Number, ry: Number, rz: Number, angle?: Number, concentration?: Number)",
+      description: "Creates a light that shines from a point in one direction.",
+      example: "spotLight(255, 0, 0, 0, 0, 100, 0, 0, -1, PI / 32)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/spotLight"
+    },
+    noLights: {
+      signature: "noLights()",
+      description: "Removes all lights from the sketch.",
+      example: "noLights()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/noLights"
+    },
+    loadModel: {
+      signature: "loadModel(path: String, normalize: Boolean, successCallback?: function(p5.Geometry), failureCallback?: Function(Event), fileType?: String)",
+      description: "Loads a 3D model to create a p5.",
+      example: "shape = loadModel('assets/teapot.obj')",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadModel"
+    },
+    model: {
+      signature: "model(model: p5.Geometry)",
+      description: "Draws a p5.",
+      example: "model(shape)",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/model"
+    },
+    createModel: {
+      signature: "createModel(modelString: String, fileType?: String, normalize: Boolean, successCallback?: function(p5.Geometry), failureCallback?: Function(Event))",
+      description: "Load a 3d model from an OBJ or STL string.",
+      example: "octahedron = createModel(octahedron_model, '.obj')",
+      kind: "function",
+      category: "Shape",
+      sourceUrl: "https://p5js.org/reference/#/p5/createModel"
+    },
+    loadShader: {
+      signature: "loadShader(vertFilename: String, fragFilename: String, successCallback?: Function, failureCallback?: Function)",
+      description: "Loads vertex and fragment shaders to create a p5.",
+      example: "mandelbrot = loadShader('assets/shader.vert', 'assets/shader.frag')",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadShader"
+    },
+    createShader: {
+      signature: "createShader(vertSrc: String, fragSrc: String, options?: Object)",
+      description: "Creates a new p5.",
+      example: "let shaderProgram = createShader(vertSrc, fragSrc)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/createShader"
+    },
+    createFilterShader: {
+      signature: "createFilterShader(fragSrc: String)",
+      description: "Creates a p5.",
+      example: "let s = createFilterShader(fragSrc)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/createFilterShader"
+    },
+    shader: {
+      signature: "shader(s: p5.Shader)",
+      description: "Sets the p5.",
+      example: "shader(shaderProgram)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/shader"
+    },
+    baseMaterialShader: {
+      signature: "baseMaterialShader()",
+      description: "Get the default shader used with lights, materials, and textures.",
+      example: "myShader = baseMaterialShader().modify({",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/baseMaterialShader"
+    },
+    baseNormalShader: {
+      signature: "baseNormalShader()",
+      description: "Get the shader used by `normalMaterial()`.",
+      example: "myShader = baseNormalShader().modify({",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/baseNormalShader"
+    },
+    baseColorShader: {
+      signature: "baseColorShader()",
+      description: "Get the shader used when no lights or materials are applied.",
+      example: "myShader = baseColorShader().modify({",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/baseColorShader"
+    },
+    baseStrokeShader: {
+      signature: "baseStrokeShader()",
+      description: "Get the shader used when drawing the strokes of shapes.",
+      example: "myShader = baseStrokeShader().modify({",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/baseStrokeShader"
+    },
+    resetShader: {
+      signature: "resetShader()",
+      description: "Restores the default shaders.",
+      example: "resetShader()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/resetShader"
+    },
+    texture: {
+      signature: "texture(tex: p5.Image|p5.MediaElement|p5.Graphics|p5.Texture|p5.Framebuffer|p5.FramebufferTexture)",
+      description: "Sets the texture that will be used on shapes.",
+      example: "texture(img)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/texture"
+    },
+    textureMode: {
+      signature: "textureMode(mode: Constant)",
+      description: "Changes the coordinate system used for textures when they\u2019re applied to custom shapes.",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/textureMode"
+    },
+    textureWrap: {
+      signature: "textureWrap(wrapX: Constant, wrapY?: Constant)",
+      description: "Changes the way textures behave when a shape\u2019s uv coordinates go beyond the texture.",
+      example: "textureWrap(CLAMP)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/textureWrap"
+    },
+    normalMaterial: {
+      signature: "normalMaterial()",
+      description: "Sets the current material as a normal material.",
+      example: "normalMaterial()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/normalMaterial"
+    },
+    ambientMaterial: {
+      signature: "ambientMaterial(v1: Number, v2: Number, v3: Number)",
+      description: "Sets the ambient color of shapes\u2019 surface material.",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/ambientMaterial"
+    },
+    emissiveMaterial: {
+      signature: "emissiveMaterial(v1: Number, v2: Number, v3: Number, alpha?: Number)",
+      description: "Sets the emissive color of shapes\u2019 surface material.",
+      example: "emissiveMaterial(255, 0, 0)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/emissiveMaterial"
+    },
+    specularMaterial: {
+      signature: "specularMaterial(gray: Number, alpha?: Number)",
+      description: "Sets the specular color of shapes\u2019 surface material.",
+      example: "specularMaterial(255)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/specularMaterial"
+    },
+    shininess: {
+      signature: "shininess(shine: Number)",
+      description: 'Sets the amount of gloss ("shininess") of a specularMaterial().',
+      example: "shininess(10)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/shininess"
+    },
+    metalness: {
+      signature: "metalness(metallic: Number)",
+      description: 'Sets the amount of "metalness" of a specularMaterial().',
+      example: "metalness(1)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/metalness"
+    },
+    camera: {
+      signature: "camera(x?: Number, y?: Number, z?: Number, centerX?: Number, centerY?: Number, centerZ?: Number, upX?: Number, upY?: Number, upZ?: Number)",
+      description: "Sets the position and orientation of the current camera in a 3D sketch.",
+      example: "camera(200, -400, 800)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/camera"
+    },
+    perspective: {
+      signature: "perspective(fovy?: Number, aspect?: Number, near?: Number, far?: Number)",
+      description: "Sets a perspective projection for the current camera in a 3D sketch.",
+      example: "perspective(0.2, 1.5)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/perspective"
+    },
+    linePerspective: {
+      signature: "linePerspective(enable: Boolean)",
+      description: "Enables or disables perspective for lines in 3D sketches.",
+      example: "let isEnabled = linePerspective()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/linePerspective"
+    },
+    ortho: {
+      signature: "ortho(left?: Number, right?: Number, bottom?: Number, top?: Number, near?: Number, far?: Number)",
+      description: "Sets an orthographic projection for the current camera in a 3D sketch.",
+      example: "ortho()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/ortho"
+    },
+    frustum: {
+      signature: "frustum(left?: Number, right?: Number, bottom?: Number, top?: Number, near?: Number, far?: Number)",
+      description: "Sets the frustum of the current camera in a 3D sketch.",
+      example: "frustum()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/frustum"
+    },
+    createCamera: {
+      signature: "createCamera()",
+      description: "Creates a new p5.",
+      example: "cam1 = createCamera()",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/createCamera"
+    },
+    setCamera: {
+      signature: "setCamera(cam: p5.Camera)",
+      description: "Sets the current (active) camera of a 3D sketch.",
+      example: "setCamera(cam1)",
+      kind: "function",
+      category: "3D",
+      sourceUrl: "https://p5js.org/reference/#/p5/setCamera"
+    },
+    setAttributes: {
+      signature: "setAttributes(key: String, value: Boolean)",
+      description: "Set attributes for the WebGL Drawing context.",
+      kind: "function",
+      category: "Rendering",
+      sourceUrl: "https://p5js.org/reference/#/p5/setAttributes"
+    },
+    getAudioContext: {
+      signature: "getAudioContext()",
+      description: "Returns the Audio Context for this sketch.",
+      example: "if (getAudioContext().state !== 'running') {",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/getAudioContext"
+    },
+    userStartAudio: {
+      signature: "userStartAudio(elements?: Element|Array, callback?: Function)",
+      description: "It is not only a good practice to give users control over starting audio.",
+      example: "userStartAudio()",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/userStartAudio"
+    },
+    getOutputVolume: {
+      signature: "getOutputVolume()",
+      description: "Returns a number representing the output volume for sound in this sketch.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/getOutputVolume"
+    },
+    outputVolume: {
+      signature: "outputVolume(volume: Number|Object, rampTime?: Number, timeFromNow?: Number)",
+      description: "Scale the output of all sound in this sketch Scaled between 0.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/outputVolume"
+    },
+    soundOut: {
+      signature: "soundOut",
+      description: "`p5.",
+      kind: "variable",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/soundOut"
+    },
+    sampleRate: {
+      signature: "sampleRate()",
+      description: "Returns a number representing the sample rate, in samples per second, of all sound objects in this audio context.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/sampleRate"
+    },
+    freqToMidi: {
+      signature: "freqToMidi(frequency: Number)",
+      description: "Returns the closest MIDI note value for a given frequency.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/freqToMidi"
+    },
+    midiToFreq: {
+      signature: "midiToFreq(midiNote: Number)",
+      description: "Returns the frequency value of a MIDI note value.",
+      example: "freq = midiToFreq(midiVal)",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/midiToFreq"
+    },
+    soundFormats: {
+      signature: "soundFormats(formats?: String)",
+      description: "List the SoundFile formats that you will include.",
+      example: "soundFormats('mp3', 'ogg')",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/soundFormats"
+    },
+    saveSound: {
+      signature: "saveSound(soundFile: p5.SoundFile, fileName: String)",
+      description: "Save a p5.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/saveSound"
+    },
+    loadSound: {
+      signature: "loadSound(path: String|Array, successCallback?: Function, errorCallback?: Function, whileLoading?: Function)",
+      description: "loadSound() returns a new p5.",
+      example: "mySound = loadSound('assets/doorbell')",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/loadSound"
+    },
+    createConvolver: {
+      signature: "createConvolver(path: String, callback?: Function, errorCallback?: Function)",
+      description: "Create a p5.",
+      example: "cVerb = createConvolver('assets/bx-spring.mp3')",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/createConvolver"
+    },
+    setBPM: {
+      signature: "setBPM(BPM: Number, rampTime: Number)",
+      description: "Set the global tempo, in beats per minute, for all p5.",
+      kind: "function",
+      category: "p5.sound",
+      sourceUrl: "https://p5js.org/reference/#/p5/setBPM"
+    }
+  },
+  meta: {
+    version: "1.11.13",
+    fetchedAt: "2026-04-18",
+    source: "https://p5js.org/reference/data.json"
+  }
+};
+
+// src/monaco/docs/p5.ts
+validateDocsIndex("p5.json", p5_default);
+var P5_DOCS_INDEX = p5_default;
+function registerP5Providers(monaco) {
+  return registerRuntimeProviders(monaco, P5_DOCS_INDEX, {
+    hover: true,
+    dotCompletion: false,
+    identifierCompletion: true
+  });
+}
+
+// src/monaco/docs/data/hydra.json
+var hydra_default = {
+  runtime: "hydra",
+  docs: {
+    noise: {
+      signature: "noise(scale: float = 10, offset: float = 0.1)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: scale (float, default 10), offset (float, default 0.1).",
+      example: "noise().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    voronoi: {
+      signature: "voronoi(scale: float = 5, speed: float = 0.3, blending: float = 0.3)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: scale (float, default 5), speed (float, default 0.3), blending (float, default 0.3).",
+      example: "voronoi().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    osc: {
+      signature: "osc(frequency: float = 60, sync: float = 0.1, offset: float = 0)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: frequency (float, default 60), sync (float, default 0.1), offset (float, default 0).",
+      example: "osc().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    shape: {
+      signature: "shape(sides: float = 3, radius: float = 0.3, smoothing: float = 0.01)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: sides (float, default 3), radius (float, default 0.3), smoothing (float, default 0.01).",
+      example: "shape().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    gradient: {
+      signature: "gradient(speed: float = 0)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: speed (float, default 0).",
+      example: "gradient().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    src: {
+      signature: "src(tex: sampler2D = null)",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour. Inputs: tex (sampler2D, default null).",
+      example: "src().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    solid: {
+      signature: "solid(r: float = 0, g: float = 0, b: float = 0, a: float = 1)",
+      description: "Solid colour source \u2014 paints the whole frame one colour.",
+      example: "solid(1, 0, 0).out()",
+      kind: "function",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    rotate: {
+      signature: ".rotate(angle: float = 10, speed: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: angle (float, default 10), speed (float, default 0).",
+      example: "osc().rotate().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    scale: {
+      signature: ".scale(amount: float = 1.5, xMult: float = 1, yMult: float = 1, offsetX: float = 0.5, offsetY: float = 0.5)",
+      description: "Coordinate transform warping sampler input. Inputs: amount (float, default 1.5), xMult (float, default 1), yMult (float, default 1), offsetX (float, default 0.5), offsetY (float, default 0.5).",
+      example: "osc().scale().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    pixelate: {
+      signature: ".pixelate(pixelX: float = 20, pixelY: float = 20)",
+      description: "Coordinate transform warping sampler input. Inputs: pixelX (float, default 20), pixelY (float, default 20).",
+      example: "osc().pixelate().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    posterize: {
+      signature: ".posterize(bins: float = 3, gamma: float = 0.6)",
+      description: "Colour transform applied to the previous output. Inputs: bins (float, default 3), gamma (float, default 0.6).",
+      example: "osc().posterize().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    shift: {
+      signature: ".shift(r: float = 0.5, g: float = 0, b: float = 0, a: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: r (float, default 0.5), g (float, default 0), b (float, default 0), a (float, default 0).",
+      example: "osc().shift().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    repeat: {
+      signature: ".repeat(repeatX: float = 3, repeatY: float = 3, offsetX: float = 0, offsetY: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: repeatX (float, default 3), repeatY (float, default 3), offsetX (float, default 0), offsetY (float, default 0).",
+      example: "osc().repeat().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateRepeat: {
+      signature: ".modulateRepeat(repeatX: float = 3, repeatY: float = 3, offsetX: float = 0.5, offsetY: float = 0.5)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: repeatX (float, default 3), repeatY (float, default 3), offsetX (float, default 0.5), offsetY (float, default 0.5).",
+      example: "osc().modulateRepeat(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    repeatX: {
+      signature: ".repeatX(reps: float = 3, offset: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: reps (float, default 3), offset (float, default 0).",
+      example: "osc().repeatX().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateRepeatX: {
+      signature: ".modulateRepeatX(reps: float = 3, offset: float = 0.5)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: reps (float, default 3), offset (float, default 0.5).",
+      example: "osc().modulateRepeatX(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    repeatY: {
+      signature: ".repeatY(reps: float = 3, offset: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: reps (float, default 3), offset (float, default 0).",
+      example: "osc().repeatY().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateRepeatY: {
+      signature: ".modulateRepeatY(reps: float = 3, offset: float = 0.5)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: reps (float, default 3), offset (float, default 0.5).",
+      example: "osc().modulateRepeatY(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    kaleid: {
+      signature: ".kaleid(nSides: float = 4)",
+      description: "Coordinate transform warping sampler input. Inputs: nSides (float, default 4).",
+      example: "osc().kaleid().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateKaleid: {
+      signature: ".modulateKaleid(nSides: float = 4)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: nSides (float, default 4).",
+      example: "osc().modulateKaleid(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    scroll: {
+      signature: ".scroll(scrollX: float = 0.5, scrollY: float = 0.5, speedX: float = 0, speedY: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: scrollX (float, default 0.5), scrollY (float, default 0.5), speedX (float, default 0), speedY (float, default 0).",
+      example: "osc().scroll().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    scrollX: {
+      signature: ".scrollX(scrollX: float = 0.5, speed: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: scrollX (float, default 0.5), speed (float, default 0).",
+      example: "osc().scrollX().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateScrollX: {
+      signature: ".modulateScrollX(scrollX: float = 0.5, speed: float = 0)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: scrollX (float, default 0.5), speed (float, default 0).",
+      example: "osc().modulateScrollX(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    scrollY: {
+      signature: ".scrollY(scrollY: float = 0.5, speed: float = 0)",
+      description: "Coordinate transform warping sampler input. Inputs: scrollY (float, default 0.5), speed (float, default 0).",
+      example: "osc().scrollY().out()",
+      kind: "method",
+      category: "coord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateScrollY: {
+      signature: ".modulateScrollY(scrollY: float = 0.5, speed: float = 0)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: scrollY (float, default 0.5), speed (float, default 0).",
+      example: "osc().modulateScrollY(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    add: {
+      signature: ".add(amount: float = 1)",
+      description: "Combine two textures into one. Inputs: amount (float, default 1).",
+      example: "osc().add(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    sub: {
+      signature: ".sub(amount: float = 1)",
+      description: "Combine two textures into one. Inputs: amount (float, default 1).",
+      example: "osc().sub(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    layer: {
+      signature: ".layer()",
+      description: "Combine two textures into one.",
+      example: "osc().layer(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    blend: {
+      signature: ".blend(amount: float = 0.5)",
+      description: "Combine two textures into one. Inputs: amount (float, default 0.5).",
+      example: "osc().blend(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    mult: {
+      signature: ".mult(amount: float = 1)",
+      description: "Combine two textures into one. Inputs: amount (float, default 1).",
+      example: "osc().mult(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    diff: {
+      signature: ".diff()",
+      description: "Combine two textures into one.",
+      example: "osc().diff(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulate: {
+      signature: ".modulate(amount: float = 0.1)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: amount (float, default 0.1).",
+      example: "osc().modulate(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateScale: {
+      signature: ".modulateScale(multiple: float = 1, offset: float = 1)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: multiple (float, default 1), offset (float, default 1).",
+      example: "osc().modulateScale(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulatePixelate: {
+      signature: ".modulatePixelate(multiple: float = 10, offset: float = 3)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: multiple (float, default 10), offset (float, default 3).",
+      example: "osc().modulatePixelate(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateRotate: {
+      signature: ".modulateRotate(multiple: float = 1, offset: float = 0)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: multiple (float, default 1), offset (float, default 0).",
+      example: "osc().modulateRotate(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    modulateHue: {
+      signature: ".modulateHue(amount: float = 1)",
+      description: "Combine a texture with another texture used as a coordinate map. Inputs: amount (float, default 1).",
+      example: "osc().modulateHue(noise()).out()",
+      kind: "method",
+      category: "combineCoord",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    invert: {
+      signature: ".invert(amount: float = 1)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 1).",
+      example: "osc().invert().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    contrast: {
+      signature: ".contrast(amount: float = 1.6)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 1.6).",
+      example: "osc().contrast().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    brightness: {
+      signature: ".brightness(amount: float = 0.4)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 0.4).",
+      example: "osc().brightness().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    mask: {
+      signature: ".mask()",
+      description: "Combine two textures into one.",
+      example: "osc().mask(noise()).out()",
+      kind: "method",
+      category: "combine",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    luma: {
+      signature: ".luma(threshold: float = 0.5, tolerance: float = 0.1)",
+      description: "Colour transform applied to the previous output. Inputs: threshold (float, default 0.5), tolerance (float, default 0.1).",
+      example: "osc().luma().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    thresh: {
+      signature: ".thresh(threshold: float = 0.5, tolerance: float = 0.04)",
+      description: "Colour transform applied to the previous output. Inputs: threshold (float, default 0.5), tolerance (float, default 0.04).",
+      example: "osc().thresh().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    color: {
+      signature: ".color(r: float = 1, g: float = 1, b: float = 1, a: float = 1)",
+      description: "Colour transform applied to the previous output. Inputs: r (float, default 1), g (float, default 1), b (float, default 1), a (float, default 1).",
+      example: "osc().color().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    saturate: {
+      signature: ".saturate(amount: float = 2)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 2).",
+      example: "osc().saturate().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    hue: {
+      signature: ".hue(hue: float = 0.4)",
+      description: "Colour transform applied to the previous output. Inputs: hue (float, default 0.4).",
+      example: "osc().hue().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    colorama: {
+      signature: ".colorama(amount: float = 0.005)",
+      description: "Colour transform applied to the previous output. Inputs: amount (float, default 0.005).",
+      example: "osc().colorama().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    prev: {
+      signature: "prev()",
+      description: "Source \u2014 returns a 2D coordinate-sampled colour.",
+      example: "prev().out()",
+      kind: "function",
+      category: "src",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    sum: {
+      signature: ".sum(scale: vec4 = 1)",
+      description: "Colour transform applied to the previous output. Inputs: scale (vec4, default 1).",
+      example: "osc().sum().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    r: {
+      signature: ".r(scale: float = 1, offset: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: scale (float, default 1), offset (float, default 0).",
+      example: "osc().r().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    g: {
+      signature: ".g(scale: float = 1, offset: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: scale (float, default 1), offset (float, default 0).",
+      example: "osc().g().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    b: {
+      signature: ".b(scale: float = 1, offset: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: scale (float, default 1), offset (float, default 0).",
+      example: "osc().b().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    a: {
+      signature: ".a(scale: float = 1, offset: float = 0)",
+      description: "Colour transform applied to the previous output. Inputs: scale (float, default 1), offset (float, default 0).",
+      example: "osc().a().out()",
+      kind: "method",
+      category: "color",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    out: {
+      signature: ".out(buffer?: o0|o1|o2|o3)",
+      description: "Render the chain to an output buffer (default o0).",
+      example: "osc().out(o0)",
+      kind: "method",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    render: {
+      signature: "render(buffer?: o0|o1|o2|o3)",
+      description: "Show a single buffer fullscreen (default: show all four).",
+      example: "render(o0)",
+      kind: "function",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    hush: {
+      signature: "hush()",
+      description: "Stop all currently-playing Hydra chains.",
+      example: "hush()",
+      kind: "function",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    time: {
+      signature: "time",
+      description: "Seconds elapsed since the Hydra instance started.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    mouse: {
+      signature: "mouse",
+      description: "Object with `x` / `y` fields (pixel coordinates of the cursor).",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    s0: {
+      signature: "s0",
+      description: "External texture source 0. Bind with `s0.initCam()` / `s0.initImage()` / `s0.initVideo()`.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    s1: {
+      signature: "s1",
+      description: "External texture source 1.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    s2: {
+      signature: "s2",
+      description: "External texture source 2.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    s3: {
+      signature: "s3",
+      description: "External texture source 3.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    o0: {
+      signature: "o0",
+      description: "Output buffer 0 \u2014 the default display buffer.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    o1: {
+      signature: "o1",
+      description: "Output buffer 1.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    o2: {
+      signature: "o2",
+      description: "Output buffer 2.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    },
+    o3: {
+      signature: "o3",
+      description: "Output buffer 3.",
+      kind: "variable",
+      sourceUrl: "https://hydra.ojack.xyz/api/"
+    }
+  },
+  meta: {
+    fetchedAt: "2026-04-18",
+    source: "https://raw.githubusercontent.com/hydra-synth/hydra-synth/main/src/glsl/glsl-functions.js"
+  }
+};
+
+// src/monaco/docs/hydra.ts
+validateDocsIndex("hydra.json", hydra_default);
+var HYDRA_DOCS_INDEX = hydra_default;
+function registerHydraProviders(monaco) {
+  return registerRuntimeProviders(monaco, HYDRA_DOCS_INDEX, {
+    hover: true,
+    dotCompletion: true,
+    identifierCompletion: true
+  });
+}
+
 // src/workspace/languages.ts
 var hydraRegistered = false;
 var p5jsRegistered = false;
@@ -6967,34 +14039,97 @@ function registerHydraLanguage(monaco) {
   }
   hydraRegistered = true;
   monaco.languages.register({ id: "hydra" });
+  const sources = buildIdentifierAlternation(HYDRA_DOCS_INDEX, {
+    includeKinds: ["function"]
+  });
+  const methods = buildIdentifierAlternation(HYDRA_DOCS_INDEX, {
+    includeKinds: ["method"]
+  });
+  const globals = buildIdentifierAlternation(HYDRA_DOCS_INDEX, {
+    includeKinds: ["variable", "constant"],
+    extra: ["Math", "PI", "sin", "cos", "tan", "abs", "floor", "ceil", "round", "max", "min", "random", "pow", "sqrt"]
+  });
   monaco.languages.setMonarchTokensProvider("hydra", {
+    defaultToken: "",
+    tokenPostfix: ".hydra",
     tokenizer: {
       root: [
         [/\/\/.*$/, "comment"],
         [/\/\*/, "comment", "@comment"],
+        // `.foo` property access → colored as method if it's a known Hydra
+        // transform, else as property identifier. Method rule runs first.
+        ...methodRule(methods, "type"),
+        [/\.([a-zA-Z_$][\w$]*)/, "identifier.property"],
+        ...keywordRule(sources, "keyword"),
+        ...keywordRule(globals, "variable.predefined"),
+        [/\ba\b/, "variable.predefined"],
         [
-          /\b(osc|noise|shape|gradient|solid|voronoi|src|s0|s1|s2|s3|o0|o1|o2|o3)\b/,
+          /\b(let|const|var|function|for|while|if|else|return|class|new|typeof|instanceof|of|in|break|continue|do|switch|case|default|throw|try|catch|finally|async|await|yield|this|super|import|export|from|as|void|delete|null|undefined|true|false)\b/,
           "keyword"
         ],
-        [
-          /\.(color|rotate|scale|modulate|blend|add|diff|layer|mask|luma|thresh|posterize|shift|kaleid|scroll|scrollX|scrollY|pixelate|repeat|repeatX|repeatY|out|brightness|contrast|saturate|hue|invert)\b/,
-          "type"
-        ],
-        [
-          /\b(Math|PI|sin|cos|tan|abs|floor|ceil|round|max|min|random|pow|sqrt)\b/,
-          "variable"
-        ],
-        [/\ba\b/, "variable.predefined"],
-        [/\b\d+\.?\d*\b/, "number"],
-        [/"[^"]*"/, "string"],
-        [/'[^']*'/, "string"],
-        [/=>/, "keyword.operator"]
+        [/[a-zA-Z_$][\w$]*/, "identifier"],
+        [/0[xX][\da-fA-F]+n?/, "number.hex"],
+        [/0[bB][01]+n?/, "number.binary"],
+        [/\d+(\.\d+)?([eE][+-]?\d+)?n?/, "number"],
+        [/\.\d+([eE][+-]?\d+)?/, "number.float"],
+        [/"/, { token: "string.quote", next: "@string_double" }],
+        [/'/, { token: "string.quote", next: "@string_single" }],
+        [/`/, { token: "string.quote", next: "@string_template" }],
+        [/=>/, "keyword.operator"],
+        [/(\?\?|\?\.|\?|:)/, "keyword.operator"],
+        [/===|!==|==|!=|<=|>=|<<|>>>|>>|&&|\|\|/, "keyword.operator"],
+        [/[=!<>]=?/, "keyword.operator"],
+        [/[+\-*/%&|^~]=?/, "keyword.operator"],
+        [/[{}()[\]]/, "@brackets"],
+        [/[;,.]/, "delimiter"]
       ],
       comment: [
+        [/[^/*]+/, "comment"],
         [/\*\//, "comment", "@pop"],
         [/./, "comment"]
+      ],
+      string_double: [
+        [/[^\\"]+/, "string"],
+        [/\\./, "string.escape"],
+        [/"/, { token: "string.quote", next: "@pop" }]
+      ],
+      string_single: [
+        [/[^\\']+/, "string"],
+        [/\\./, "string.escape"],
+        [/'/, { token: "string.quote", next: "@pop" }]
+      ],
+      string_template: [
+        [/[^\\`$]+/, "string"],
+        [/\\./, "string.escape"],
+        [/\$\{/, { token: "delimiter.bracket", next: "@template_interp" }],
+        [/\$/, "string"],
+        [/`/, { token: "string.quote", next: "@pop" }]
+      ],
+      template_interp: [
+        [/\}/, { token: "delimiter.bracket", next: "@pop" }],
+        { include: "root" }
       ]
     }
+  });
+  monaco.languages.setLanguageConfiguration("hydra", {
+    comments: { lineComment: "//", blockComment: ["/*", "*/"] },
+    brackets: [["{", "}"], ["[", "]"], ["(", ")"]],
+    autoClosingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: "`", close: "`" }
+    ],
+    surroundingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: "`", close: "`" }
+    ]
   });
 }
 function registerP5JsLanguage(monaco) {
@@ -7006,33 +14141,102 @@ function registerP5JsLanguage(monaco) {
   }
   p5jsRegistered = true;
   monaco.languages.register({ id: "p5js" });
+  const fns = buildIdentifierAlternation(P5_DOCS_INDEX, {
+    includeKinds: ["function"]
+  });
+  const variables = buildIdentifierAlternation(P5_DOCS_INDEX, {
+    includeKinds: ["variable", "constant"]
+  });
+  const HOST_GLOBALS = "stave|scheduler|analyser|hapStream";
   monaco.languages.setMonarchTokensProvider("p5js", {
+    defaultToken: "",
+    tokenPostfix: ".p5js",
     tokenizer: {
       root: [
         [/\/\/.*$/, "comment"],
         [/\/\*/, "comment", "@comment"],
+        // Host-global bare identifier (e.g. `stave` → colour as predefined
+        // even when accessed as `stave.foo`). Must come before the
+        // property-access rule so `.stave` stays as identifier.property.
+        [new RegExp(`\\b(${HOST_GLOBALS})\\b`), "variable.predefined"],
+        // Property access: `.foo` — color the name so `obj.prop` reads as
+        // property, not the same colour as bare identifiers. Must come
+        // before the keyword rule so p5 names accessed as `.foo` don't
+        // get mis-highlighted as top-level functions.
+        [/\.([a-zA-Z_$][\w$]*)/, "identifier.property"],
+        ...keywordRule(fns, "keyword"),
+        ...keywordRule(variables, "variable.predefined"),
         [
-          /\b(background|fill|stroke|noFill|noStroke|rect|ellipse|line|point|arc|triangle|quad|beginShape|endShape|vertex|text|textSize|textAlign|image|loadImage|createCanvas|resizeCanvas|push|pop|translate|rotate|scale)\b/,
+          /\b(let|const|var|function|for|while|if|else|return|class|new|typeof|instanceof|of|in|break|continue|do|switch|case|default|throw|try|catch|finally|async|await|yield|this|super|import|export|from|as|void|delete|null|undefined|true|false)\b/,
           "keyword"
         ],
-        [
-          /\b(width|height|mouseX|mouseY|frameCount|millis|hapStream|analyser|scheduler)\b/,
-          "variable.predefined"
-        ],
-        [
-          /\b(let|const|var|function|for|while|if|else|return|class|new|typeof|of|in)\b/,
-          "keyword"
-        ],
-        [/\b\d+\.?\d*\b/, "number"],
-        [/"[^"]*"/, "string"],
-        [/'[^']*'/, "string"],
-        [/`[^`]*`/, "string"]
+        // Identifier fallthrough — anything left that looks like a name.
+        [/[a-zA-Z_$][\w$]*/, "identifier"],
+        // Numbers: 0x…, 0b…, scientific, decimals starting with `.`.
+        [/0[xX][\da-fA-F]+n?/, "number.hex"],
+        [/0[bB][01]+n?/, "number.binary"],
+        [/\d+(\.\d+)?([eE][+-]?\d+)?n?/, "number"],
+        [/\.\d+([eE][+-]?\d+)?/, "number.float"],
+        // Strings
+        [/"/, { token: "string.quote", next: "@string_double" }],
+        [/'/, { token: "string.quote", next: "@string_single" }],
+        [/`/, { token: "string.quote", next: "@string_template" }],
+        // Operators + delimiters
+        [/=>/, "keyword.operator"],
+        [/(\?\?|\?\.|\?|:)/, "keyword.operator"],
+        [/===|!==|==|!=|<=|>=|<<|>>>|>>|&&|\|\|/, "keyword.operator"],
+        [/[=!<>]=?/, "keyword.operator"],
+        [/[+\-*/%&|^~]=?/, "keyword.operator"],
+        [/[{}()[\]]/, "@brackets"],
+        [/[;,.]/, "delimiter"]
       ],
       comment: [
+        [/[^/*]+/, "comment"],
         [/\*\//, "comment", "@pop"],
         [/./, "comment"]
+      ],
+      string_double: [
+        [/[^\\"]+/, "string"],
+        [/\\./, "string.escape"],
+        [/"/, { token: "string.quote", next: "@pop" }]
+      ],
+      string_single: [
+        [/[^\\']+/, "string"],
+        [/\\./, "string.escape"],
+        [/'/, { token: "string.quote", next: "@pop" }]
+      ],
+      string_template: [
+        [/[^\\`$]+/, "string"],
+        [/\\./, "string.escape"],
+        [/\$\{/, { token: "delimiter.bracket", next: "@template_interp" }],
+        [/\$/, "string"],
+        [/`/, { token: "string.quote", next: "@pop" }]
+      ],
+      template_interp: [
+        [/\}/, { token: "delimiter.bracket", next: "@pop" }],
+        { include: "root" }
       ]
     }
+  });
+  monaco.languages.setLanguageConfiguration("p5js", {
+    comments: { lineComment: "//", blockComment: ["/*", "*/"] },
+    brackets: [["{", "}"], ["[", "]"], ["(", ")"]],
+    autoClosingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: "`", close: "`" }
+    ],
+    surroundingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+      { open: "`", close: "`" }
+    ]
   });
 }
 function ensureWorkspaceLanguages(monaco) {
@@ -7040,18 +14244,23 @@ function ensureWorkspaceLanguages(monaco) {
   registerSonicPiLanguage(monaco);
   registerHydraLanguage(monaco);
   registerP5JsLanguage(monaco);
-  ensureStrudelProviders(monaco);
+  ensureProviders("strudel", monaco, (m) => {
+    registerStrudelDotCompletions(m);
+    registerStrudelNoteCompletions(m);
+    registerStrudelHover(m);
+  });
+  ensureProviders("p5js", monaco, registerP5Providers);
+  ensureProviders("hydra", monaco, registerHydraProviders);
+  ensureProviders("sonicpi", monaco, registerSonicPiProviders);
 }
-var strudelProvidersRegistered = false;
-function ensureStrudelProviders(monaco) {
-  if (strudelProvidersRegistered) return;
+var providersRegistered = {};
+function ensureProviders(key, monaco, register) {
+  if (providersRegistered[key]) return;
   if (typeof monaco.languages?.registerCompletionItemProvider !== "function" || typeof monaco.languages?.registerHoverProvider !== "function") {
     return;
   }
-  strudelProvidersRegistered = true;
-  registerStrudelDotCompletions(monaco);
-  registerStrudelNoteCompletions(monaco);
-  registerStrudelHover(monaco);
+  providersRegistered[key] = true;
+  register(monaco);
 }
 function toMonacoLanguage(lang) {
   switch (lang) {
@@ -8019,7 +15228,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   const zoneEntries = [];
   const audioCtx = components.audio?.audioCtx;
   editor.changeViewZones((accessor) => {
-    for (const [trackKey, { vizId, afterLine }] of vizRequests) {
+    for (const [trackKey, { vizId, afterLine, ...reqExtra }] of vizRequests) {
+      const contentHash = reqExtra.contentHash ?? "";
       const descriptor = resolveDescriptor(vizId, vizDescriptors);
       if (!descriptor) {
         console.warn(`[stave] Unknown viz "${vizId}". Available: ${vizDescriptors.map((d) => d.id).join(", ")}`);
@@ -8047,12 +15257,17 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       const crop = FULL_CROP;
       const contentW = editor.getLayoutInfo().contentWidth || 400;
       const layout = computeLayout(contentW, native, crop);
+      const initHOverride = fileId ? getZoneHeightOverride(fileId, trackKey) : void 0;
+      const initH = initHOverride ?? layout.zoneH;
       const container = document.createElement("div");
       container.setAttribute("data-viz-zone", "");
-      container.style.cssText = `overflow:hidden;height:${layout.zoneH}px;position:relative;`;
+      container.setAttribute("data-viz-zone-track", trackKey);
+      container.setAttribute("data-viz-zone-id", vizId);
+      if (contentHash) container.setAttribute("data-viz-zone-hash", contentHash);
+      container.style.cssText = `overflow:hidden;height:${initH}px;position:relative;`;
       const zoneDesc = {
         afterLineNumber: afterLine,
-        heightInPx: layout.zoneH,
+        heightInPx: initH,
         domNode: container,
         suppressMouseDown: true
       };
@@ -8106,6 +15321,68 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
         vizDecoration
       };
       zoneEntries.push(entry);
+      const resizeHandle = document.createElement("div");
+      resizeHandle.style.cssText = `
+        position:absolute;bottom:0;left:0;right:0;height:6px;
+        cursor:row-resize;z-index:50;
+        background:transparent;transition:background 150ms;
+      `;
+      resizeHandle.addEventListener("mouseenter", () => {
+        resizeHandle.style.background = "var(--accent-strong, #7c7cff)";
+        resizeHandle.style.opacity = "0.6";
+      });
+      resizeHandle.addEventListener("mouseleave", () => {
+        if (!resizeHandle.dataset.dragging) {
+          resizeHandle.style.background = "transparent";
+          resizeHandle.style.opacity = "1";
+        }
+      });
+      container.addEventListener("pointerdown", (e) => {
+        if (e.target !== resizeHandle) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        resizeHandle.setPointerCapture(e.pointerId);
+        resizeHandle.dataset.dragging = "1";
+        entry.container.dataset.resizing = "1";
+        const startY = e.clientY;
+        const startH = entry.zoneDesc.heightInPx;
+        const contentW2 = editor.getLayoutInfo().contentWidth || 400;
+        const onMove = (ev) => {
+          ev.preventDefault();
+          const delta = ev.clientY - startY;
+          const newH = Math.max(MIN_ZONE_HEIGHT, Math.min(MAX_ZONE_HEIGHT, startH + delta));
+          entry.container.style.height = `${newH}px`;
+          entry.zoneDesc.heightInPx = newH;
+          editor.changeViewZones((acc) => acc.layoutZone(entry.zoneId));
+          const nw = entry.native.w, nh = entry.native.h;
+          const cropW = Math.max(0.01, entry.crop.w);
+          const cropH = Math.max(0.01, entry.crop.h);
+          const scaleByW = contentW2 / (cropW * nw);
+          const scaleByH = newH / (cropH * nh);
+          const scale2 = Math.min(scaleByW, scaleByH);
+          const tx3 = -entry.crop.x * nw * scale2;
+          const ty = -entry.crop.y * nh * scale2;
+          applyLayout(entry.container, entry.container.querySelector("canvas"), { scale: scale2, tx: tx3, ty });
+        };
+        const onUp = (ev) => {
+          resizeHandle.releasePointerCapture(ev.pointerId);
+          resizeHandle.removeEventListener("pointermove", onMove);
+          resizeHandle.removeEventListener("pointerup", onUp);
+          delete resizeHandle.dataset.dragging;
+          resizeHandle.style.background = "transparent";
+          resizeHandle.style.opacity = "1";
+          if (fileId) {
+            const hash = entry.container.getAttribute("data-viz-zone-hash") ?? void 0;
+            setZoneHeightOverride(fileId, entry.trackKey, entry.zoneDesc.heightInPx, hash);
+          }
+          editor.changeViewZones((acc) => acc.layoutZone(entry.zoneId));
+          delete entry.container.dataset.resizing;
+        };
+        resizeHandle.addEventListener("pointermove", onMove);
+        resizeHandle.addEventListener("pointerup", onUp);
+      }, true);
+      container.appendChild(resizeHandle);
       let refineAttempts = 0;
       const tryRefine = () => {
         refineAttempts++;
@@ -8130,8 +15407,8 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   });
   if (fileId) {
     const currentViz = /* @__PURE__ */ new Map();
-    for (const [trackKey, { vizId }] of vizRequests) {
-      currentViz.set(trackKey, vizId);
+    for (const [trackKey, req] of vizRequests) {
+      currentViz.set(trackKey, { vizId: req.vizId, contentHash: req.contentHash });
     }
     pruneZoneOverrides(fileId, currentViz);
   }
@@ -8152,18 +15429,46 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
           entry.crop = override ?? preset?.cropRegion ?? FULL_CROP;
           const contentW = editor.getLayoutInfo().contentWidth || 400;
           const layout = computeLayout(contentW, entry.native, entry.crop);
-          entry.zoneDesc.heightInPx = layout.zoneH;
-          entry.container.style.height = `${layout.zoneH}px`;
+          const hOverride = fileId ? getZoneHeightOverride(fileId, entry.trackKey) : void 0;
+          const finalH = hOverride ?? layout.zoneH;
+          entry.zoneDesc.heightInPx = finalH;
+          entry.container.style.height = `${finalH}px`;
           accessor.layoutZone(entry.zoneId);
-          applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
+          if (hOverride != null) {
+            const nw = entry.native.w, nh = entry.native.h;
+            const cropW = Math.max(0.01, entry.crop.w);
+            const cropH = Math.max(0.01, entry.crop.h);
+            const scaleByW = contentW / (cropW * nw);
+            const scaleByH = hOverride / (cropH * nh);
+            const scale2 = Math.min(scaleByW, scaleByH);
+            const tx3 = -entry.crop.x * nw * scale2;
+            const ty = -entry.crop.y * nh * scale2;
+            applyLayout(entry.container, entry.container.querySelector("canvas"), { scale: scale2, tx: tx3, ty });
+          } else {
+            applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
+          }
         }
       });
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400;
         const layout = computeLayout(contentW, entry.native, entry.crop);
-        entry.zoneDesc.heightInPx = layout.zoneH;
-        entry.container.style.height = `${layout.zoneH}px`;
-        applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
+        const hOverride = fileId ? getZoneHeightOverride(fileId, entry.trackKey) : void 0;
+        const finalH = hOverride ?? layout.zoneH;
+        entry.zoneDesc.heightInPx = finalH;
+        entry.container.style.height = `${finalH}px`;
+        if (hOverride != null) {
+          const nw = entry.native.w, nh = entry.native.h;
+          const cropW = Math.max(0.01, entry.crop.w);
+          const cropH = Math.max(0.01, entry.crop.h);
+          const scaleByW = contentW / (cropW * nw);
+          const scaleByH = hOverride / (cropH * nh);
+          const scale2 = Math.min(scaleByW, scaleByH);
+          const tx3 = -entry.crop.x * nw * scale2;
+          const ty = -entry.crop.y * nh * scale2;
+          applyLayout(entry.container, entry.container.querySelector("canvas"), { scale: scale2, tx: tx3, ty });
+        } else {
+          applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
+        }
       }
     } catch {
     }
@@ -8171,12 +15476,27 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
   const recomputeAllZones = () => {
     editor.changeViewZones((accessor) => {
       for (const entry of zoneEntries) {
+        if (entry.container.dataset.resizing) continue;
         const contentW = editor.getLayoutInfo().contentWidth || 400;
         const layout = computeLayout(contentW, entry.native, entry.crop);
-        entry.zoneDesc.heightInPx = layout.zoneH;
-        entry.container.style.height = `${layout.zoneH}px`;
+        const hOverride = fileId ? getZoneHeightOverride(fileId, entry.trackKey) : void 0;
+        const finalH = hOverride ?? layout.zoneH;
+        entry.zoneDesc.heightInPx = finalH;
+        entry.container.style.height = `${finalH}px`;
         accessor.layoutZone(entry.zoneId);
-        applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
+        if (hOverride != null) {
+          const nw = entry.native.w, nh = entry.native.h;
+          const cropW = Math.max(0.01, entry.crop.w);
+          const cropH = Math.max(0.01, entry.crop.h);
+          const scaleByW = contentW / (cropW * nw);
+          const scaleByH = hOverride / (cropH * nh);
+          const scale2 = Math.min(scaleByW, scaleByH);
+          const tx3 = -entry.crop.x * nw * scale2;
+          const ty = -entry.crop.y * nh * scale2;
+          applyLayout(entry.container, entry.container.querySelector("canvas"), { scale: scale2, tx: tx3, ty });
+        } else {
+          applyLayout(entry.container, entry.container.querySelector("canvas"), layout);
+        }
       }
     });
   };
@@ -8199,10 +15519,24 @@ function addInlineViewZones(editor, components, vizDescriptors, actions, fileId)
       }
       if (blockStart < 0) continue;
       let blockEnd = blockStart;
-      for (let j = blockStart + 1; j < lines.length; j++) {
+      let foundViz = false;
+      for (let j = blockStart; j < lines.length; j++) {
         const next = lines[j].trim();
-        if (next.startsWith("$:") || next.startsWith("setcps")) break;
+        if (j > blockStart && (next.startsWith("$:") || next.startsWith("setcps"))) break;
         if (next !== "" && !next.startsWith("//")) blockEnd = j;
+        if (/\.viz\s*\(/.test(next)) {
+          foundViz = true;
+          blockEnd = j;
+          break;
+        }
+      }
+      if (!foundViz) {
+        blockEnd = blockStart;
+        for (let j = blockStart + 1; j < lines.length; j++) {
+          const next = lines[j].trim();
+          if (next.startsWith("$:") || next.startsWith("setcps")) break;
+          if (next !== "" && !next.startsWith("//")) blockEnd = j;
+        }
       }
       const newAfterLine = blockEnd + 1;
       if (newAfterLine !== entry.afterLine) {
@@ -10702,14 +18036,8 @@ var WorkspaceShell = forwardRef(function WorkspaceShell2({
                       "data-stave-backdrop": group.backgroundFileId ? "on" : "off",
                       style: {
                         position: "relative",
-                        zIndex: 1,
+                        zIndex: 0,
                         height: "100%"
-                        // Blur / halo only kick in when the data attribute
-                        // flips to 'on' via the CSS rule in globals.css.
-                        // Shipping the rule on the wrapper (not on a global
-                        // selector) keeps the effect local to this group
-                        // so split panes with different backdrops stay
-                        // independent.
                       },
                       children: renderTabContent(activeTabObj, group.id, isShellActiveGroup)
                     }
@@ -19738,7 +27066,7 @@ async function flushToPreset(fileId, presetId) {
     ...existing,
     // preserve cropRegion + any future fields
     id: presetId,
-    name: existing?.name ?? file.path.replace(/\.[^.]+$/, ""),
+    name: existing?.name ?? file.path.replace(/^.*\//, "").replace(/\.[^.]+$/, ""),
     renderer: existing?.renderer ?? renderer,
     code: file.content,
     requires: existing?.requires ?? [],
@@ -20842,6 +28170,6 @@ function registerPresetAsNamedViz(preset) {
   }
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFolderOrder, getInlineVizActionSize, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_RUNTIME, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, filter, flushToPreset, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFolderOrder, getInlineVizActionSize, getLastOpenedProject, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

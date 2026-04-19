@@ -7,7 +7,7 @@
  *
  *   - UNPINNED: just a viz-file picker. Selecting a file pins it.
  *   - PINNED:   swap picker + opacity slider + quality dropdown +
- *               blur slider + crop button + clear + reveal link.
+ *               crop button + clear + reveal link.
  *
  * Follows VS Code's status-bar-item-click-opens-menu pattern. Closes
  * on outside click or Escape. Scoped to viz files (`.p5` / `.hydra`);
@@ -16,8 +16,6 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import {
-  getEditorBackdropBlur,
-  setEditorBackdropBlur,
   getBackdropOpacity,
   setBackdropOpacity,
   onBackdropOpacityChange,
@@ -76,8 +74,6 @@ export function BackdropPopover(props: Props) {
     getBackdropQuality(),
   );
   useEffect(() => onBackdropQualityChange(setQuality), []);
-  const [blur, setBlur] = useState(() => getEditorBackdropBlur());
-
   const pinned = props.backgroundFileId != null;
 
   // Position below the indicator, right-aligned to its right edge.
@@ -171,24 +167,6 @@ export function BackdropPopover(props: Props) {
               <option value="half">Half</option>
               <option value="quarter">Quarter</option>
             </select>
-          </Row>
-
-          {/* Code surface blur */}
-          <Row label="code blur">
-            <input
-              type="range"
-              min={0}
-              max={24}
-              step={1}
-              value={blur}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setBlur(v);
-                setEditorBackdropBlur(v);
-              }}
-              style={rangeStyle}
-            />
-            <span style={valueStyle}>{blur}px</span>
           </Row>
 
           <div style={divider} />

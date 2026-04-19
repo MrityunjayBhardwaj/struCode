@@ -1,11 +1,5 @@
 /**
- * Phase 3 E2E — Cinema Mode (#43), code-surface blur (#39),
- * backdrop quality ladder (#41).
- *
- * Dispatches commands directly to the window-level keybinding
- * dispatcher (same path the useKeyboardCommands hook listens on in
- * Phase 1's hydra test). Monaco swallows chord-style shortcuts if
- * the test types through the focused element.
+ * Phase 3 E2E — code-surface backdrop (#39), backdrop quality ladder (#41).
  */
 
 import { test, expect } from '@playwright/test'
@@ -18,60 +12,7 @@ async function gotoApp(page: import('@playwright/test').Page) {
   await page.locator('.monaco-editor').waitFor({ timeout: 15000 })
 }
 
-async function openViewMenuCinema(page: import('@playwright/test').Page) {
-  // View menu in the MenuBar — click the "View" button, then click
-  // the Cinema Mode item.
-  await page.getByRole('button', { name: /^View$/ }).click()
-  await page
-    .getByRole('button', { name: /Cinema Mode|Exit Cinema Mode/ })
-    .click()
-}
-
-test.describe('Cinema Mode (#43)', () => {
-  test('auto-pins a viz as backdrop and enters zen on entry', async ({
-    page,
-  }) => {
-    await gotoApp(page)
-
-    // No backdrop initially.
-    await expect(
-      page.locator('[data-workspace-background]'),
-    ).toHaveCount(0)
-
-    await openViewMenuCinema(page)
-
-    // Zen flips on — MenuBar stays visible (per editor-fixes-2)
-    // but the FileTree activity bar hides. Easiest observable:
-    // backdrop layer appears (auto-pinned).
-    const backdrop = page.locator('[data-workspace-background]').first()
-    await expect(backdrop).toBeVisible({ timeout: 5000 })
-    // The auto-pick prefers .hydra.
-    const bgFileId = await backdrop.getAttribute(
-      'data-background-file-id',
-    )
-    expect(bgFileId).toBeTruthy()
-  })
-
-  test('Esc exits Cinema and clears the auto-pinned backdrop', async ({
-    page,
-  }) => {
-    await gotoApp(page)
-    await openViewMenuCinema(page)
-    await expect(
-      page.locator('[data-workspace-background]').first(),
-    ).toBeVisible({ timeout: 5000 })
-
-    await page.keyboard.press('Escape')
-    await page.waitForTimeout(300)
-
-    // Backdrop gone — we auto-pinned and cleaned up on exit.
-    await expect(
-      page.locator('[data-workspace-background]'),
-    ).toHaveCount(0)
-  })
-})
-
-test.describe('Code surface blur (#39)', () => {
+test.describe('Code surface backdrop (#39)', () => {
   test('data-stave-backdrop attr flips on + off with backdrop state', async ({
     page,
   }) => {
@@ -102,28 +43,6 @@ test.describe('Code surface blur (#39)', () => {
     })
 
     await btn.click()
-  })
-
-  test('--stave-backdrop-blur persists to localStorage', async ({ page }) => {
-    await gotoApp(page)
-
-    // Seed a value via page evaluate (simulates the settings
-    // modal's write path without depending on its DOM shape).
-    await page.evaluate(() => {
-      window.localStorage.setItem('stave:backdropBlur', '16')
-    })
-    await page.reload()
-    await page.locator('[data-workspace-shell="root"]').waitFor({
-      timeout: 15000,
-    })
-
-    const value = await page.evaluate(
-      () =>
-        getComputedStyle(document.documentElement).getPropertyValue(
-          '--stave-backdrop-blur',
-        ),
-    )
-    expect(value.trim()).toBe('16px')
   })
 })
 

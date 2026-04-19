@@ -16,7 +16,7 @@ export function ActivityBar({ activePanelId, onSelect }: ActivityBarProps) {
   const panels: Panel[] = React.useMemo(() => listPanels(), [tick]);
 
   return (
-    <div style={styles.bar}>
+    <div style={styles.bar} data-activity-bar>
       {panels.map((p) => {
         const isActive = activePanelId === p.id;
         const isHovered = hoveredId === p.id;

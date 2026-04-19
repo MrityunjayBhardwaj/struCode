@@ -4,7 +4,7 @@ import type { VizRenderer, VizDescriptor } from './types'
 import { resolveDescriptor } from './resolveDescriptor'
 import { BufferedScheduler } from '../engine/BufferedScheduler'
 import { VizPresetStore, type CropRegion, type VizPreset } from './vizPreset'
-import { getZoneCropOverride, pruneZoneOverrides } from '../workspace/WorkspaceFile'
+import { getZoneCropOverride, getZoneHeightOverride, setZoneHeightOverride, pruneZoneOverrides } from '../workspace/WorkspaceFile'
 
 export interface InlineZoneHandle {
   cleanup(): void
@@ -261,7 +261,8 @@ export function addInlineViewZones(
   const audioCtx = components.audio?.audioCtx
 
   editor.changeViewZones((accessor) => {
-    for (const [trackKey, { vizId, afterLine }] of vizRequests) {
+    for (const [trackKey, { vizId, afterLine, ...reqExtra }] of vizRequests) {
+      const contentHash: string = (reqExtra as any).contentHash ?? ''
       const descriptor = resolveDescriptor(vizId, vizDescriptors)
       if (!descriptor) {
         console.warn(`[stave] Unknown viz "${vizId}". Available: ${vizDescriptors.map(d => d.id).join(', ')}`)
@@ -303,14 +304,21 @@ export function addInlineViewZones(
       const crop = FULL_CROP
       const contentW = editor.getLayoutInfo().contentWidth || 400
       const layout = computeLayout(contentW, native, crop)
+      // Apply persisted height override immediately so remounted zones
+      // don't flash at the computed height before the async block corrects them.
+      const initHOverride = fileId ? getZoneHeightOverride(fileId, trackKey) : undefined
+      const initH = initHOverride ?? layout.zoneH
 
       const container = document.createElement('div')
       container.setAttribute('data-viz-zone', '')
-      container.style.cssText = `overflow:hidden;height:${layout.zoneH}px;position:relative;`
+      container.setAttribute('data-viz-zone-track', trackKey)
+      container.setAttribute('data-viz-zone-id', vizId)
+      if (contentHash) container.setAttribute('data-viz-zone-hash', contentHash)
+      container.style.cssText = `overflow:hidden;height:${initH}px;position:relative;`
 
       const zoneDesc = {
         afterLineNumber: afterLine,
-        heightInPx: layout.zoneH,
+        heightInPx: initH,
         domNode: container,
         suppressMouseDown: true,
       }
@@ -372,6 +380,82 @@ export function addInlineViewZones(
       }
       zoneEntries.push(entry)
 
+      // ── Resize handle (bottom edge) ──
+      // Thin strip at the bottom of the zone — reveals on hover, drag
+      // to resize the zone height. Persists via setZoneHeightOverride.
+      const resizeHandle = document.createElement('div')
+      resizeHandle.style.cssText = `
+        position:absolute;bottom:0;left:0;right:0;height:6px;
+        cursor:row-resize;z-index:50;
+        background:transparent;transition:background 150ms;
+      `
+      resizeHandle.addEventListener('mouseenter', () => {
+        resizeHandle.style.background = 'var(--accent-strong, #7c7cff)'
+        resizeHandle.style.opacity = '0.6'
+      })
+      resizeHandle.addEventListener('mouseleave', () => {
+        if (!resizeHandle.dataset.dragging) {
+          resizeHandle.style.background = 'transparent'
+          resizeHandle.style.opacity = '1'
+        }
+      })
+      // Register in CAPTURE phase on the container so the handler
+      // fires before Monaco's scrollable-element pointer capture.
+      // The resize handle is identified by checking the event target.
+      container.addEventListener('pointerdown', (e) => {
+        if (e.target !== resizeHandle) return
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        // Capture the pointer so move/up events route here instead
+        // of being swallowed by Monaco's setPointerCapture.
+        resizeHandle.setPointerCapture(e.pointerId)
+        resizeHandle.dataset.dragging = '1'
+        entry.container.dataset.resizing = '1'
+        const startY = e.clientY
+        const startH = entry.zoneDesc.heightInPx
+        const contentW = editor.getLayoutInfo().contentWidth || 400
+        const onMove = (ev: PointerEvent) => {
+          ev.preventDefault()
+          const delta = ev.clientY - startY
+          const newH = Math.max(MIN_ZONE_HEIGHT, Math.min(MAX_ZONE_HEIGHT, startH + delta))
+          entry.container.style.height = `${newH}px`
+          entry.zoneDesc.heightInPx = newH
+          // Tell Monaco the zone height changed so lines below
+          // reflow in real time (resizing flag prevents recomputeAllZones
+          // from resetting the height).
+          editor.changeViewZones((acc) => acc.layoutZone(entry.zoneId))
+          const nw = entry.native.w, nh = entry.native.h
+          const cropW = Math.max(0.01, entry.crop.w)
+          const cropH = Math.max(0.01, entry.crop.h)
+          const scaleByW = contentW / (cropW * nw)
+          const scaleByH = newH / (cropH * nh)
+          const scale = Math.min(scaleByW, scaleByH)
+          const tx = -entry.crop.x * nw * scale
+          const ty = -entry.crop.y * nh * scale
+          applyLayout(entry.container, entry.container.querySelector('canvas'), { scale, tx, ty })
+        }
+        const onUp = (ev: PointerEvent) => {
+          resizeHandle.releasePointerCapture(ev.pointerId)
+          resizeHandle.removeEventListener('pointermove', onMove)
+          resizeHandle.removeEventListener('pointerup', onUp)
+          delete resizeHandle.dataset.dragging
+          resizeHandle.style.background = 'transparent'
+          resizeHandle.style.opacity = '1'
+          if (fileId) {
+            const hash = entry.container.getAttribute('data-viz-zone-hash') ?? undefined
+            setZoneHeightOverride(fileId, entry.trackKey, entry.zoneDesc.heightInPx, hash)
+          }
+          // Keep resizing flag ON during changeViewZones so the
+          // triggered recomputeAllZones skips this zone. Clear after.
+          editor.changeViewZones((acc) => acc.layoutZone(entry.zoneId))
+          delete entry.container.dataset.resizing
+        }
+        resizeHandle.addEventListener('pointermove', onMove)
+        resizeHandle.addEventListener('pointerup', onUp)
+      }, true)
+      container.appendChild(resizeHandle)
+
       // p5's createCanvas(W, H) may pick dimensions that differ from the
       // preset's declared nativeSize. The transform math MUST use the
       // canvas's ACTUAL intrinsic size or the viz overflows its zone.
@@ -404,9 +488,9 @@ export function addInlineViewZones(
   // Remove overrides for trackKeys that no longer exist in vizRequests
   // (block removed / anonymous keys shifted) or whose vizId changed.
   if (fileId) {
-    const currentViz = new Map<string, string>()
-    for (const [trackKey, { vizId }] of vizRequests) {
-      currentViz.set(trackKey, vizId)
+    const currentViz = new Map<string, { vizId: string; contentHash?: string }>()
+    for (const [trackKey, req] of vizRequests) {
+      currentViz.set(trackKey, { vizId: req.vizId, contentHash: (req as any).contentHash })
     }
     pruneZoneOverrides(fileId, currentViz)
   }
@@ -439,10 +523,25 @@ export function addInlineViewZones(
           entry.crop = override ?? preset?.cropRegion ?? FULL_CROP
           const contentW = editor.getLayoutInfo().contentWidth || 400
           const layout = computeLayout(contentW, entry.native, entry.crop)
-          entry.zoneDesc.heightInPx = layout.zoneH
-          entry.container.style.height = `${layout.zoneH}px`
+          // User height override (drag-to-resize) takes precedence.
+          const hOverride = fileId ? getZoneHeightOverride(fileId, entry.trackKey) : undefined
+          const finalH = hOverride ?? layout.zoneH
+          entry.zoneDesc.heightInPx = finalH
+          entry.container.style.height = `${finalH}px`
           accessor.layoutZone(entry.zoneId)
-          applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
+          if (hOverride != null) {
+            const nw = entry.native.w, nh = entry.native.h
+            const cropW = Math.max(0.01, entry.crop.w)
+            const cropH = Math.max(0.01, entry.crop.h)
+            const scaleByW = contentW / (cropW * nw)
+            const scaleByH = hOverride / (cropH * nh)
+            const scale = Math.min(scaleByW, scaleByH)
+            const tx = -entry.crop.x * nw * scale
+            const ty = -entry.crop.y * nh * scale
+            applyLayout(entry.container, entry.container.querySelector('canvas'), { scale, tx, ty })
+          } else {
+            applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
+          }
         }
       })
       // After heights change, Monaco repositions zones — ensure the
@@ -450,9 +549,23 @@ export function addInlineViewZones(
       for (const entry of zoneEntries) {
         const contentW = editor.getLayoutInfo().contentWidth || 400
         const layout = computeLayout(contentW, entry.native, entry.crop)
-        entry.zoneDesc.heightInPx = layout.zoneH
-        entry.container.style.height = `${layout.zoneH}px`
-        applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
+        const hOverride = fileId ? getZoneHeightOverride(fileId, entry.trackKey) : undefined
+        const finalH = hOverride ?? layout.zoneH
+        entry.zoneDesc.heightInPx = finalH
+        entry.container.style.height = `${finalH}px`
+        if (hOverride != null) {
+          const nw = entry.native.w, nh = entry.native.h
+          const cropW = Math.max(0.01, entry.crop.w)
+          const cropH = Math.max(0.01, entry.crop.h)
+          const scaleByW = contentW / (cropW * nw)
+          const scaleByH = hOverride / (cropH * nh)
+          const scale = Math.min(scaleByW, scaleByH)
+          const tx = -entry.crop.x * nw * scale
+          const ty = -entry.crop.y * nh * scale
+          applyLayout(entry.container, entry.container.querySelector('canvas'), { scale, tx, ty })
+        } else {
+          applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
+        }
       }
     } catch { /* ignore */ }
   })()
@@ -464,12 +577,29 @@ export function addInlineViewZones(
   const recomputeAllZones = () => {
     editor.changeViewZones((accessor) => {
       for (const entry of zoneEntries) {
+        if (entry.container.dataset.resizing) continue
         const contentW = editor.getLayoutInfo().contentWidth || 400
         const layout = computeLayout(contentW, entry.native, entry.crop)
-        entry.zoneDesc.heightInPx = layout.zoneH
-        entry.container.style.height = `${layout.zoneH}px`
+        const hOverride = fileId ? getZoneHeightOverride(fileId, entry.trackKey) : undefined
+        const finalH = hOverride ?? layout.zoneH
+        entry.zoneDesc.heightInPx = finalH
+        entry.container.style.height = `${finalH}px`
         accessor.layoutZone(entry.zoneId)
-        applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
+        // When a height override is active, recompute the canvas
+        // transform to fit the overridden height (aspect-ratio scale).
+        if (hOverride != null) {
+          const nw = entry.native.w, nh = entry.native.h
+          const cropW = Math.max(0.01, entry.crop.w)
+          const cropH = Math.max(0.01, entry.crop.h)
+          const scaleByW = contentW / (cropW * nw)
+          const scaleByH = hOverride / (cropH * nh)
+          const scale = Math.min(scaleByW, scaleByH)
+          const tx = -entry.crop.x * nw * scale
+          const ty = -entry.crop.y * nh * scale
+          applyLayout(entry.container, entry.container.querySelector('canvas'), { scale, tx, ty })
+        } else {
+          applyLayout(entry.container, entry.container.querySelector('canvas'), layout)
+        }
       }
     })
   }
@@ -513,11 +643,25 @@ export function addInlineViewZones(
       if (blockStart < 0) continue // decoration sits above any $:, bail
 
       // Scan forward for the block's last non-empty, non-comment line.
+      // Stop at the .viz() call — anything typed after it is new content,
+      // not a block continuation. Without this, gibberish typed after
+      // .viz() extends blockEnd and the zone drops below the gibberish.
       let blockEnd = blockStart
-      for (let j = blockStart + 1; j < lines.length; j++) {
+      let foundViz = false
+      for (let j = blockStart; j < lines.length; j++) {
         const next = lines[j].trim()
-        if (next.startsWith('$:') || next.startsWith('setcps')) break
+        if (j > blockStart && (next.startsWith('$:') || next.startsWith('setcps'))) break
         if (next !== '' && !next.startsWith('//')) blockEnd = j
+        if (/\.viz\s*\(/.test(next)) { foundViz = true; blockEnd = j; break }
+      }
+      // If no .viz() found (deleted?), fall back to last non-empty line.
+      if (!foundViz) {
+        blockEnd = blockStart
+        for (let j = blockStart + 1; j < lines.length; j++) {
+          const next = lines[j].trim()
+          if (next.startsWith('$:') || next.startsWith('setcps')) break
+          if (next !== '' && !next.startsWith('//')) blockEnd = j
+        }
       }
 
       const newAfterLine = blockEnd + 1

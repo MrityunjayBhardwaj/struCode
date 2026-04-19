@@ -50,7 +50,6 @@ import {
   applyPersistedTheme,
   applyPersistedUiIconSize,
   applyPersistedInlineVizActionSize,
-  applyPersistedBackdropBlur,
 } from "@stave/editor";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { EditorSettingsModal } from "./EditorSettingsModal";
@@ -112,7 +111,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [editorSettingsOpen, setEditorSettingsOpen] = useState(false);
   const [cropTarget, setCropTarget] = useState<
-    | { mode: "inline"; vizId: string; presetId: string; fileId: string; trackKey: string }
+    | { mode: "inline"; vizId: string; presetId: string; fileId: string; trackKey: string; renderSize?: { w: number; h: number } }
     | { mode: "backdrop"; adapter: import("./CropPopup").CropAdapter }
     | null
   >(null);
@@ -123,7 +122,6 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     applyPersistedTheme();
     applyPersistedUiIconSize();
     applyPersistedInlineVizActionSize();
-    applyPersistedBackdropBlur();
   }, []);
   const [zenMode, setZenMode] = useState(false);
   const searchViewRef = useRef<WorkspaceSearchViewHandle | null>(null);
@@ -164,18 +162,6 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     () => subscribeToFileList(() => setFileListRev((n) => n + 1)),
     [],
   );
-
-  // Cinema Mode — Zen + Backdrop composed into one toggle (#43).
-  // Entering: remember prior zen + backdrop, force zen on, auto-pin a
-  // viz file as backdrop if none is set. Exiting: restore prior state,
-  // unpinning only the auto-pinned backdrop (user-pinned backdrops
-  // survive exit — explicit promotions shouldn't vanish on Cmd+K F).
-  const [cinemaMode, setCinemaMode] = useState(false);
-  const cinemaPrior = useRef<{
-    zen: boolean;
-    bgFileId: string | null;
-    autoPinned: boolean;
-  } | null>(null);
 
   const handleImportZip = useCallback(async (file: File) => {
     try {
@@ -397,76 +383,6 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     },
     [activeProject.id],
   );
-
-  /**
-   * Cinema Mode toggle (#43). On enter, saves the prior zen +
-   * backdrop state, forces zen on, and auto-pins the first available
-   * viz file as backdrop if none is set. On exit, restores prior
-   * zen state and — only if we auto-pinned — clears the backdrop
-   * (user-pinned backdrops survive Cinema exit).
-   *
-   * `listWorkspaceFiles` is consulted at call time, not subscription-
-   * style — this avoids re-running on every file-list change and
-   * keeps cinema-mode's React surface small. The auto-pick prefers
-   * `.hydra`, falls back to `.p5`, because backdrop hydra sketches
-   * are the marquee case.
-   */
-  const handleToggleCinemaMode = useCallback(() => {
-    if (cinemaMode) {
-      // Exit — restore prior state.
-      const prior = cinemaPrior.current;
-      cinemaPrior.current = null;
-      setCinemaMode(false);
-      if (!prior) {
-        // Defensive: somehow entered without saving prior. Turn zen
-        // off as a safe default.
-        setZenMode(false);
-        return;
-      }
-      setZenMode(prior.zen);
-      if (prior.autoPinned) {
-        // Only undo OUR pin — leave user-set backdrops alone.
-        handleSetAsBackground(prior.bgFileId);
-      }
-      return;
-    }
-    // Enter — capture state, then apply.
-    let autoPinned = false;
-    const priorBg = backgroundFileId;
-    if (!backgroundFileId) {
-      const files = listWorkspaceFiles();
-      const pick =
-        files.find((f) => f.language === "hydra") ??
-        files.find((f) => f.language === "p5js");
-      if (pick) {
-        handleSetAsBackground(pick.id);
-        autoPinned = true;
-      }
-    }
-    cinemaPrior.current = {
-      zen: zenMode,
-      bgFileId: priorBg,
-      autoPinned,
-    };
-    setZenMode(true);
-    setCinemaMode(true);
-  }, [cinemaMode, zenMode, backgroundFileId, handleSetAsBackground]);
-
-  // Cinema cleanup: when zen drops (Esc, browser exits fullscreen,
-  // direct Zen-mode toggle while Cinema was on), tear down Cinema
-  // state — restore the prior backdrop if we were the ones who auto-
-  // pinned it. Lives in its own effect so handleSetAsBackground is
-  // in lexical scope at dep-array time (the fullscreen sync effect
-  // runs earlier and would hit a TDZ otherwise).
-  useEffect(() => {
-    if (zenMode || !cinemaMode) return;
-    const prior = cinemaPrior.current;
-    cinemaPrior.current = null;
-    setCinemaMode(false);
-    if (prior?.autoPinned) {
-      handleSetAsBackground(prior.bgFileId);
-    }
-  }, [zenMode, cinemaMode, handleSetAsBackground]);
 
   // Restore the persisted backdrop when the active project changes.
   // Reads the stored fileId from project metadata and pushes it into
@@ -728,15 +644,6 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       run: () => setZenMode((z) => !z),
     }));
     unregs.push(registerCommand({
-      id: "stave.view.cinema",
-      title: "Toggle Cinema Mode",
-      category: "View",
-      description:
-        "Zen + Backdrop together. Hides chrome and pins a viz as the backdrop.",
-      keybinding: "mod+k f",
-      run: () => handleToggleCinemaMode(),
-    }));
-    unregs.push(registerCommand({
       id: "stave.view.fontUp",
       title: "Increase Editor Font Size",
       category: "View",
@@ -843,7 +750,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       render: () => null,
     }));
     return () => { for (const u of unregs) u(); };
-  }, [activeProject, handleRenameActiveProject, openSnapshotPanel, handleShareProject, handleToggleCinemaMode]);
+  }, [activeProject, handleRenameActiveProject, openSnapshotPanel, handleShareProject]);
 
   // Build file rows for QuickOpen — memoised so mount of the palette
   // has a stable array. Rebuilt when the file list changes.
@@ -896,6 +803,13 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         }}
         onCropBackground={() => {
           if (!backgroundFileId) return;
+          // Read the actual backdrop container size so the crop
+          // preview renders at the same dimensions as the live viz.
+          const bgEl = document.querySelector("[data-workspace-background]");
+          const rect = bgEl?.getBoundingClientRect();
+          const renderSize = rect && rect.width > 0
+            ? { w: Math.round(rect.width), h: Math.round(rect.height) }
+            : undefined;
           setCropTarget({
             mode: "backdrop",
             adapter: createBackdropCropAdapter({
@@ -903,6 +817,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
               fileId: backgroundFileId,
               initialCrop: backgroundCrop,
               onChange: (c) => setBackgroundCropState(c),
+              renderSize,
             }),
           });
         }}
@@ -925,15 +840,13 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         sidebarCollapsed={sidebarCollapsed}
         onToggleZenMode={() => setZenMode((z) => !z)}
         zenMode={zenMode}
-        onToggleCinemaMode={handleToggleCinemaMode}
-        cinemaMode={cinemaMode}
         onUndo={() => { undo(); }}
         onRedo={() => { redo(); }}
         canUndo={undoState.canUndo}
         canRedo={undoState.canRedo}
       />
 
-      <div style={styles.main}>
+      <div style={styles.main} data-stave-main-backdrop={backgroundFileId ? "on" : "off"}>
         {!zenMode && (
           <ActivityBar
             activePanelId={activePanelId}
@@ -951,7 +864,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           />
         )}
         {!zenMode && activePanelId === "search" && (
-          <div style={styles.panelRoot}>
+          <div style={styles.panelRoot} data-sidebar>
             <div style={styles.panelHeader}>SEARCH</div>
             <WorkspaceSearchView
               ref={searchViewRef}
@@ -961,7 +874,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           </div>
         )}
         {!zenMode && activePanelId === "snapshots" && (
-          <div style={styles.panelRoot}>
+          <div style={styles.panelRoot} data-sidebar>
             <div style={styles.panelHeader}>VERSION HISTORY</div>
             <SnapshotView
               snapshots={snapshots}
@@ -972,7 +885,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           </div>
         )}
         {!zenMode && activePanelId === "outline" && (
-          <div style={styles.panelRoot}>
+          <div style={styles.panelRoot} data-sidebar>
             <div style={styles.panelHeader}>OUTLINE</div>
             <OutlineView
               activeFileId={activeFileId}
@@ -1041,20 +954,40 @@ export function StaveApp({ initialProject }: StaveAppProps) {
                   showToast(`Viz file "${vizId}" not found in workspace`, "error");
                 }}
                 onCropViz={(vizId, presetId, trackKey) => {
-                  if (!presetId) {
-                    showToast(`No preset found for "${vizId}" — save it first`, "error");
-                    return;
-                  }
-                  // Fall back to the first opened editor tab if activeFileId
-                  // isn't tracked yet (e.g. initial load before any tab
-                  // selection event fires). The floating bar only shows for
-                  // an editor that's mounted, so an editor tab exists.
                   const fileId = activeFileId ?? listWorkspaceFiles().find(f => f.language === 'strudel' || f.language === 'sonicpi')?.id ?? null;
                   if (!fileId) {
                     showToast("Open an editor file before cropping", "error");
                     return;
                   }
-                  setCropTarget({ mode: "inline", vizId, presetId, fileId, trackKey });
+                  // If presetId is null (async preset lookup hasn't completed),
+                  // resolve by searching workspace files for a matching viz name.
+                  let resolvedPresetId = presetId;
+                  if (!resolvedPresetId) {
+                    const norm = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, "");
+                    const target = norm(vizId);
+                    const allFiles = listWorkspaceFiles();
+                    const vizFile = allFiles.find(f => {
+                      if (f.language !== "p5js" && f.language !== "hydra") return false;
+                      const base = f.path.replace(/^.*\//, "").replace(/\.[^.]+$/, "");
+                      return norm(base) === target;
+                    });
+                    if (vizFile?.meta?.presetId) {
+                      resolvedPresetId = vizFile.meta.presetId as string;
+                    }
+                  }
+                  if (!resolvedPresetId) {
+                    showToast(`No preset found for "${vizId}" — save it first`, "error");
+                    return;
+                  }
+                  // Read the live inline viz canvas dimensions so the
+                  // crop preview renders at the same native size.
+                  const vizCanvas = document.querySelector(
+                    `[data-viz-zone-track="${trackKey}"] canvas`
+                  ) as HTMLCanvasElement | null;
+                  const renderSize = vizCanvas
+                    ? { w: vizCanvas.offsetWidth, h: vizCanvas.offsetHeight }
+                    : undefined;
+                  setCropTarget({ mode: "inline", vizId, presetId: resolvedPresetId, fileId, trackKey, renderSize });
                 }}
               />
             )}
@@ -1170,6 +1103,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           presetId={cropTarget.presetId}
           fileId={cropTarget.fileId}
           trackKey={cropTarget.trackKey}
+          renderSize={cropTarget.renderSize}
           onClose={() => setCropTarget(null)}
         />
       )}
@@ -1230,6 +1164,7 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     height: "100%",
     position: "relative",
+    zIndex: 0,
     display: "flex",
     flexDirection: "column" as const,
   },

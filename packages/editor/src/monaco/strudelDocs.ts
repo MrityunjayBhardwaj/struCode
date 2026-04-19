@@ -1,16 +1,22 @@
 import type * as Monaco from 'monaco-editor'
+import type { DocsIndex, RuntimeDoc } from './docs/types'
+import { createHoverProvider } from './docs/providers'
 
 // ---------------------------------------------------------------------------
 // Strudel function documentation
 // ---------------------------------------------------------------------------
+//
+// Hand-curated until upstream publishes a structured JSDoc dump. The
+// Strudel repo generates `doc.json` at build time via
+// `npm run jsdoc-json`, but doesn't commit or host it as a static asset —
+// see `packages/editor/scripts/fetch-docs/strudel.mjs` for the path we'd
+// need to automate. Until then these entries are maintained manually.
+//
+// Each entry is a RuntimeDoc with `example` required — the pattern for
+// Strudel's hand-curated style. No per-function sourceUrl is set;
+// STRUDEL_DOCS_INDEX.meta.docsBaseUrl covers the Reference→ link.
 
-export interface StrudelDoc {
-  signature: string
-  description: string
-  example: string
-}
-
-export const STRUDEL_DOCS: Record<string, StrudelDoc> = {
+export const STRUDEL_DOCS: Record<string, RuntimeDoc> = {
   note: {
     signature: 'note(pattern: string)',
     description: 'Play notes from a mini-notation pattern. Accepts note names (c4, eb3) or MIDI numbers.',
@@ -169,31 +175,24 @@ export const STRUDEL_DOCS: Record<string, StrudelDoc> = {
 }
 
 // ---------------------------------------------------------------------------
-// Hover provider
+// Index + hover provider — uses the shared factory so the markdown layout
+// matches p5js / hydra / sonicpi hovers exactly.
 // ---------------------------------------------------------------------------
 
-export function registerStrudelHover(monaco: typeof Monaco): Monaco.IDisposable {
-  return monaco.languages.registerHoverProvider('strudel', {
-    provideHover(model, position) {
-      const word = model.getWordAtPosition(position)
-      if (!word) return null
+export const STRUDEL_DOCS_INDEX: DocsIndex = {
+  runtime: 'strudel',
+  docs: STRUDEL_DOCS,
+  meta: {
+    source: 'hand-curated',
+    // Strudel's jsdoc isn't published with per-function permalinks, so
+    // hovers fall back to the main function reference page — the user
+    // lands inside the searchable function browser.
+    docsBaseUrl: 'https://strudel.cc/functions/',
+  },
+}
 
-      const doc = STRUDEL_DOCS[word.word]
-      if (!doc) return null
-
-      const contents: Monaco.IMarkdownString[] = [
-        { value: `\`\`\`typescript\n${doc.signature}\n\`\`\`` },
-        { value: doc.description },
-        { value: `**Example:** \`${doc.example}\`` },
-      ]
-
-      return {
-        range: new monaco.Range(
-          position.lineNumber, word.startColumn,
-          position.lineNumber, word.endColumn
-        ),
-        contents,
-      }
-    },
-  })
+export function registerStrudelHover(
+  monaco: typeof Monaco,
+): Monaco.IDisposable {
+  return createHoverProvider(monaco, STRUDEL_DOCS_INDEX)
 }
