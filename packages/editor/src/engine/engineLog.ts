@@ -109,6 +109,38 @@ function makeId(): string {
 export function emitLog(
   partial: Omit<LogEntry, 'id' | 'ts'>,
 ): LogEntry {
+  // Dedupe: if the previous entry shares (level, runtime, source, line,
+  // message), treat this as a repeat and just bump its timestamp.
+  // Without this, a p5 FES warning fired from inside `draw()` would
+  // push 60 identical rows per second into the Console panel — the
+  // user hits save, nothing gets better, the panel is unreadable in
+  // seconds. The stretched timestamp also keeps the entry "newer than"
+  // the last emitFixed so Live mode continues to surface it (it's
+  // still broken — no reason to suppress the reminder).
+  const last = history.length > 0 ? history[history.length - 1] : undefined
+  if (
+    last &&
+    last.level === partial.level &&
+    last.runtime === partial.runtime &&
+    last.source === partial.source &&
+    last.line === partial.line &&
+    last.message === partial.message
+  ) {
+    last.ts = Date.now()
+    // Listeners still fire — UIs may want to re-render the row's
+    // timestamp or re-flash a toast on repeat. They can dedupe
+    // themselves via `entry.id` if they prefer a single notification.
+    queueMicrotask(() => {
+      for (const fn of listeners) {
+        try {
+          fn(last, history)
+        } catch {
+          /* swallow */
+        }
+      }
+    })
+    return last
+  }
   const entry: LogEntry = {
     id: makeId(),
     ts: Date.now(),

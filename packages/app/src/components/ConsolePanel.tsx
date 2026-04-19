@@ -100,11 +100,15 @@ export function ConsolePanel(): React.ReactElement {
       if (liveMode) {
         // Hide entries whose `(runtime, source)` has a newer fix marker.
         // Also honor a runtime-wide marker (no source) as a fallback.
+        // Strict `<` (not `<=`) so an entry emitted in the same ms as
+        // the fix still surfaces — `Date.now()` granularity collapses
+        // real ordering and we'd rather show a stale error than hide
+        // a fresh one.
         const fixTs =
           fixedMarkers.get(makeFixedKey(e.runtime, e.source)) ??
           fixedMarkers.get(makeFixedKey(e.runtime, undefined)) ??
           0;
-        if (e.ts <= fixTs) return false;
+        if (e.ts < fixTs) return false;
       }
       if (q) {
         const hay =

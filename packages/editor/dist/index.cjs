@@ -28115,6 +28115,19 @@ function makeId() {
   return `log-${Date.now().toString(36)}-${idSeq.toString(36)}`;
 }
 function emitLog(partial) {
+  const last = history.length > 0 ? history[history.length - 1] : void 0;
+  if (last && last.level === partial.level && last.runtime === partial.runtime && last.source === partial.source && last.line === partial.line && last.message === partial.message) {
+    last.ts = Date.now();
+    queueMicrotask(() => {
+      for (const fn of listeners3) {
+        try {
+          fn(last, history);
+        } catch {
+        }
+      }
+    });
+    return last;
+  }
   const entry = {
     id: makeId(),
     ts: Date.now(),
@@ -28581,7 +28594,8 @@ function registerPresetAsNamedViz(preset) {
 // src/workspace/engineLogMarkers.ts
 var OWNER = "stave-log";
 var installed2 = false;
-var activeMarkers = [];
+var activeMarkers = /* @__PURE__ */ new Set();
+var markerKey = (runtime, fileId) => `${runtime}:${fileId}`;
 function findFileIdForSource(source) {
   const files = listWorkspaceFiles();
   const byPath = files.find((f) => f.path === source);
@@ -28616,14 +28630,15 @@ function applyEntry(entry) {
       owner: OWNER
     }
   );
-  activeMarkers.push({ runtime: entry.runtime, fileId });
+  activeMarkers.add(markerKey(entry.runtime, fileId));
 }
 function clearForFix(marker) {
+  const prefix = `${marker.runtime}:`;
   if (!marker.source) {
-    for (let i2 = activeMarkers.length - 1; i2 >= 0; i2--) {
-      const m = activeMarkers[i2];
-      if (m.runtime !== marker.runtime) continue;
-      const resolved2 = getModelForFile(m.fileId);
+    for (const key of Array.from(activeMarkers)) {
+      if (!key.startsWith(prefix)) continue;
+      const fileId2 = key.slice(prefix.length);
+      const resolved2 = getModelForFile(fileId2);
       if (resolved2) {
         clearLineMarkers(
           resolved2.monaco,
@@ -28631,7 +28646,7 @@ function clearForFix(marker) {
           OWNER
         );
       }
-      activeMarkers.splice(i2, 1);
+      activeMarkers.delete(key);
     }
     return;
   }
@@ -28644,12 +28659,7 @@ function clearForFix(marker) {
     resolved.model,
     OWNER
   );
-  for (let i2 = activeMarkers.length - 1; i2 >= 0; i2--) {
-    const m = activeMarkers[i2];
-    if (m.runtime === marker.runtime && m.fileId === fileId) {
-      activeMarkers.splice(i2, 1);
-    }
-  }
+  activeMarkers.delete(markerKey(marker.runtime, fileId));
 }
 function installEngineLogMarkers() {
   if (installed2) return;

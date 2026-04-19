@@ -39,15 +39,16 @@ const OWNER = 'stave-log'
 let installed = false
 
 /**
- * Track the active (runtime, source) → fileId → marker state so we can
- * clear deterministically on a fix. Keyed by fileId because that's the
- * identity the editor registry speaks.
+ * Track the active (runtime, fileId) pairs so we can clear
+ * deterministically on a fix. Set-keyed (not an array) because a
+ * flooding emitter — p5 FES firing each frame inside `draw()`, or a
+ * hap subscriber re-raising the same error — would otherwise push
+ * thousands of duplicates. The set collapses those to one membership
+ * entry and the fix loop stays cheap.
  */
-interface MarkerKey {
-  runtime: RuntimeId
-  fileId: string
-}
-const activeMarkers: MarkerKey[] = []
+const activeMarkers = new Set<string>()
+const markerKey = (runtime: RuntimeId, fileId: string): string =>
+  `${runtime}:${fileId}`
 
 function findFileIdForSource(source: string): string | null {
   // Workspace paths are unique per file, so this is a safe lookup.
@@ -97,16 +98,17 @@ function applyEntry(entry: LogEntry): void {
       owner: OWNER,
     },
   )
-  activeMarkers.push({ runtime: entry.runtime, fileId })
+  activeMarkers.add(markerKey(entry.runtime, fileId))
 }
 
 function clearForFix(marker: FixedMarker): void {
+  const prefix = `${marker.runtime}:`
   if (!marker.source) {
     // Runtime-wide fix — clear every active marker for this runtime.
-    for (let i = activeMarkers.length - 1; i >= 0; i--) {
-      const m = activeMarkers[i]
-      if (m.runtime !== marker.runtime) continue
-      const resolved = getModelForFile(m.fileId)
+    for (const key of Array.from(activeMarkers)) {
+      if (!key.startsWith(prefix)) continue
+      const fileId = key.slice(prefix.length)
+      const resolved = getModelForFile(fileId)
       if (resolved) {
         clearLineMarkers(
           resolved.monaco as Parameters<typeof clearLineMarkers>[0],
@@ -114,7 +116,7 @@ function clearForFix(marker: FixedMarker): void {
           OWNER,
         )
       }
-      activeMarkers.splice(i, 1)
+      activeMarkers.delete(key)
     }
     return
   }
@@ -127,12 +129,7 @@ function clearForFix(marker: FixedMarker): void {
     resolved.model as Parameters<typeof clearLineMarkers>[1],
     OWNER,
   )
-  for (let i = activeMarkers.length - 1; i >= 0; i--) {
-    const m = activeMarkers[i]
-    if (m.runtime === marker.runtime && m.fileId === fileId) {
-      activeMarkers.splice(i, 1)
-    }
-  }
+  activeMarkers.delete(markerKey(marker.runtime, fileId))
 }
 
 /** Wire the bridge. Idempotent. */
@@ -159,5 +156,5 @@ export function installEngineLogMarkers(): void {
 /** TESTING ONLY — reset the bridge between suites. */
 export function __resetEngineLogMarkersForTests(): void {
   installed = false
-  activeMarkers.length = 0
+  activeMarkers.clear()
 }

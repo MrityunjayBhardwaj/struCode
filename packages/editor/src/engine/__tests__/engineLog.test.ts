@@ -54,6 +54,35 @@ describe('emitLog', () => {
     expect(h[h.length - 1].message).toBe('m599')
     expect(h[0].message).toBe('m100')
   })
+
+  it('dedupes consecutive identical entries (p5 FES flood defense)', () => {
+    const shape = {
+      level: 'warn' as const,
+      runtime: 'p5' as const,
+      source: 'sketch.p5',
+      line: 4,
+      message: 'fill() expects 3 args',
+    }
+    emitLog(shape)
+    emitLog(shape)
+    emitLog(shape)
+    const h = getLogHistory()
+    expect(h).toHaveLength(1)
+    // Same id — consumers can treat the emit as a repeat.
+    expect(h[0].message).toBe('fill() expects 3 args')
+  })
+
+  it('treats a different line as a distinct entry', () => {
+    const base = {
+      level: 'warn' as const,
+      runtime: 'p5' as const,
+      source: 'sketch.p5',
+      message: 'oops',
+    }
+    emitLog({ ...base, line: 4 })
+    emitLog({ ...base, line: 7 })
+    expect(getLogHistory()).toHaveLength(2)
+  })
 })
 
 // Listener notifications are deferred to a microtask to prevent
