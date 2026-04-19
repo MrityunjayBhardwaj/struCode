@@ -712,7 +712,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       title: "Search Documentation",
       category: "Help",
       description: "Fuzzy-search the 900+ docs entries across all runtimes.",
-      keybinding: "mod+k d",
+      keybinding: "mod+shift+d",
       run: () => setDocsSearchOpen(true),
     }));
     unregs.push(registerCommand({
