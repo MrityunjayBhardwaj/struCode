@@ -64,7 +64,12 @@ import { ConsolePanel } from "./ConsolePanel";
 import { registerCommand } from "../commands/registry";
 import { installKeybindingDispatcher } from "../commands/keybindings";
 import { registerPanel } from "../panels/registry";
-import { listWorkspaceFiles, subscribeToFileList, subscribeLog } from "@stave/editor";
+import {
+  listWorkspaceFiles,
+  subscribeToFileList,
+  subscribeLog,
+  installEngineLogMarkers,
+} from "@stave/editor";
 import StrudelEditorClient from "./StrudelEditorClient";
 
 interface StaveAppProps {
@@ -123,6 +128,14 @@ export function StaveApp({ initialProject }: StaveAppProps) {
     applyPersistedTheme();
     applyPersistedUiIconSize();
     applyPersistedInlineVizActionSize();
+  }, []);
+
+  // Monaco marker bridge — engineLog entries that carry a `source` +
+  // `line` become inline squiggles on the matching file's model,
+  // cleared whenever `emitFixed` fires for the same (runtime, source).
+  // Idempotent — installs on first mount; no-op thereafter.
+  useEffect(() => {
+    installEngineLogMarkers();
   }, []);
 
   // Toast bridge — every new error-level engineLog entry also surfaces

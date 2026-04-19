@@ -272,6 +272,8 @@ function CompiledVizMount(props: CompiledVizMountProps): React.ReactElement {
         message: parts.message,
         suggestion: parts.suggestion,
         stack: parts.stack,
+        line: parts.line,
+        column: parts.column,
       })
       return { descriptor: null, compileError: message }
     }
@@ -348,6 +350,8 @@ function CompiledVizMount(props: CompiledVizMountProps): React.ReactElement {
         message: parts.message,
         suggestion: parts.suggestion,
         stack: parts.stack,
+        line: parts.line,
+        column: parts.column,
       })
     }
     try {

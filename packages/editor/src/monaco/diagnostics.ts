@@ -82,3 +82,80 @@ export function clearEvalErrors(
     console.warn('[stave] clearEvalErrors failed:', markerError)
   }
 }
+
+/**
+ * Place a single marker on a specific line. Owner is caller-supplied so
+ * log-driven markers (`stave-log`) can coexist with the runtime-driven
+ * `setEvalError` markers (`stave`) without clobbering each other — the
+ * user sees both surfaces highlight the same line when they overlap.
+ *
+ * Line/column validation mirrors `setEvalError`: values outside the
+ * model's range fall back to a full-document marker. Any residual
+ * Monaco throw is swallowed (hetvabhasa P37).
+ */
+export function setLineMarker(
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+  opts: {
+    line?: number
+    column?: number
+    message: string
+    severity?: 'error' | 'warn' | 'info'
+    owner?: string
+  }
+): void {
+  try {
+    const lineCount = model.getLineCount()
+    const line =
+      opts.line != null &&
+      Number.isFinite(opts.line) &&
+      opts.line >= 1 &&
+      opts.line <= lineCount
+        ? opts.line
+        : null
+    const col =
+      opts.column != null && Number.isFinite(opts.column) && opts.column >= 1
+        ? opts.column
+        : 1
+
+    const severityMap = {
+      error: monaco.MarkerSeverity.Error,
+      warn: monaco.MarkerSeverity.Warning,
+      info: monaco.MarkerSeverity.Info,
+    } as const
+    const severity = severityMap[opts.severity ?? 'error']
+
+    const startLine = line ?? 1
+    const endLine = line ?? lineCount
+    const startColumn = line ? col : 1
+    const endColumn = model.getLineMaxColumn(endLine)
+
+    monaco.editor.setModelMarkers(model, opts.owner ?? MARKER_OWNER, [
+      {
+        severity,
+        message: opts.message,
+        startLineNumber: startLine,
+        startColumn,
+        endLineNumber: endLine,
+        endColumn,
+      },
+    ])
+  } catch (markerError) {
+    // eslint-disable-next-line no-console
+    console.warn('[stave] setLineMarker failed, skipped:', markerError)
+  }
+}
+
+/** Clear markers of a specific owner. Use to drop log-driven squiggles. */
+export function clearLineMarkers(
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+  owner: string
+): void {
+  try {
+    monaco.editor.setModelMarkers(model, owner, [])
+  } catch (markerError) {
+    // eslint-disable-next-line no-console
+    console.warn('[stave] clearLineMarkers failed:', markerError)
+  }
+}

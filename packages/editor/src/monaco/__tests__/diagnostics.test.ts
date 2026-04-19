@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { setEvalError, clearEvalErrors } from '../diagnostics'
+import {
+  setEvalError,
+  clearEvalErrors,
+  setLineMarker,
+  clearLineMarkers,
+} from '../diagnostics'
 import type * as Monaco from 'monaco-editor'
 
 // ---------------------------------------------------------------------------
@@ -18,7 +23,7 @@ function makeMonaco(setModelMarkers = vi.fn()) {
     editor: {
       setModelMarkers,
     },
-    MarkerSeverity: { Error: 8 },
+    MarkerSeverity: { Error: 8, Warning: 4, Info: 2 },
   } as unknown as typeof Monaco
 }
 
@@ -189,5 +194,84 @@ describe('clearEvalErrors', () => {
       })
     )
     expect(() => clearEvalErrors(monaco, makeModel(3))).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setLineMarker / clearLineMarkers
+// ---------------------------------------------------------------------------
+
+describe('setLineMarker', () => {
+  it('places a marker on a valid line with the given severity + owner', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+    const model = makeModel(10, 50)
+
+    setLineMarker(monaco, model, {
+      line: 3,
+      column: 7,
+      message: 'hint',
+      severity: 'warn',
+      owner: 'stave-log',
+    })
+
+    const [, owner, markers] = spy.mock.calls[0]
+    expect(owner).toBe('stave-log')
+    expect(markers[0]).toMatchObject({
+      severity: 4,
+      message: 'hint',
+      startLineNumber: 3,
+      startColumn: 7,
+      endLineNumber: 3,
+    })
+  })
+
+  it('falls back to full-document range when line is out of bounds', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+    const model = makeModel(4, 30)
+
+    setLineMarker(monaco, model, {
+      line: 99,
+      message: 'x',
+    })
+
+    const [, , markers] = spy.mock.calls[0]
+    expect(markers[0]).toMatchObject({
+      startLineNumber: 1,
+      endLineNumber: 4,
+      endColumn: 30,
+    })
+  })
+
+  it('defaults to error severity + stave owner when unspecified', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+
+    setLineMarker(monaco, makeModel(2), { line: 1, message: 'boom' })
+
+    const [, owner, markers] = spy.mock.calls[0]
+    expect(owner).toBe('stave')
+    expect(markers[0].severity).toBe(8)
+  })
+
+  it('never throws when Monaco rejects the marker', () => {
+    const monaco = makeMonaco(
+      vi.fn(() => {
+        throw new Error('Illegal value for lineNumber')
+      })
+    )
+    expect(() =>
+      setLineMarker(monaco, makeModel(3), { line: 1, message: 'x' }),
+    ).not.toThrow()
+  })
+})
+
+describe('clearLineMarkers', () => {
+  it('clears the given owner with an empty array', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+    clearLineMarkers(monaco, makeModel(3), 'stave-log')
+    expect(spy).toHaveBeenCalledWith(expect.anything(), 'stave-log', [])
   })
 })

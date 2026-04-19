@@ -28,6 +28,36 @@ export interface FriendlyErrorParts {
   suggestion?: LogSuggestion
   /** Underlying stack, copied through so the Console panel can fold it. */
   stack?: string
+  /**
+   * 1-based source line parsed from a V8 / Firefox / Safari stack
+   * trace when one was present. Feeds the engineLog → Monaco marker
+   * bridge — entries without a line get no inline squiggle.
+   */
+  line?: number
+  /** 1-based column, paired with `line`. */
+  column?: number
+}
+
+/**
+ * Parse the first eval-frame line/column out of an error's stack. Same
+ * patterns `setEvalError` uses internally — exported here so emit sites
+ * can enrich `LogEntry` without duplicating the regex.
+ */
+export function parseStackLocation(
+  err: unknown,
+): { line: number; column: number } | null {
+  const stack =
+    typeof err === 'object' && err !== null && 'stack' in err
+      ? String((err as { stack: unknown }).stack ?? '')
+      : ''
+  if (!stack) return null
+  // V8: "at eval (<anonymous>:LINE:COL)" or "at eval (eval at ...)"
+  const v8 = stack.match(/at eval[^(]*\(.*?:(\d+):(\d+)\)/)
+  if (v8) return { line: parseInt(v8[1], 10), column: parseInt(v8[2], 10) }
+  // Firefox: "@<anonymous>:LINE:COL" or similar suffix
+  const ff = stack.match(/@[^\n]*?:(\d+):(\d+)/)
+  if (ff) return { line: parseInt(ff[1], 10), column: parseInt(ff[2], 10) }
+  return null
 }
 
 /**
@@ -160,6 +190,8 @@ export function formatFriendlyError(
       ? ((err as { stack: string }).stack)
       : undefined
 
+  const loc = parseStackLocation(err)
+
   const identifier = extractReferenceIdentifier(err)
   if (identifier && options.index) {
     const matches = fuzzyMatch(
@@ -182,12 +214,16 @@ export function formatFriendlyError(
         message: `\`${identifier}\` is not defined. Did you mean \`${matches[0].name}\`?`,
         suggestion,
         stack,
+        line: loc?.line,
+        column: loc?.column,
       }
     }
     // No fuzzy hit — still friendlier than a bare "is not defined".
     return {
       message: `\`${identifier}\` is not defined.`,
       stack,
+      line: loc?.line,
+      column: loc?.column,
     }
   }
 
@@ -195,5 +231,7 @@ export function formatFriendlyError(
   return {
     message: rawMessage || 'Unknown error',
     stack,
+    line: loc?.line,
+    column: loc?.column,
   }
 }

@@ -262,6 +262,8 @@ export default function StrudelEditorClient({
         message: parts.message,
         suggestion: parts.suggestion,
         stack: parts.stack,
+        line: parts.line,
+        column: parts.column,
       });
     });
     // Live-mode re-eval has no user-driven play() to clear the error state,

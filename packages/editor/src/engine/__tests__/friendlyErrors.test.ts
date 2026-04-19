@@ -5,6 +5,7 @@ import {
   fuzzyMatch,
   extractReferenceIdentifier,
   formatFriendlyError,
+  parseStackLocation,
 } from '../friendlyErrors'
 
 const FAKE_INDEX: DocsIndex = {
@@ -175,5 +176,38 @@ describe('formatFriendlyError', () => {
   it('handles thrown strings', () => {
     const r = formatFriendlyError('something blew up', 'p5')
     expect(r.message).toBe('something blew up')
+  })
+
+  it('extracts line + column from a V8 eval stack', () => {
+    const err = new Error('nots is not defined')
+    err.stack = `ReferenceError: nots is not defined
+    at eval (<anonymous>:4:12)`
+    const r = formatFriendlyError(err, 'strudel', { index: FAKE_INDEX })
+    expect(r.line).toBe(4)
+    expect(r.column).toBe(12)
+  })
+})
+
+describe('parseStackLocation', () => {
+  it('parses V8 at-eval frame', () => {
+    expect(
+      parseStackLocation({
+        stack: 'Error\n    at eval (<anonymous>:7:3)',
+      }),
+    ).toEqual({ line: 7, column: 3 })
+  })
+
+  it('parses Firefox @-suffix frame', () => {
+    expect(
+      parseStackLocation({
+        stack: 'Error\nsketch@debugger eval:12:5',
+      }),
+    ).toEqual({ line: 12, column: 5 })
+  })
+
+  it('returns null when no frame matches', () => {
+    expect(parseStackLocation({ stack: 'nothing relevant' })).toBeNull()
+    expect(parseStackLocation({})).toBeNull()
+    expect(parseStackLocation(null)).toBeNull()
   })
 })

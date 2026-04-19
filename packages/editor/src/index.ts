@@ -263,6 +263,7 @@ export {
   getFixedMarkers,
   makeFixedKey,
 } from './engine/engineLog'
+export { installEngineLogMarkers } from './workspace/engineLogMarkers'
 export type {
   FriendlyErrorParts,
   FuzzyMatch,
@@ -273,6 +274,7 @@ export {
   fuzzyMatch,
   extractReferenceIdentifier,
   formatFriendlyError,
+  parseStackLocation,
 } from './engine/friendlyErrors'
 
 // DocsIndex exports so the app can pass runtime indexes into the friendly
