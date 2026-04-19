@@ -28057,218 +28057,6 @@ function VizEditorChrome({
     }
   );
 }
-function createCompiledVizProvider(opts) {
-  return {
-    extensions: opts.extensions,
-    label: opts.label,
-    keepRunningWhenHidden: false,
-    // D-03
-    reload: "debounced",
-    // D-07
-    debounceMs: 300,
-    // D-07
-    render: (ctx) => {
-      return /* @__PURE__ */ jsxRuntime.jsx(
-        CompiledVizMount,
-        {
-          file: ctx.file,
-          rendererType: opts.renderer,
-          audioSource: ctx.audioSource,
-          hidden: ctx.hidden,
-          paused: ctx.paused ?? false,
-          fileId: ctx.file.id
-        }
-      );
-    },
-    renderEditorChrome: (ctx) => {
-      return /* @__PURE__ */ jsxRuntime.jsx(VizEditorChrome, { ...ctx });
-    }
-  };
-}
-function CompiledVizMount(props) {
-  const { file, rendererType, audioSource, hidden, paused, fileId } = props;
-  const { descriptor, compileError } = React.useMemo(() => {
-    try {
-      const preset = {
-        id: file.id,
-        name: file.path,
-        renderer: rendererType,
-        code: file.content,
-        requires: [],
-        createdAt: 0,
-        updatedAt: 0
-      };
-      return { descriptor: compilePreset(preset), compileError: null };
-    } catch (err2) {
-      return {
-        descriptor: null,
-        compileError: err2 instanceof Error ? err2.message : String(err2)
-      };
-    }
-  }, [file.id, file.content, file.language, rendererType]);
-  const containerRef = React.useRef(null);
-  const rendererRef = React.useRef(null);
-  const components = React.useMemo(() => {
-    const bag = {};
-    if (audioSource?.hapStream) {
-      bag.streaming = { hapStream: audioSource.hapStream };
-    }
-    if (audioSource?.analyser) {
-      bag.audio = {
-        analyser: audioSource.analyser,
-        audioCtx: audioSource.analyser.context
-      };
-    }
-    if (audioSource?.scheduler) {
-      bag.queryable = {
-        scheduler: audioSource.scheduler,
-        trackSchedulers: /* @__PURE__ */ new Map()
-      };
-    }
-    if (audioSource?.inlineViz) {
-      bag.inlineViz = audioSource.inlineViz;
-    }
-    return bag;
-  }, [audioSource]);
-  React.useEffect(() => {
-    if (!descriptor) return;
-    const el = containerRef.current;
-    if (!el) return;
-    const size = {
-      w: el.clientWidth || 400,
-      h: el.clientHeight || 300
-    };
-    let mounted = null;
-    try {
-      mounted = mountVizRenderer(
-        el,
-        descriptor.factory,
-        components,
-        size,
-        (e) => {
-          console.error("[compiledVizProvider] renderer error:", e);
-        }
-      );
-      rendererRef.current = mounted;
-    } catch (err2) {
-      console.error(
-        "[compiledVizProvider] mountVizRenderer threw:",
-        err2
-      );
-    }
-    return () => {
-      rendererRef.current = null;
-      if (mounted) {
-        try {
-          mounted.disconnect();
-          mounted.renderer.destroy();
-        } catch {
-        }
-      }
-    };
-  }, [descriptor]);
-  React.useEffect(() => {
-    const r = rendererRef.current?.renderer;
-    if (!r || !r.update) return;
-    try {
-      r.update(components);
-    } catch {
-    }
-  }, [components]);
-  React.useEffect(() => {
-    const r = rendererRef.current?.renderer;
-    if (!r) return;
-    if (hidden) {
-      try {
-        r.pause();
-      } catch {
-      }
-    } else {
-      try {
-        r.resume();
-      } catch {
-      }
-    }
-  }, [hidden]);
-  React.useEffect(() => {
-    const r = rendererRef.current?.renderer;
-    if (!r) return;
-    if (paused) {
-      try {
-        r.pause();
-      } catch {
-      }
-    } else if (!hidden) {
-      try {
-        r.resume();
-      } catch {
-      }
-    }
-  }, [paused, hidden]);
-  if (compileError !== null) {
-    return /* @__PURE__ */ jsxRuntime.jsx(
-      "div",
-      {
-        "data-testid": `compiled-viz-error-${fileId}`,
-        "data-compiled-viz-error": "true",
-        style: {
-          padding: 12,
-          color: "#ff6b6b",
-          fontSize: 12,
-          whiteSpace: "pre-wrap",
-          fontFamily: "var(--font-mono)",
-          background: "rgba(255,107,107,0.05)",
-          height: "100%",
-          boxSizing: "border-box",
-          overflow: "auto"
-        },
-        children: compileError
-      }
-    );
-  }
-  return /* @__PURE__ */ jsxRuntime.jsx(
-    "div",
-    {
-      ref: containerRef,
-      "data-testid": `compiled-viz-mount-${fileId}`,
-      "data-compiled-viz-mount": "true",
-      "data-renderer": descriptor?.renderer ?? "unknown",
-      style: {
-        width: "100%",
-        height: "100%",
-        background: "var(--background)",
-        overflow: "hidden",
-        position: "relative"
-      }
-    }
-  );
-}
-
-// src/workspace/preview/hydraViz.tsx
-var HYDRA_VIZ = createCompiledVizProvider({
-  extensions: ["hydra"],
-  label: "Hydra Visualization",
-  renderer: "hydra"
-});
-
-// src/workspace/preview/p5Viz.tsx
-var P5_VIZ = createCompiledVizProvider({
-  extensions: ["p5"],
-  label: "p5 Visualization",
-  renderer: "p5"
-});
-
-// src/workspace/preview/namedVizBridge.ts
-function registerPresetAsNamedViz(preset) {
-  try {
-    const descriptor = compilePreset(preset);
-    registerNamedViz(preset.name, descriptor);
-    return true;
-  } catch {
-    unregisterNamedViz(preset.name);
-    return false;
-  }
-}
 
 // src/engine/engineLog.ts
 var MAX_HISTORY = 500;
@@ -28454,6 +28242,278 @@ function formatFriendlyError2(err2, runtime, options = {}) {
     message: rawMessage || "Unknown error",
     stack
   };
+}
+
+// src/visualizers/p5FesBridge.ts
+var P5_PREFIX_RE = /^\s*🌸\s*p5\.js\s*says:\s*/;
+var installed = false;
+var currentSource = null;
+function buildLogger() {
+  return (msg) => {
+    const clean = String(msg).replace(P5_PREFIX_RE, "").trim();
+    if (!clean) return;
+    emitLog({
+      runtime: "p5",
+      level: "warn",
+      source: currentSource ?? void 0,
+      message: clean
+    });
+  };
+}
+function installP5FesBridge() {
+  if (installed) return;
+  installed = true;
+  void import('p5').then(({ default: p52 }) => {
+    const ctor = p52;
+    ctor.disableFriendlyErrors = false;
+    ctor._fesLogger = buildLogger();
+  }).catch(() => {
+    installed = false;
+  });
+}
+function setCurrentP5Source(source) {
+  currentSource = source;
+}
+function createCompiledVizProvider(opts) {
+  return {
+    extensions: opts.extensions,
+    label: opts.label,
+    keepRunningWhenHidden: false,
+    // D-03
+    reload: "debounced",
+    // D-07
+    debounceMs: 300,
+    // D-07
+    render: (ctx) => {
+      return /* @__PURE__ */ jsxRuntime.jsx(
+        CompiledVizMount,
+        {
+          file: ctx.file,
+          rendererType: opts.renderer,
+          audioSource: ctx.audioSource,
+          hidden: ctx.hidden,
+          paused: ctx.paused ?? false,
+          fileId: ctx.file.id
+        }
+      );
+    },
+    renderEditorChrome: (ctx) => {
+      return /* @__PURE__ */ jsxRuntime.jsx(VizEditorChrome, { ...ctx });
+    }
+  };
+}
+function CompiledVizMount(props) {
+  const { file, rendererType, audioSource, hidden, paused, fileId } = props;
+  const { descriptor, compileError } = React.useMemo(() => {
+    try {
+      const preset = {
+        id: file.id,
+        name: file.path,
+        renderer: rendererType,
+        code: file.content,
+        requires: [],
+        createdAt: 0,
+        updatedAt: 0
+      };
+      const result = compilePreset(preset);
+      emitFixed({ runtime: rendererType, source: file.path });
+      return { descriptor: result, compileError: null };
+    } catch (err2) {
+      const message = err2 instanceof Error ? err2.message : String(err2);
+      const runtime = rendererType;
+      const index = runtime === "p5" ? P5_DOCS_INDEX : HYDRA_DOCS_INDEX;
+      const parts2 = formatFriendlyError2(
+        err2 instanceof Error ? err2 : new Error(message),
+        runtime,
+        { index }
+      );
+      emitLog({
+        level: "error",
+        runtime,
+        source: file.path,
+        message: parts2.message,
+        suggestion: parts2.suggestion,
+        stack: parts2.stack
+      });
+      return { descriptor: null, compileError: message };
+    }
+  }, [file.id, file.content, file.language, rendererType, file.path]);
+  const containerRef = React.useRef(null);
+  const rendererRef = React.useRef(null);
+  const components = React.useMemo(() => {
+    const bag = {};
+    if (audioSource?.hapStream) {
+      bag.streaming = { hapStream: audioSource.hapStream };
+    }
+    if (audioSource?.analyser) {
+      bag.audio = {
+        analyser: audioSource.analyser,
+        audioCtx: audioSource.analyser.context
+      };
+    }
+    if (audioSource?.scheduler) {
+      bag.queryable = {
+        scheduler: audioSource.scheduler,
+        trackSchedulers: /* @__PURE__ */ new Map()
+      };
+    }
+    if (audioSource?.inlineViz) {
+      bag.inlineViz = audioSource.inlineViz;
+    }
+    return bag;
+  }, [audioSource]);
+  React.useEffect(() => {
+    if (!descriptor) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const size = {
+      w: el.clientWidth || 400,
+      h: el.clientHeight || 300
+    };
+    const runtime = descriptor.renderer;
+    const isP5 = runtime === "p5";
+    if (isP5) {
+      installP5FesBridge();
+      setCurrentP5Source(file.path);
+    }
+    let mounted = null;
+    const reportError = (e) => {
+      const index = isP5 ? P5_DOCS_INDEX : HYDRA_DOCS_INDEX;
+      const parts2 = formatFriendlyError2(e, runtime, { index });
+      emitLog({
+        level: "error",
+        runtime,
+        source: file.path,
+        message: parts2.message,
+        suggestion: parts2.suggestion,
+        stack: parts2.stack
+      });
+    };
+    try {
+      mounted = mountVizRenderer(
+        el,
+        descriptor.factory,
+        components,
+        size,
+        reportError
+      );
+      rendererRef.current = mounted;
+    } catch (err2) {
+      reportError(err2 instanceof Error ? err2 : new Error(String(err2)));
+    }
+    return () => {
+      rendererRef.current = null;
+      if (isP5) setCurrentP5Source(null);
+      if (mounted) {
+        try {
+          mounted.disconnect();
+          mounted.renderer.destroy();
+        } catch {
+        }
+      }
+    };
+  }, [descriptor]);
+  React.useEffect(() => {
+    const r = rendererRef.current?.renderer;
+    if (!r || !r.update) return;
+    try {
+      r.update(components);
+    } catch {
+    }
+  }, [components]);
+  React.useEffect(() => {
+    const r = rendererRef.current?.renderer;
+    if (!r) return;
+    if (hidden) {
+      try {
+        r.pause();
+      } catch {
+      }
+    } else {
+      try {
+        r.resume();
+      } catch {
+      }
+    }
+  }, [hidden]);
+  React.useEffect(() => {
+    const r = rendererRef.current?.renderer;
+    if (!r) return;
+    if (paused) {
+      try {
+        r.pause();
+      } catch {
+      }
+    } else if (!hidden) {
+      try {
+        r.resume();
+      } catch {
+      }
+    }
+  }, [paused, hidden]);
+  if (compileError !== null) {
+    return /* @__PURE__ */ jsxRuntime.jsx(
+      "div",
+      {
+        "data-testid": `compiled-viz-error-${fileId}`,
+        "data-compiled-viz-error": "true",
+        style: {
+          padding: 12,
+          color: "#ff6b6b",
+          fontSize: 12,
+          whiteSpace: "pre-wrap",
+          fontFamily: "var(--font-mono)",
+          background: "rgba(255,107,107,0.05)",
+          height: "100%",
+          boxSizing: "border-box",
+          overflow: "auto"
+        },
+        children: compileError
+      }
+    );
+  }
+  return /* @__PURE__ */ jsxRuntime.jsx(
+    "div",
+    {
+      ref: containerRef,
+      "data-testid": `compiled-viz-mount-${fileId}`,
+      "data-compiled-viz-mount": "true",
+      "data-renderer": descriptor?.renderer ?? "unknown",
+      style: {
+        width: "100%",
+        height: "100%",
+        background: "var(--background)",
+        overflow: "hidden",
+        position: "relative"
+      }
+    }
+  );
+}
+
+// src/workspace/preview/hydraViz.tsx
+var HYDRA_VIZ = createCompiledVizProvider({
+  extensions: ["hydra"],
+  label: "Hydra Visualization",
+  renderer: "hydra"
+});
+
+// src/workspace/preview/p5Viz.tsx
+var P5_VIZ = createCompiledVizProvider({
+  extensions: ["p5"],
+  label: "p5 Visualization",
+  renderer: "p5"
+});
+
+// src/workspace/preview/namedVizBridge.ts
+function registerPresetAsNamedViz(preset) {
+  try {
+    const descriptor = compilePreset(preset);
+    registerNamedViz(preset.name, descriptor);
+    return true;
+  } catch {
+    unregisterNamedViz(preset.name);
+    return false;
+  }
 }
 
 exports.AUTO_SNAPSHOT_PREFIX = AUTO_SNAPSHOT_PREFIX;
