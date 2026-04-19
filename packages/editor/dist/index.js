@@ -27282,6 +27282,10 @@ function VizEditor({
 function isFullLifecycleSketch(code) {
   return /\bfunction\s+draw\s*\(/.test(code);
 }
+var NEW_FUNCTION_HEADER_LINES = 2;
+function getP5LineOffset(code) {
+  return isFullLifecycleSketch(code) ? FULL_LIFECYCLE_PREFIX_LINES + NEW_FUNCTION_HEADER_LINES : LEGACY_PREFIX_LINES + NEW_FUNCTION_HEADER_LINES;
+}
 function compileP5Code(code) {
   const body2 = isFullLifecycleSketch(code) ? buildFullLifecycleBody(code) : buildLegacyBody(code);
   new Function("p", "stave", body2);
@@ -27318,10 +27322,10 @@ function compileP5Code(code) {
     };
   };
 }
+var FULL_LIFECYCLE_PREFIX = "\nwith (p) {\n  ";
+var FULL_LIFECYCLE_PREFIX_LINES = (FULL_LIFECYCLE_PREFIX.match(/\n/g) || []).length;
 function buildFullLifecycleBody(userCode) {
-  return `
-with (p) {
-  ${userCode}
+  return `${FULL_LIFECYCLE_PREFIX}${userCode}
   return {
     setup: typeof setup === 'function' ? setup : undefined,
     draw: typeof draw === 'function' ? draw : undefined,
@@ -27330,8 +27334,7 @@ with (p) {
 }
   `;
 }
-function buildLegacyBody(userCode) {
-  return `
+var LEGACY_PREFIX = `
 with (p) {
   return {
     setup: function () {
@@ -27342,7 +27345,10 @@ with (p) {
       const scheduler = stave.scheduler
       const analyser = stave.analyser
       const hapStream = stave.hapStream
-      ${userCode}
+      `;
+var LEGACY_PREFIX_LINES = (LEGACY_PREFIX.match(/\n/g) || []).length;
+function buildLegacyBody(userCode) {
+  return `${LEGACY_PREFIX}${userCode}
     },
     preload: undefined,
   }
@@ -28297,17 +28303,32 @@ function formatFriendlyError2(err2, runtime, options = {}) {
 
 // src/visualizers/p5FesBridge.ts
 var P5_PREFIX_RE = /^\s*🌸\s*p5\.js\s*says:\s*/;
+var FES_LINE_RE = /,\s*line\s+(\d+)\s*\]/;
 var installed = false;
 var currentSource = null;
+var currentLineOffset = 0;
 function buildLogger() {
   return (msg) => {
-    const clean = String(msg).replace(P5_PREFIX_RE, "").trim();
+    const raw = String(msg);
+    const clean = raw.replace(P5_PREFIX_RE, "").trim();
     if (!clean) return;
+    let line2;
+    let message = clean;
+    const match = raw.match(FES_LINE_RE);
+    if (match && currentLineOffset > 0) {
+      const wrapped = parseInt(match[1], 10);
+      const userLine = wrapped - currentLineOffset;
+      if (Number.isFinite(userLine) && userLine >= 1) {
+        line2 = userLine;
+        message = clean.replace(/^\[.*?\]\s*/, "").trim();
+      }
+    }
     emitLog({
       runtime: "p5",
       level: "warn",
       source: currentSource ?? void 0,
-      message: clean
+      message,
+      line: line2
     });
   };
 }
@@ -28322,8 +28343,9 @@ function installP5FesBridge() {
     installed = false;
   });
 }
-function setCurrentP5Source(source) {
+function setCurrentP5Source(source, lineOffset = 0) {
   currentSource = source;
+  currentLineOffset = source == null ? 0 : lineOffset;
 }
 function createCompiledVizProvider(opts) {
   return {
@@ -28427,12 +28449,14 @@ function CompiledVizMount(props) {
     const isP5 = runtime === "p5";
     if (isP5) {
       installP5FesBridge();
-      setCurrentP5Source(file.path);
+      setCurrentP5Source(file.path, getP5LineOffset(file.content));
     }
     let mounted = null;
     const reportError = (e) => {
       const index = isP5 ? P5_DOCS_INDEX : HYDRA_DOCS_INDEX;
       const parts2 = formatFriendlyError2(e, runtime, { index });
+      const offset = isP5 ? getP5LineOffset(file.content) : 0;
+      const line2 = parts2.line != null && offset > 0 ? Math.max(1, parts2.line - offset) : parts2.line;
       emitLog({
         level: "error",
         runtime,
@@ -28440,7 +28464,7 @@ function CompiledVizMount(props) {
         message: parts2.message,
         suggestion: parts2.suggestion,
         stack: parts2.stack,
-        line: parts2.line,
+        line: line2,
         column: parts2.column
       });
     };

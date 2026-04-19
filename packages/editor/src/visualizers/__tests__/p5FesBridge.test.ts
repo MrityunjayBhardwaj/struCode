@@ -93,7 +93,7 @@ describe('setCurrentP5Source', () => {
     ;(p5 as unknown as P5Static)._fesLogger?.(
       '🌸 p5.js says: forgot to call noFill()',
     )
-    const last = getLogHistory().at(-1)
+    const last = getLogHistory()[getLogHistory().length - 1]
     expect(last?.source).toBe('patterns/piano-roll.p5')
   })
 
@@ -102,7 +102,45 @@ describe('setCurrentP5Source', () => {
     setCurrentP5Source('a.p5')
     setCurrentP5Source(null)
     ;(p5 as unknown as P5Static)._fesLogger?.('🌸 p5.js says: anything')
-    const last = getLogHistory().at(-1)
+    const last = getLogHistory()[getLogHistory().length - 1]
     expect(last?.source).toBeUndefined()
+  })
+})
+
+describe('FES line translation', () => {
+  it('subtracts the wrapper offset and drops the bundle locator', () => {
+    installP5FesBridge()
+    setCurrentP5Source('sphere.p5', 4)
+    ;(p5 as unknown as P5Static)._fesLogger?.(
+      '🌸 p5.js says: [packages_editor_dist_index.js line 32182 > Function, line 73] ' +
+        'It seems that you may have accidentally written "zoom".',
+    )
+    const last = getLogHistory()[getLogHistory().length - 1]
+    expect(last?.line).toBe(69)
+    // Bundle locator stripped from the Console row.
+    expect(last?.message).not.toMatch(/\.js line \d+/)
+    expect(last?.message).toMatch(/zoom/)
+  })
+
+  it('leaves the message alone when no locator is present', () => {
+    installP5FesBridge()
+    setCurrentP5Source('sphere.p5', 4)
+    ;(p5 as unknown as P5Static)._fesLogger?.(
+      '🌸 p5.js says: consider using noLoop()',
+    )
+    const last = getLogHistory()[getLogHistory().length - 1]
+    expect(last?.line).toBeUndefined()
+    expect(last?.message).toBe('consider using noLoop()')
+  })
+
+  it('clamps to at least 1 when the wrapped line sits inside the prefix', () => {
+    installP5FesBridge()
+    setCurrentP5Source('sphere.p5', 10)
+    ;(p5 as unknown as P5Static)._fesLogger?.(
+      '🌸 p5.js says: [src.js line 1 > Function, line 3] something',
+    )
+    const last = getLogHistory()[getLogHistory().length - 1]
+    // wrapped 3 - offset 10 = -7 → rejected (filter requires >= 1)
+    expect(last?.line).toBeUndefined()
   })
 })

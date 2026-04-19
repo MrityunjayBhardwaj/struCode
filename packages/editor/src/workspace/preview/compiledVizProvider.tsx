@@ -102,6 +102,7 @@ import {
   installP5FesBridge,
   setCurrentP5Source,
 } from '../../visualizers/p5FesBridge'
+import { getP5LineOffset } from '../../visualizers/p5Compiler'
 
 /**
  * Options accepted by `createCompiledVizProvider`. Both viz providers pass
@@ -335,14 +336,26 @@ function CompiledVizMount(props: CompiledVizMountProps): React.ReactElement {
     if (isP5) {
       // Idempotent install + source attribution for p5's FES (see
       // p5FesBridge.ts). Clear on unmount below so a cold destroy
-      // doesn't attribute FES messages from some sibling sketch.
+      // doesn't attribute FES messages from some sibling sketch. The
+      // line offset lets the bridge translate FES's wrapped-body
+      // line numbers back to the user's file.
       installP5FesBridge()
-      setCurrentP5Source(file.path)
+      setCurrentP5Source(file.path, getP5LineOffset(file.content))
     }
     let mounted: ReturnType<typeof mountVizRenderer> | null = null
     const reportError = (e: Error): void => {
       const index = isP5 ? P5_DOCS_INDEX : HYDRA_DOCS_INDEX
       const parts = formatFriendlyError(e, runtime, { index })
+      // The stack trace for p5 runtime errors (thrown from inside
+      // the compiled `new Function` body) counts from the wrapper
+      // header, not from the user's file. Translate before emitting
+      // so the Console row + Monaco marker land on the line the
+      // user actually wrote.
+      const offset = isP5 ? getP5LineOffset(file.content) : 0
+      const line =
+        parts.line != null && offset > 0
+          ? Math.max(1, parts.line - offset)
+          : parts.line
       emitLog({
         level: 'error',
         runtime,
@@ -350,7 +363,7 @@ function CompiledVizMount(props: CompiledVizMountProps): React.ReactElement {
         message: parts.message,
         suggestion: parts.suggestion,
         stack: parts.stack,
-        line: parts.line,
+        line,
         column: parts.column,
       })
     }

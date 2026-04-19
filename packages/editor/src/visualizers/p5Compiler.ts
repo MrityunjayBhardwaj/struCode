@@ -54,6 +54,38 @@ export function isFullLifecycleSketch(code: string): boolean {
 }
 
 /**
+ * `new Function(args, body)` wraps the body with its own header, which
+ * V8 generates as two lines:
+ *
+ *   function anonymous(p,stave
+ *   ) {
+ *     <body starts here on line 3>
+ *
+ * Every stack-parsed line coming out of a runtime error — and every
+ * line number embedded in a p5 FES message — counts from that header.
+ * We subtract this offset plus the wrapper-specific prefix count to
+ * translate back into the user's original file.
+ */
+const NEW_FUNCTION_HEADER_LINES = 2
+
+/**
+ * Return the number of wrapper lines sitting between `function
+ * anonymous(...)` and the start of the user's code. Call-sites that
+ * need to translate a wrapped-body line back to a user-file line
+ * subtract this value.
+ *
+ *   userLine = wrappedLine - getP5LineOffset(userCode)
+ *
+ * Clamps the result to at least 0 so a caller that forgets to guard
+ * an already-too-small line doesn't produce a negative.
+ */
+export function getP5LineOffset(code: string): number {
+  return isFullLifecycleSketch(code)
+    ? FULL_LIFECYCLE_PREFIX_LINES + NEW_FUNCTION_HEADER_LINES
+    : LEGACY_PREFIX_LINES + NEW_FUNCTION_HEADER_LINES
+}
+
+/**
  * Compile a p5 code string into a `P5SketchFactory`. The factory is
  * invoked once per mount by `P5VizRenderer` with the three ref objects
  * the renderer uses to bridge the engine component bag.
@@ -186,10 +218,17 @@ export function compileP5Code(code: string) {
  * `typeof X === 'function'` guards let us tolerate partial sketches —
  * a user who only wrote `draw` gets a working sketch with just draw.
  */
+/**
+ * Prefix preceding `${userCode}` in the full-lifecycle body template.
+ * Counted at module load so the emit-time line offset tracks the
+ * template verbatim (change the template → offset self-updates).
+ */
+const FULL_LIFECYCLE_PREFIX = '\nwith (p) {\n  '
+const FULL_LIFECYCLE_PREFIX_LINES = (FULL_LIFECYCLE_PREFIX.match(/\n/g) || [])
+  .length
+
 function buildFullLifecycleBody(userCode: string): string {
-  return `
-with (p) {
-  ${userCode}
+  return `${FULL_LIFECYCLE_PREFIX}${userCode}
   return {
     setup: typeof setup === 'function' ? setup : undefined,
     draw: typeof draw === 'function' ? draw : undefined,
@@ -209,8 +248,8 @@ with (p) {
  * snippets written for the OLD compiler (which exposed those as
  * locals) keep working without modification.
  */
-function buildLegacyBody(userCode: string): string {
-  return `
+/** Prefix preceding `${userCode}` in the legacy draw-body template. */
+const LEGACY_PREFIX = `
 with (p) {
   return {
     setup: function () {
@@ -221,7 +260,11 @@ with (p) {
       const scheduler = stave.scheduler
       const analyser = stave.analyser
       const hapStream = stave.hapStream
-      ${userCode}
+      `
+const LEGACY_PREFIX_LINES = (LEGACY_PREFIX.match(/\n/g) || []).length
+
+function buildLegacyBody(userCode: string): string {
+  return `${LEGACY_PREFIX}${userCode}
     },
     preload: undefined,
   }
