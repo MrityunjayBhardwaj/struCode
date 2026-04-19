@@ -28274,7 +28274,12 @@ function registerPresetAsNamedViz(preset) {
 var MAX_HISTORY = 500;
 var history = [];
 var listeners3 = /* @__PURE__ */ new Set();
+var fixedMarkers = /* @__PURE__ */ new Map();
+var fixedListeners = /* @__PURE__ */ new Set();
 var idSeq = 0;
+function fixedKey(runtime, source) {
+  return `${runtime}:${source ?? "*"}`;
+}
 function makeId() {
   idSeq += 1;
   return `log-${Date.now().toString(36)}-${idSeq.toString(36)}`;
@@ -28310,12 +28315,42 @@ function getLogHistory() {
 }
 function clearLog() {
   history.length = 0;
+  fixedMarkers.clear();
   for (const fn of listeners3) {
     try {
       fn(null, history);
     } catch {
     }
   }
+}
+function emitFixed(input) {
+  const marker = {
+    runtime: input.runtime,
+    source: input.source,
+    ts: Date.now()
+  };
+  fixedMarkers.set(fixedKey(input.runtime, input.source), marker.ts);
+  queueMicrotask(() => {
+    for (const fn of fixedListeners) {
+      try {
+        fn(marker, fixedMarkers);
+      } catch {
+      }
+    }
+  });
+  return marker;
+}
+function subscribeFixed(fn) {
+  fixedListeners.add(fn);
+  return () => {
+    fixedListeners.delete(fn);
+  };
+}
+function getFixedMarkers() {
+  return new Map(fixedMarkers);
+}
+function makeFixedKey(runtime, source) {
+  return fixedKey(runtime, source);
 }
 
 // src/engine/friendlyErrors.ts
@@ -28493,6 +28528,7 @@ exports.deleteProject = deleteProject;
 exports.deleteSnapshot = deleteSnapshot;
 exports.deleteWorkspaceFile = deleteWorkspaceFile;
 exports.duplicateProject = duplicateProject;
+exports.emitFixed = emitFixed;
 exports.emitLog = emitLog;
 exports.extractReferenceIdentifier = extractReferenceIdentifier;
 exports.filter = filter;
@@ -28510,6 +28546,7 @@ exports.getEditorMinimap = getEditorMinimap;
 exports.getEditorTheme = getEditorTheme;
 exports.getEditorUiIconSize = getEditorUiIconSize;
 exports.getFile = getFile;
+exports.getFixedMarkers = getFixedMarkers;
 exports.getFolderOrder = getFolderOrder;
 exports.getInlineVizActionSize = getInlineVizActionSize;
 exports.getLastOpenedProject = getLastOpenedProject;
@@ -28541,6 +28578,7 @@ exports.listProjects = listProjects;
 exports.listSnapshots = listSnapshots;
 exports.listWorkspaceFiles = listWorkspaceFiles;
 exports.liveCodingRuntimeRegistry = liveCodingRuntimeRegistry;
+exports.makeFixedKey = makeFixedKey;
 exports.merge = merge;
 exports.mountVizRenderer = mountVizRenderer;
 exports.normalizeStrudelHap = normalizeStrudelHap;
@@ -28594,6 +28632,7 @@ exports.setZoneCropOverride = setZoneCropOverride;
 exports.setZoneHeightOverride = setZoneHeightOverride;
 exports.startSampleSound = startSampleSound;
 exports.stopSampleSound = stopSampleSound;
+exports.subscribeFixed = subscribeFixed;
 exports.subscribeLog = subscribeLog;
 exports.subscribeToDocUpdate = subscribeToDocUpdate;
 exports.subscribeToFileList = subscribeToFileList;

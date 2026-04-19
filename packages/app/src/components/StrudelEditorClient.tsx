@@ -27,6 +27,7 @@ import {
   getPresetIdForFile,
   registerPresetAsNamedViz,
   emitLog,
+  emitFixed,
   formatFriendlyError,
   STRUDEL_DOCS_INDEX,
   SONICPI_DOCS_INDEX,
@@ -275,6 +276,12 @@ export default function StrudelEditorClient({
         next.set(fileId, { ...cur, error: null });
         return next;
       });
+      // Record a fix marker so the Console panel's Live mode can hide
+      // any log entry emitted before this clean eval. Non-destructive —
+      // history stays intact for users who want the full trail.
+      const fileNow = getFile(fileId);
+      const runtimeId: RuntimeId = fileNow?.language === "sonicpi" ? "sonicpi" : "strudel";
+      emitFixed({ runtime: runtimeId, source: fileNow?.path ?? fileId });
     });
     runtime.onAutoRefreshChanged((enabled: boolean) => {
       setRuntimeStates(prev => {

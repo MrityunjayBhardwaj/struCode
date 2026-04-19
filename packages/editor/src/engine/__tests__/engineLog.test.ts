@@ -4,8 +4,13 @@ import {
   subscribeLog,
   getLogHistory,
   clearLog,
+  emitFixed,
+  subscribeFixed,
+  getFixedMarkers,
+  makeFixedKey,
   __resetEngineLogForTests,
   type LogEntry,
+  type FixedMarker,
 } from '../engineLog'
 
 beforeEach(() => {
@@ -116,6 +121,63 @@ describe('clearLog', () => {
     ]
     expect(entry).toBeNull()
     expect(history).toEqual([])
+  })
+})
+
+describe('emitFixed / subscribeFixed', () => {
+  const flush = (): Promise<void> =>
+    new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+
+  it('records a marker keyed by (runtime, source)', () => {
+    emitFixed({ runtime: 'strudel', source: 'patterns/beat.strudel' })
+    const m = getFixedMarkers()
+    expect(m.get(makeFixedKey('strudel', 'patterns/beat.strudel'))).toBeGreaterThan(0)
+  })
+
+  it('notifies subscribers with the marker + full table', async () => {
+    const spy = vi.fn()
+    subscribeFixed(spy)
+    emitFixed({ runtime: 'sonicpi', source: 'x.rb' })
+    await flush()
+    const [marker, markers] = spy.mock.calls[0] as [
+      FixedMarker,
+      ReadonlyMap<string, number>,
+    ]
+    expect(marker.runtime).toBe('sonicpi')
+    expect(marker.source).toBe('x.rb')
+    expect(markers.get(makeFixedKey('sonicpi', 'x.rb'))).toBe(marker.ts)
+  })
+
+  it('supports a runtime-wide marker when source is omitted', () => {
+    emitFixed({ runtime: 'hydra' })
+    const m = getFixedMarkers()
+    expect(m.has(makeFixedKey('hydra', undefined))).toBe(true)
+  })
+
+  it('later emits overwrite the earlier marker for the same key', () => {
+    const first = emitFixed({ runtime: 'p5', source: 'a.p5' })
+    // Ensure a measurable gap so timestamps can differ.
+    const second = emitFixed({ runtime: 'p5', source: 'a.p5' })
+    expect(second.ts).toBeGreaterThanOrEqual(first.ts)
+    const m = getFixedMarkers()
+    expect(m.get(makeFixedKey('p5', 'a.p5'))).toBe(second.ts)
+  })
+
+  it('clearLog wipes fixed markers', () => {
+    emitFixed({ runtime: 'strudel', source: 's' })
+    clearLog()
+    expect(getFixedMarkers().size).toBe(0)
+  })
+
+  it('a broken fixed-listener does not kill the emitter', async () => {
+    subscribeFixed(() => {
+      throw new Error('boom')
+    })
+    const ok = vi.fn()
+    subscribeFixed(ok)
+    expect(() => emitFixed({ runtime: 'stave' })).not.toThrow()
+    await flush()
+    expect(ok).toHaveBeenCalledOnce()
   })
 })
 

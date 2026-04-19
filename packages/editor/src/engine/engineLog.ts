@@ -64,12 +64,36 @@ type LogListener = (
   history: readonly LogEntry[],
 ) => void
 
+/**
+ * Signal that a `(runtime, source)` pair has just evaluated cleanly.
+ * Live-mode filters use the marker timestamp to hide any log entry
+ * emitted BEFORE it — "old errors the user has since fixed".
+ */
+export interface FixedMarker {
+  runtime: RuntimeId
+  /** Workspace file path (or omitted → runtime-wide fix). */
+  source?: string
+  /** Epoch ms when the fix happened. */
+  ts: number
+}
+
+type FixedListener = (
+  marker: FixedMarker,
+  markers: ReadonlyMap<string, number>,
+) => void
+
 const MAX_HISTORY = 500
 
 const history: LogEntry[] = []
 const listeners = new Set<LogListener>()
+const fixedMarkers = new Map<string, number>()
+const fixedListeners = new Set<FixedListener>()
 
 let idSeq = 0
+
+function fixedKey(runtime: RuntimeId, source: string | undefined): string {
+  return `${runtime}:${source ?? '*'}`
+}
 
 function makeId(): string {
   idSeq += 1
@@ -142,6 +166,7 @@ export function getLogHistory(): readonly LogEntry[] {
  */
 export function clearLog(): void {
   history.length = 0
+  fixedMarkers.clear()
   for (const fn of listeners) {
     try {
       fn(null, history)
@@ -152,11 +177,65 @@ export function clearLog(): void {
 }
 
 /**
+ * Record that `(runtime, source)` just evaluated cleanly. Non-destructive:
+ * history is preserved. Consumers (the Console panel's Live mode) use
+ * the marker timestamp to hide entries emitted before the fix. Called
+ * from the runtime's `onEvaluateSuccess` bridge.
+ */
+export function emitFixed(input: {
+  runtime: RuntimeId
+  source?: string
+}): FixedMarker {
+  const marker: FixedMarker = {
+    runtime: input.runtime,
+    source: input.source,
+    ts: Date.now(),
+  }
+  fixedMarkers.set(fixedKey(input.runtime, input.source), marker.ts)
+  queueMicrotask(() => {
+    for (const fn of fixedListeners) {
+      try {
+        fn(marker, fixedMarkers)
+      } catch {
+        /* A broken subscriber shouldn't kill the emitter. */
+      }
+    }
+  })
+  return marker
+}
+
+/**
+ * Subscribe to fix events. Does NOT replay existing markers — call
+ * `getFixedMarkers()` on mount if a starting snapshot is needed.
+ */
+export function subscribeFixed(fn: FixedListener): () => void {
+  fixedListeners.add(fn)
+  return () => {
+    fixedListeners.delete(fn)
+  }
+}
+
+/** Read the current fix-marker table. Key format: `${runtime}:${source|*}`. */
+export function getFixedMarkers(): ReadonlyMap<string, number> {
+  return new Map(fixedMarkers)
+}
+
+/** Key helper exported for consumers that need to build the same key. */
+export function makeFixedKey(
+  runtime: RuntimeId,
+  source: string | undefined,
+): string {
+  return fixedKey(runtime, source)
+}
+
+/**
  * TESTING ONLY — wipe state between vitest suites so module-level
  * history doesn't leak across tests.
  */
 export function __resetEngineLogForTests(): void {
   history.length = 0
   listeners.clear()
+  fixedMarkers.clear()
+  fixedListeners.clear()
   idSeq = 0
 }

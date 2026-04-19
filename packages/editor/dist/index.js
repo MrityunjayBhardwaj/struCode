@@ -28247,7 +28247,12 @@ function registerPresetAsNamedViz(preset) {
 var MAX_HISTORY = 500;
 var history = [];
 var listeners3 = /* @__PURE__ */ new Set();
+var fixedMarkers = /* @__PURE__ */ new Map();
+var fixedListeners = /* @__PURE__ */ new Set();
 var idSeq = 0;
+function fixedKey(runtime, source) {
+  return `${runtime}:${source ?? "*"}`;
+}
 function makeId() {
   idSeq += 1;
   return `log-${Date.now().toString(36)}-${idSeq.toString(36)}`;
@@ -28283,12 +28288,42 @@ function getLogHistory() {
 }
 function clearLog() {
   history.length = 0;
+  fixedMarkers.clear();
   for (const fn of listeners3) {
     try {
       fn(null, history);
     } catch {
     }
   }
+}
+function emitFixed(input) {
+  const marker = {
+    runtime: input.runtime,
+    source: input.source,
+    ts: Date.now()
+  };
+  fixedMarkers.set(fixedKey(input.runtime, input.source), marker.ts);
+  queueMicrotask(() => {
+    for (const fn of fixedListeners) {
+      try {
+        fn(marker, fixedMarkers);
+      } catch {
+      }
+    }
+  });
+  return marker;
+}
+function subscribeFixed(fn) {
+  fixedListeners.add(fn);
+  return () => {
+    fixedListeners.delete(fn);
+  };
+}
+function getFixedMarkers() {
+  return new Map(fixedMarkers);
+}
+function makeFixedKey(runtime, source) {
+  return fixedKey(runtime, source);
 }
 
 // src/engine/friendlyErrors.ts
@@ -28394,6 +28429,6 @@ function formatFriendlyError2(err2, runtime, options = {}) {
   };
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFolderOrder, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeLog, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BUNDLED_PREFIX, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, redo, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeFixed, subscribeLog, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

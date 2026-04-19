@@ -251,12 +251,17 @@ export type {
   RuntimeId,
   LogSuggestion,
   LogEntry,
+  FixedMarker,
 } from './engine/engineLog'
 export {
   emitLog,
   subscribeLog,
   getLogHistory,
   clearLog,
+  emitFixed,
+  subscribeFixed,
+  getFixedMarkers,
+  makeFixedKey,
 } from './engine/engineLog'
 export type {
   FriendlyErrorParts,

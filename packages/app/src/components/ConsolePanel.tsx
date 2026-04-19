@@ -22,6 +22,9 @@ import {
   clearLog,
   getLogHistory,
   subscribeLog,
+  getFixedMarkers,
+  subscribeFixed,
+  makeFixedKey,
   type LogEntry,
   type LogLevel,
   type RuntimeId,
@@ -66,6 +69,13 @@ export function ConsolePanel(): React.ReactElement {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [followTail, setFollowTail] = useState(true);
+  // Live mode: hide log entries emitted before the last successful eval
+  // for that `(runtime, source)` — "only show what's currently broken".
+  // Off by default so the full history stays the default experience.
+  const [liveMode, setLiveMode] = useState(false);
+  const [fixedMarkers, setFixedMarkers] = useState<ReadonlyMap<string, number>>(
+    getFixedMarkers,
+  );
   const listRef = useRef<HTMLDivElement>(null);
   const lastUserScrollTs = useRef(0);
 
@@ -76,11 +86,26 @@ export function ConsolePanel(): React.ReactElement {
     });
   }, []);
 
+  useEffect(() => {
+    return subscribeFixed((_marker, markers) => {
+      setFixedMarkers(new Map(markers));
+    });
+  }, []);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return entries.filter((e) => {
       if (!levelFilter[e.level]) return false;
       if (runtimeFilter !== "all" && e.runtime !== runtimeFilter) return false;
+      if (liveMode) {
+        // Hide entries whose `(runtime, source)` has a newer fix marker.
+        // Also honor a runtime-wide marker (no source) as a fallback.
+        const fixTs =
+          fixedMarkers.get(makeFixedKey(e.runtime, e.source)) ??
+          fixedMarkers.get(makeFixedKey(e.runtime, undefined)) ??
+          0;
+        if (e.ts <= fixTs) return false;
+      }
       if (q) {
         const hay =
           `${e.message} ${e.source ?? ""} ${e.suggestion?.name ?? ""}`
@@ -89,7 +114,7 @@ export function ConsolePanel(): React.ReactElement {
       }
       return true;
     });
-  }, [entries, runtimeFilter, levelFilter, query]);
+  }, [entries, runtimeFilter, levelFilter, query, liveMode, fixedMarkers]);
 
   // Auto-scroll to bottom when tailing. The user scrolling up pauses
   // follow; scrolling back to near-bottom re-enables it.
@@ -214,6 +239,32 @@ export function ConsolePanel(): React.ReactElement {
           );
         })}
         <span style={styles.spacer} />
+        <button
+          type="button"
+          onClick={() => setLiveMode((v) => !v)}
+          title={
+            liveMode
+              ? "Live mode on — hiding errors you've already fixed. Click to show full history."
+              : "Live mode off — showing full history. Click to hide errors once fixed."
+          }
+          style={{
+            ...styles.liveBtn,
+            color: liveMode ? "#86efac" : "var(--text-tertiary)",
+            borderColor: liveMode ? "#86efac" : "var(--border-subtle)",
+            background: liveMode ? "rgba(134,239,172,0.08)" : "transparent",
+          }}
+          data-testid="console-live"
+          aria-pressed={liveMode}
+        >
+          <span
+            style={{
+              ...styles.liveDot,
+              background: liveMode ? "#86efac" : "var(--text-tertiary)",
+              opacity: liveMode ? 1 : 0.5,
+            }}
+          />
+          live
+        </button>
         <label style={styles.follow} title="Auto-scroll to newest entry">
           <input
             type="checkbox"
@@ -235,7 +286,9 @@ export function ConsolePanel(): React.ReactElement {
           <div style={styles.empty}>
             {entries.length === 0
               ? "No log entries yet. Runtime errors and warnings will appear here."
-              : "No entries match the current filters."}
+              : liveMode && fixedMarkers.size > 0
+                ? "All clear — every earlier error has been fixed."
+                : "No entries match the current filters."}
           </div>
         )}
         {filtered.map((e) => {
@@ -451,6 +504,24 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     letterSpacing: 0.3,
     cursor: "pointer",
+  },
+  liveBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "2px 8px",
+    borderRadius: 3,
+    border: "1px solid var(--border-subtle)",
+    fontSize: 10,
+    fontFamily: "inherit",
+    cursor: "pointer",
+    letterSpacing: 0.3,
+  },
+  liveDot: {
+    display: "inline-block",
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
   },
   list: {
     flex: 1,
