@@ -96,6 +96,22 @@ export function isFullLifecycleSketch(code: string): boolean {
  * code.
  */
 export function compileP5Code(code: string) {
+  // Build the body ONCE per compile. The compiled function is reused
+  // for every mount of this sketch (p5 calls it once per `new p5(...)`).
+  const body = isFullLifecycleSketch(code)
+    ? buildFullLifecycleBody(code)
+    : buildLegacyBody(code)
+
+  // Pre-validate syntax synchronously. Without this step, the factory
+  // below defers the `new Function(body)` call until p5's instance
+  // constructor invokes the sketch — the internal try/catch there
+  // swallows the SyntaxError into `installErrorSketch`, so the error
+  // only appears on the canvas. By throwing from compileP5Code, the
+  // error propagates up through `compilePreset` into the useMemo
+  // catch in CompiledVizMount where it becomes a proper engineLog
+  // entry (Console row, toast, status-bar chip, Monaco squiggle).
+  new Function('p', 'stave', body)
+
   // P5SketchFactory signature — fourth arg is the container-size ref
   // maintained by the renderer so `stave.width` / `stave.height`
   // expose the preview pane dimensions. Optional (and defaulted) so
@@ -109,12 +125,6 @@ export function compileP5Code(code: string) {
       current: { w: 400, h: 300 },
     } as RefObject<ContainerSize>,
   ) => {
-    // Build the body ONCE per sketch instance. The compiled function
-    // is then reused for every mount of this sketch (p5 calls it
-    // exactly once per `new p5(...)` invocation).
-    const body = isFullLifecycleSketch(code)
-      ? buildFullLifecycleBody(code)
-      : buildLegacyBody(code)
 
     return (p: unknown) => {
       // Live stave namespace — getters forward to the refs so reads

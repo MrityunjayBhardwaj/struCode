@@ -514,30 +514,17 @@ describe('compileP5Code — legacy mode (backwards compat)', () => {
 // ---------------------------------------------------------------------------
 
 describe('compileP5Code — compile errors', () => {
-  it('installs an error sketch when new Function throws a syntax error', () => {
+  it('throws a SyntaxError synchronously so callers can surface it via engineLog', () => {
     // An unbalanced brace surfaces as a SyntaxError inside new Function.
+    // We want this to propagate up — the useMemo catch in CompiledVizMount
+    // turns it into a Console row + Monaco squiggle. Swallowing it here
+    // (the old behaviour — drawing the error onto the canvas) meant no
+    // engineLog surface ever saw the error.
     const source = `
       function draw() {
         background(
       }
     `
-    const { p, calls } = compileAndMount(source)
-
-    // Both setup and draw should exist (the error sketch).
-    expect(typeof p.setup).toBe('function')
-    expect(typeof p.draw).toBe('function')
-
-    // The error sketch's draw paints the error message via text().
-    ;(p.setup as () => void)()
-    ;(p.draw as () => void)()
-
-    // At least one text call should contain a substring of the
-    // parser error (e.g., `Unexpected`, `SyntaxError`, `}` etc.).
-    const textCalls = calls.filter((c) => c.method === 'text')
-    expect(textCalls.length).toBeGreaterThan(0)
-    const messageCall = textCalls.find((c) =>
-      /p5 viz compile error/i.test(String(c.args[0])),
-    )
-    expect(messageCall).toBeDefined()
+    expect(() => compileP5Code(source)).toThrow(SyntaxError)
   })
 })

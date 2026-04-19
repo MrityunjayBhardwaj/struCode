@@ -27283,10 +27283,11 @@ function isFullLifecycleSketch(code) {
   return /\bfunction\s+draw\s*\(/.test(code);
 }
 function compileP5Code(code) {
+  const body2 = isFullLifecycleSketch(code) ? buildFullLifecycleBody(code) : buildLegacyBody(code);
+  new Function("p", "stave", body2);
   return (hapStreamRef, analyserRef, schedulerRef, containerSizeRef = {
     current: { w: 400, h: 300 }
   }) => {
-    const body2 = isFullLifecycleSketch(code) ? buildFullLifecycleBody(code) : buildLegacyBody(code);
     return (p) => {
       const stave = {
         get scheduler() {
