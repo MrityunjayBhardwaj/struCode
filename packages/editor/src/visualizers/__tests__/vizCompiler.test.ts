@@ -38,6 +38,11 @@ import { describe, it, expect, vi } from 'vitest'
 // the test's module graph doesn't transitively pull in p5 → gifenc
 // through P5VizRenderer, which breaks the vitest ESM loader.
 import { compileP5Code, isFullLifecycleSketch } from '../p5Compiler'
+import {
+  __resetEngineLogForTests,
+  subscribeLog,
+  type LogEntry,
+} from '../../engine/engineLog'
 import type { HapStream } from '../../engine/HapStream'
 import type { PatternScheduler, ContainerSize } from '../types'
 import type { RefObject } from 'react'
@@ -526,5 +531,38 @@ describe('compileP5Code — compile errors', () => {
       }
     `
     expect(() => compileP5Code(source)).toThrow(SyntaxError)
+  })
+
+  it('bridges top-level runtime errors (new Mp()) to engineLog', async () => {
+    __resetEngineLogForTests()
+    const entries: LogEntry[] = []
+    subscribeLog((entry) => {
+      if (entry) entries.push(entry)
+    })
+
+    // Top-level ReferenceError — the factory's internal catch used to
+    // swallow this into `installErrorSketch` only. Now it also emits.
+    const source = `
+      let x = new Mp()
+      function draw() { background(0) }
+    `
+    const factory = compileP5Code(source, 'tests/mp.p5')
+    const refs = makeRefs()
+    const sketchFn = factory(
+      refs.hapStreamRef,
+      refs.analyserRef,
+      refs.schedulerRef,
+      refs.containerSizeRef,
+    )
+    const { p } = makeFakeP5()
+    sketchFn(p)
+
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].runtime).toBe('p5')
+    expect(entries[0].level).toBe('error')
+    expect(entries[0].source).toBe('tests/mp.p5')
+    expect(entries[0].message).toMatch(/Mp/)
   })
 })

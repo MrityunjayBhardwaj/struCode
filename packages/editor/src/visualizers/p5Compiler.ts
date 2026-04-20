@@ -13,6 +13,12 @@
 import type { HapStream } from '../engine/HapStream'
 import type { PatternScheduler, ContainerSize } from './types'
 import type { RefObject } from 'react'
+import { emitLog } from '../engine/engineLog'
+import {
+  formatFriendlyError,
+  parseStackLocation,
+} from '../engine/friendlyErrors'
+import { P5_DOCS_INDEX } from '../monaco/docs/p5'
 
 /**
  * The live `stave` namespace handed to user p5 sketches. Fields are
@@ -127,12 +133,13 @@ export function getP5LineOffset(code: string): number {
  * `with(p)` is central to letting users write idiomatic bare-name p5
  * code.
  */
-export function compileP5Code(code: string) {
+export function compileP5Code(code: string, source?: string) {
   // Build the body ONCE per compile. The compiled function is reused
   // for every mount of this sketch (p5 calls it once per `new p5(...)`).
   const body = isFullLifecycleSketch(code)
     ? buildFullLifecycleBody(code)
     : buildLegacyBody(code)
+  const lineOffset = getP5LineOffset(code)
 
   // Pre-validate syntax synchronously. Without this step, the factory
   // below defers the `new Function(body)` call until p5's instance
@@ -194,10 +201,37 @@ export function compileP5Code(code: string) {
         ) => typeof lifecycle
         lifecycle = compile(p, stave)
       } catch (err) {
-        // Compile-time syntax error. Render it onto the canvas so
-        // the user can see what went wrong instead of facing a blank
-        // preview and a console error they may not open.
-        installErrorSketch(p, (err as Error).message ?? String(err))
+        // Top-level runtime error inside the user sketch — the most
+        // common shape is a ReferenceError from a typo'd identifier
+        // (`new Mp()` instead of `new Map()`) at module scope. The
+        // compile-time pre-validation at the top of compileP5Code
+        // only catches SyntaxErrors; references resolve at execute
+        // time. Two things happen here:
+        //   1. Canvas fallback: `installErrorSketch` paints the
+        //      error in the preview pane so a user who has the
+        //      Console panel closed still sees something.
+        //   2. engineLog bridge: `emitLog` pushes the error through
+        //      the shared pipe (Console row, toast, status-bar chip,
+        //      Monaco squiggle). Without this, the preview pane was
+        //      the ONLY surface that showed the error.
+        const error = err instanceof Error ? err : new Error(String(err))
+        installErrorSketch(p, error.message)
+        const parts = formatFriendlyError(error, 'p5', {
+          index: P5_DOCS_INDEX,
+        })
+        const loc = parseStackLocation(error)
+        const userLine =
+          loc && lineOffset > 0 ? Math.max(1, loc.line - lineOffset) : loc?.line
+        emitLog({
+          level: 'error',
+          runtime: 'p5',
+          source,
+          message: parts.message,
+          suggestion: parts.suggestion,
+          stack: parts.stack,
+          line: userLine,
+          column: loc?.column,
+        })
         return
       }
 

@@ -27305,6 +27305,227 @@ function VizEditor({
   );
 }
 
+// src/engine/engineLog.ts
+var MAX_HISTORY = 500;
+var history = [];
+var listeners3 = /* @__PURE__ */ new Set();
+var fixedMarkers = /* @__PURE__ */ new Map();
+var fixedListeners = /* @__PURE__ */ new Set();
+var idSeq = 0;
+function fixedKey(runtime, source) {
+  return `${runtime}:${source ?? "*"}`;
+}
+function makeId() {
+  idSeq += 1;
+  return `log-${Date.now().toString(36)}-${idSeq.toString(36)}`;
+}
+function emitLog(partial) {
+  const last = history.length > 0 ? history[history.length - 1] : void 0;
+  if (last && last.level === partial.level && last.runtime === partial.runtime && last.source === partial.source && last.line === partial.line && last.message === partial.message) {
+    last.ts = Date.now();
+    queueMicrotask(() => {
+      for (const fn of listeners3) {
+        try {
+          fn(last, history);
+        } catch {
+        }
+      }
+    });
+    return last;
+  }
+  const entry = {
+    id: makeId(),
+    ts: Date.now(),
+    ...partial
+  };
+  history.push(entry);
+  if (history.length > MAX_HISTORY) {
+    history.splice(0, history.length - MAX_HISTORY);
+  }
+  queueMicrotask(() => {
+    for (const fn of listeners3) {
+      try {
+        fn(entry, history);
+      } catch {
+      }
+    }
+  });
+  return entry;
+}
+function subscribeLog(fn) {
+  listeners3.add(fn);
+  return () => {
+    listeners3.delete(fn);
+  };
+}
+function getLogHistory() {
+  return [...history];
+}
+function clearLog() {
+  history.length = 0;
+  fixedMarkers.clear();
+  for (const fn of listeners3) {
+    try {
+      fn(null, history);
+    } catch {
+    }
+  }
+}
+function emitFixed(input) {
+  const marker = {
+    runtime: input.runtime,
+    source: input.source,
+    ts: Date.now()
+  };
+  fixedMarkers.set(fixedKey(input.runtime, input.source), marker.ts);
+  queueMicrotask(() => {
+    for (const fn of fixedListeners) {
+      try {
+        fn(marker, fixedMarkers);
+      } catch {
+      }
+    }
+  });
+  return marker;
+}
+function subscribeFixed(fn) {
+  fixedListeners.add(fn);
+  return () => {
+    fixedListeners.delete(fn);
+  };
+}
+function getFixedMarkers() {
+  return new Map(fixedMarkers);
+}
+function makeFixedKey(runtime, source) {
+  return fixedKey(runtime, source);
+}
+
+// src/engine/friendlyErrors.ts
+function parseStackLocation(err2) {
+  const stack = typeof err2 === "object" && err2 !== null && "stack" in err2 ? String(err2.stack ?? "") : "";
+  if (!stack) return null;
+  const v8Eval = stack.match(/at eval[^(]*\(<anonymous>:(\d+):(\d+)\)/);
+  if (v8Eval)
+    return { line: parseInt(v8Eval[1], 10), column: parseInt(v8Eval[2], 10) };
+  const v8Anon = stack.match(/^\s*at\s+<anonymous>:(\d+):(\d+)/m);
+  if (v8Anon)
+    return { line: parseInt(v8Anon[1], 10), column: parseInt(v8Anon[2], 10) };
+  const ff = stack.match(
+    /@(?:<anonymous>|debugger eval|eval):(\d+):(\d+)/
+  );
+  if (ff) return { line: parseInt(ff[1], 10), column: parseInt(ff[2], 10) };
+  return null;
+}
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const la = a.length;
+  const lb = b.length;
+  if (la === 0) return lb;
+  if (lb === 0) return la;
+  let prev = new Array(lb + 1);
+  let curr = new Array(lb + 1);
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+  for (let i2 = 1; i2 <= la; i2++) {
+    curr[0] = i2;
+    const ac = a.charCodeAt(i2 - 1);
+    for (let j = 1; j <= lb; j++) {
+      const cost = ac === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(
+        curr[j - 1] + 1,
+        // insert
+        prev[j] + 1,
+        // delete
+        prev[j - 1] + cost
+        // substitute
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[lb];
+}
+function fuzzyMatch(word, corpus, options = {}) {
+  if (!word) return [];
+  const lower = word.toLowerCase();
+  const threshold = options.maxDistance ?? Math.max(2, Math.ceil(word.length / 3));
+  const limit = options.limit ?? 5;
+  const hits = [];
+  for (const candidate of corpus) {
+    const d = levenshtein(lower, candidate.toLowerCase());
+    if (d <= threshold) hits.push({ name: candidate, distance: d });
+  }
+  hits.sort(
+    (a, b) => a.distance - b.distance || // Prefer case-matching names on ties (e.g. PI over Pi).
+    (a.name === word ? -1 : b.name === word ? 1 : 0) || a.name.localeCompare(b.name)
+  );
+  return hits.slice(0, limit);
+}
+var REFERENCE_ERROR_PATTERNS = [
+  // Chrome / Edge / Node: "foo is not defined"
+  /^(\w+) is not defined$/,
+  // Firefox: "foo is not defined"
+  /^ReferenceError: (\w+) is not defined$/,
+  // Safari: "Can't find variable: foo"
+  /^Can't find variable: (\w+)$/
+];
+function extractReferenceIdentifier(err2) {
+  const message = typeof err2 === "object" && err2 !== null && "message" in err2 ? String(err2.message) : String(err2);
+  if (!message) return null;
+  const trimmed = message.replace(/^Uncaught\s+/, "").trim();
+  for (const re of REFERENCE_ERROR_PATTERNS) {
+    const m = re.exec(trimmed);
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+function defaultDocsUrl(runtime, name2) {
+  return `/docs/reference/${runtime}/#${name2.toLowerCase()}`;
+}
+function formatFriendlyError2(err2, runtime, options = {}) {
+  const rawMessage = typeof err2 === "object" && err2 !== null && "message" in err2 ? String(err2.message) : String(err2);
+  const stack = typeof err2 === "object" && err2 !== null && "stack" in err2 && typeof err2.stack === "string" ? err2.stack : void 0;
+  const loc = parseStackLocation(err2);
+  const identifier = extractReferenceIdentifier(err2);
+  if (identifier && options.index) {
+    const matches = fuzzyMatch(
+      identifier,
+      Object.keys(options.index.docs)
+    );
+    if (matches.length > 0) {
+      const hit = options.index.docs[matches[0].name];
+      const docsUrl = (options.docsUrlFor ?? defaultDocsUrl)(
+        runtime,
+        matches[0].name
+      );
+      const suggestion = {
+        name: matches[0].name,
+        docsUrl,
+        example: hit?.example,
+        description: hit?.description
+      };
+      return {
+        message: `\`${identifier}\` is not defined. Did you mean \`${matches[0].name}\`?`,
+        suggestion,
+        stack,
+        line: loc?.line,
+        column: loc?.column
+      };
+    }
+    return {
+      message: `\`${identifier}\` is not defined.`,
+      stack,
+      line: loc?.line,
+      column: loc?.column
+    };
+  }
+  return {
+    message: rawMessage || "Unknown error",
+    stack,
+    line: loc?.line,
+    column: loc?.column
+  };
+}
+
 // src/visualizers/p5Compiler.ts
 function isFullLifecycleSketch(code) {
   return /\bfunction\s+draw\s*\(/.test(code);
@@ -27313,8 +27534,9 @@ var NEW_FUNCTION_HEADER_LINES = 2;
 function getP5LineOffset(code) {
   return isFullLifecycleSketch(code) ? FULL_LIFECYCLE_PREFIX_LINES + NEW_FUNCTION_HEADER_LINES : LEGACY_PREFIX_LINES + NEW_FUNCTION_HEADER_LINES;
 }
-function compileP5Code(code) {
+function compileP5Code(code, source) {
   const body2 = isFullLifecycleSketch(code) ? buildFullLifecycleBody(code) : buildLegacyBody(code);
+  const lineOffset = getP5LineOffset(code);
   new Function("p", "stave", body2);
   return (hapStreamRef, analyserRef, schedulerRef, containerSizeRef = {
     current: { w: 400, h: 300 }
@@ -27342,7 +27564,23 @@ function compileP5Code(code) {
         const compile = new Function("p", "stave", body2);
         lifecycle = compile(p, stave);
       } catch (err2) {
-        installErrorSketch(p, err2.message ?? String(err2));
+        const error = err2 instanceof Error ? err2 : new Error(String(err2));
+        installErrorSketch(p, error.message);
+        const parts2 = formatFriendlyError2(error, "p5", {
+          index: P5_DOCS_INDEX
+        });
+        const loc = parseStackLocation(error);
+        const userLine = loc && lineOffset > 0 ? Math.max(1, loc.line - lineOffset) : loc?.line;
+        emitLog({
+          level: "error",
+          runtime: "p5",
+          source,
+          message: parts2.message,
+          suggestion: parts2.suggestion,
+          stack: parts2.stack,
+          line: userLine,
+          column: loc?.column
+        });
         return;
       }
       installLifecycle(p, lifecycle);
@@ -27439,7 +27677,12 @@ function compilePreset(preset) {
       label: name2,
       renderer: "p5",
       requires,
-      factory: () => new P5VizRenderer(compileP5Code(code))
+      // Pass `name` (the workspace path) as the source so the factory's
+      // runtime-error catch can attribute the engineLog entry back to
+      // the file. Without it, a top-level `new Mp()` typo surfaced on
+      // the preview canvas but nowhere else — no Console row, no
+      // Monaco squiggle.
+      factory: () => new P5VizRenderer(compileP5Code(code, name2))
     };
   }
   throw new Error(`Unknown renderer: ${renderer}`);
@@ -28110,227 +28353,6 @@ function VizEditorChrome({
       ]
     }
   );
-}
-
-// src/engine/engineLog.ts
-var MAX_HISTORY = 500;
-var history = [];
-var listeners3 = /* @__PURE__ */ new Set();
-var fixedMarkers = /* @__PURE__ */ new Map();
-var fixedListeners = /* @__PURE__ */ new Set();
-var idSeq = 0;
-function fixedKey(runtime, source) {
-  return `${runtime}:${source ?? "*"}`;
-}
-function makeId() {
-  idSeq += 1;
-  return `log-${Date.now().toString(36)}-${idSeq.toString(36)}`;
-}
-function emitLog(partial) {
-  const last = history.length > 0 ? history[history.length - 1] : void 0;
-  if (last && last.level === partial.level && last.runtime === partial.runtime && last.source === partial.source && last.line === partial.line && last.message === partial.message) {
-    last.ts = Date.now();
-    queueMicrotask(() => {
-      for (const fn of listeners3) {
-        try {
-          fn(last, history);
-        } catch {
-        }
-      }
-    });
-    return last;
-  }
-  const entry = {
-    id: makeId(),
-    ts: Date.now(),
-    ...partial
-  };
-  history.push(entry);
-  if (history.length > MAX_HISTORY) {
-    history.splice(0, history.length - MAX_HISTORY);
-  }
-  queueMicrotask(() => {
-    for (const fn of listeners3) {
-      try {
-        fn(entry, history);
-      } catch {
-      }
-    }
-  });
-  return entry;
-}
-function subscribeLog(fn) {
-  listeners3.add(fn);
-  return () => {
-    listeners3.delete(fn);
-  };
-}
-function getLogHistory() {
-  return [...history];
-}
-function clearLog() {
-  history.length = 0;
-  fixedMarkers.clear();
-  for (const fn of listeners3) {
-    try {
-      fn(null, history);
-    } catch {
-    }
-  }
-}
-function emitFixed(input) {
-  const marker = {
-    runtime: input.runtime,
-    source: input.source,
-    ts: Date.now()
-  };
-  fixedMarkers.set(fixedKey(input.runtime, input.source), marker.ts);
-  queueMicrotask(() => {
-    for (const fn of fixedListeners) {
-      try {
-        fn(marker, fixedMarkers);
-      } catch {
-      }
-    }
-  });
-  return marker;
-}
-function subscribeFixed(fn) {
-  fixedListeners.add(fn);
-  return () => {
-    fixedListeners.delete(fn);
-  };
-}
-function getFixedMarkers() {
-  return new Map(fixedMarkers);
-}
-function makeFixedKey(runtime, source) {
-  return fixedKey(runtime, source);
-}
-
-// src/engine/friendlyErrors.ts
-function parseStackLocation(err2) {
-  const stack = typeof err2 === "object" && err2 !== null && "stack" in err2 ? String(err2.stack ?? "") : "";
-  if (!stack) return null;
-  const v8Eval = stack.match(/at eval[^(]*\(<anonymous>:(\d+):(\d+)\)/);
-  if (v8Eval)
-    return { line: parseInt(v8Eval[1], 10), column: parseInt(v8Eval[2], 10) };
-  const v8Anon = stack.match(/^\s*at\s+<anonymous>:(\d+):(\d+)/m);
-  if (v8Anon)
-    return { line: parseInt(v8Anon[1], 10), column: parseInt(v8Anon[2], 10) };
-  const ff = stack.match(
-    /@(?:<anonymous>|debugger eval|eval):(\d+):(\d+)/
-  );
-  if (ff) return { line: parseInt(ff[1], 10), column: parseInt(ff[2], 10) };
-  return null;
-}
-function levenshtein(a, b) {
-  if (a === b) return 0;
-  const la = a.length;
-  const lb = b.length;
-  if (la === 0) return lb;
-  if (lb === 0) return la;
-  let prev = new Array(lb + 1);
-  let curr = new Array(lb + 1);
-  for (let j = 0; j <= lb; j++) prev[j] = j;
-  for (let i2 = 1; i2 <= la; i2++) {
-    curr[0] = i2;
-    const ac = a.charCodeAt(i2 - 1);
-    for (let j = 1; j <= lb; j++) {
-      const cost = ac === b.charCodeAt(j - 1) ? 0 : 1;
-      curr[j] = Math.min(
-        curr[j - 1] + 1,
-        // insert
-        prev[j] + 1,
-        // delete
-        prev[j - 1] + cost
-        // substitute
-      );
-    }
-    [prev, curr] = [curr, prev];
-  }
-  return prev[lb];
-}
-function fuzzyMatch(word, corpus, options = {}) {
-  if (!word) return [];
-  const lower = word.toLowerCase();
-  const threshold = options.maxDistance ?? Math.max(2, Math.ceil(word.length / 3));
-  const limit = options.limit ?? 5;
-  const hits = [];
-  for (const candidate of corpus) {
-    const d = levenshtein(lower, candidate.toLowerCase());
-    if (d <= threshold) hits.push({ name: candidate, distance: d });
-  }
-  hits.sort(
-    (a, b) => a.distance - b.distance || // Prefer case-matching names on ties (e.g. PI over Pi).
-    (a.name === word ? -1 : b.name === word ? 1 : 0) || a.name.localeCompare(b.name)
-  );
-  return hits.slice(0, limit);
-}
-var REFERENCE_ERROR_PATTERNS = [
-  // Chrome / Edge / Node: "foo is not defined"
-  /^(\w+) is not defined$/,
-  // Firefox: "foo is not defined"
-  /^ReferenceError: (\w+) is not defined$/,
-  // Safari: "Can't find variable: foo"
-  /^Can't find variable: (\w+)$/
-];
-function extractReferenceIdentifier(err2) {
-  const message = typeof err2 === "object" && err2 !== null && "message" in err2 ? String(err2.message) : String(err2);
-  if (!message) return null;
-  const trimmed = message.replace(/^Uncaught\s+/, "").trim();
-  for (const re of REFERENCE_ERROR_PATTERNS) {
-    const m = re.exec(trimmed);
-    if (m && m[1]) return m[1];
-  }
-  return null;
-}
-function defaultDocsUrl(runtime, name2) {
-  return `/docs/reference/${runtime}/#${name2.toLowerCase()}`;
-}
-function formatFriendlyError2(err2, runtime, options = {}) {
-  const rawMessage = typeof err2 === "object" && err2 !== null && "message" in err2 ? String(err2.message) : String(err2);
-  const stack = typeof err2 === "object" && err2 !== null && "stack" in err2 && typeof err2.stack === "string" ? err2.stack : void 0;
-  const loc = parseStackLocation(err2);
-  const identifier = extractReferenceIdentifier(err2);
-  if (identifier && options.index) {
-    const matches = fuzzyMatch(
-      identifier,
-      Object.keys(options.index.docs)
-    );
-    if (matches.length > 0) {
-      const hit = options.index.docs[matches[0].name];
-      const docsUrl = (options.docsUrlFor ?? defaultDocsUrl)(
-        runtime,
-        matches[0].name
-      );
-      const suggestion = {
-        name: matches[0].name,
-        docsUrl,
-        example: hit?.example,
-        description: hit?.description
-      };
-      return {
-        message: `\`${identifier}\` is not defined. Did you mean \`${matches[0].name}\`?`,
-        suggestion,
-        stack,
-        line: loc?.line,
-        column: loc?.column
-      };
-    }
-    return {
-      message: `\`${identifier}\` is not defined.`,
-      stack,
-      line: loc?.line,
-      column: loc?.column
-    };
-  }
-  return {
-    message: rawMessage || "Unknown error",
-    stack,
-    line: loc?.line,
-    column: loc?.column
-  };
 }
 
 // src/visualizers/p5FesBridge.ts
