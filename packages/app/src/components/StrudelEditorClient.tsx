@@ -255,6 +255,20 @@ export default function StrudelEditorClient({
       const runtimeId: RuntimeId = fileNow?.language === "sonicpi" ? "sonicpi" : "strudel";
       const index: DocsIndex = runtimeId === "sonicpi" ? SONICPI_DOCS_INDEX : STRUDEL_DOCS_INDEX;
       const parts = formatFriendlyError(err, runtimeId, { index });
+      // Strudel routes user code through `@strudel/transpiler`, which
+      // rewrites `$:` sugar into method calls and wraps everything in
+      // an async IIFE. The resulting wrapper offset is NOT constant —
+      // it depends on how many `$:` lines the user has and which
+      // transpiler rules fire — so a naive offset constant (like p5's
+      // or Hydra's) would drift per sketch. We deliberately drop
+      // `parts.line` here: the Console row + toast still surface the
+      // error, and the engineLogMarkers bridge's out-of-range guard
+      // keeps a bogus stack line from painting the whole file.
+      // Sonic Pi's Ruby errors carry user-file lines natively, so the
+      // same treatment isn't needed there — but the runtime dispatch
+      // here doesn't distinguish, and dropping the line for Sonic Pi
+      // is the conservative default until we wire a Ruby-aware
+      // line extractor.
       emitLog({
         level: "error",
         runtime: runtimeId,
@@ -262,7 +276,6 @@ export default function StrudelEditorClient({
         message: parts.message,
         suggestion: parts.suggestion,
         stack: parts.stack,
-        line: parts.line,
         column: parts.column,
       });
     });

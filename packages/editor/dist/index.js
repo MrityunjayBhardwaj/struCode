@@ -27383,10 +27383,15 @@ function installErrorSketch(p, message) {
 
 // src/visualizers/hydraCompiler.ts
 function compileHydraCode(code) {
+  new Function("s", "stave", code);
   return (s, stave) => {
     const fn = new Function("s", "stave", code);
     fn(s, stave);
   };
+}
+var HYDRA_LINE_OFFSET = 2;
+function getHydraLineOffset() {
+  return HYDRA_LINE_OFFSET;
 }
 
 // src/visualizers/vizCompiler.ts
@@ -28455,7 +28460,7 @@ function CompiledVizMount(props) {
     const reportError = (e) => {
       const index = isP5 ? P5_DOCS_INDEX : HYDRA_DOCS_INDEX;
       const parts2 = formatFriendlyError2(e, runtime, { index });
-      const offset = isP5 ? getP5LineOffset(file.content) : 0;
+      const offset = isP5 ? getP5LineOffset(file.content) : runtime === "hydra" ? getHydraLineOffset() : 0;
       const line2 = parts2.line != null && offset > 0 ? Math.max(1, parts2.line - offset) : parts2.line;
       emitLog({
         level: "error",

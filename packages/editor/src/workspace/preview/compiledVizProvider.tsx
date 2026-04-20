@@ -103,6 +103,7 @@ import {
   setCurrentP5Source,
 } from '../../visualizers/p5FesBridge'
 import { getP5LineOffset } from '../../visualizers/p5Compiler'
+import { getHydraLineOffset } from '../../visualizers/hydraCompiler'
 
 /**
  * Options accepted by `createCompiledVizProvider`. Both viz providers pass
@@ -346,12 +347,16 @@ function CompiledVizMount(props: CompiledVizMountProps): React.ReactElement {
     const reportError = (e: Error): void => {
       const index = isP5 ? P5_DOCS_INDEX : HYDRA_DOCS_INDEX
       const parts = formatFriendlyError(e, runtime, { index })
-      // The stack trace for p5 runtime errors (thrown from inside
-      // the compiled `new Function` body) counts from the wrapper
-      // header, not from the user's file. Translate before emitting
-      // so the Console row + Monaco marker land on the line the
-      // user actually wrote.
-      const offset = isP5 ? getP5LineOffset(file.content) : 0
+      // The stack trace for p5 / Hydra runtime errors (thrown from
+      // inside the compiled `new Function` body) counts from the
+      // wrapper header, not from the user's file. Translate before
+      // emitting so the Console row + Monaco marker land on the line
+      // the user actually wrote.
+      const offset = isP5
+        ? getP5LineOffset(file.content)
+        : runtime === 'hydra'
+          ? getHydraLineOffset()
+          : 0
       const line =
         parts.line != null && offset > 0
           ? Math.max(1, parts.line - offset)
