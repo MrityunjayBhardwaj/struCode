@@ -27549,7 +27549,7 @@ function formatFriendlyError2(err2, runtime, options = {}) {
 
 // src/visualizers/p5Compiler.ts
 function isFullLifecycleSketch(code) {
-  return /\bfunction\s+draw\s*\(/.test(code);
+  return /\bfunction\s+(?:draw|setup|preload)\s*\(/.test(code);
 }
 var NEW_FUNCTION_HEADER_LINES = 2;
 function getP5LineOffset(code) {

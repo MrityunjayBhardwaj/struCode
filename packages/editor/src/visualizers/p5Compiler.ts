@@ -54,9 +54,14 @@ interface StaveContext {
  */
 export function isFullLifecycleSketch(code: string): boolean {
   // Tolerate leading whitespace, comments, and alternate formatting.
-  // The key signal is: somewhere in the source, there's a
-  // function declaration whose name is `draw`.
-  return /\bfunction\s+draw\s*\(/.test(code)
+  // The key signal is: the user declared ANY of p5's lifecycle
+  // entry points — `draw`, `setup`, or `preload`. A sketch that only
+  // has setup (e.g. a one-shot drawing that doesn't animate) used
+  // to fall through to the legacy draw-body wrap, where the user's
+  // `function setup` ended up declared inside a synthetic draw and
+  // never actually ran — nothing threw, nothing drew, nothing
+  // reached engineLog.
+  return /\bfunction\s+(?:draw|setup|preload)\s*\(/.test(code)
 }
 
 /**

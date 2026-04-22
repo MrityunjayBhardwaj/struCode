@@ -149,6 +149,24 @@ describe('isFullLifecycleSketch', () => {
     expect(isFullLifecycleSketch('function draw() { background(0) }')).toBe(true)
   })
 
+  it('returns true for a setup-only sketch (one-shot, no animation)', () => {
+    // A sketch with only `function setup` used to fall through to the
+    // legacy draw-body wrap; the user's setup declaration ended up
+    // nested inside a synthetic draw and never ran. The detector now
+    // matches any lifecycle entry point.
+    expect(
+      isFullLifecycleSketch(
+        'function setup() { createCanvas(100, 100); print("hi") }',
+      ),
+    ).toBe(true)
+  })
+
+  it('returns true for a preload-only sketch', () => {
+    expect(
+      isFullLifecycleSketch('function preload() { loadImage("a.png") }'),
+    ).toBe(true)
+  })
+
   it('returns true even when draw is preceded by other declarations', () => {
     expect(
       isFullLifecycleSketch(
