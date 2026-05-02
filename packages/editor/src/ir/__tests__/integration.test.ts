@@ -96,6 +96,58 @@ describe('parseMini', () => {
     const tree = parseMini('xyz123')
     expect(tree.tag).toBe('Play')
   })
+
+  // ---- Tier 2: slice ----------------------------------------------------
+
+  describe('slice (a:N)', () => {
+    it('attaches slice index to a sample Play.params', () => {
+      const tree = parseMini('bd:2', true)
+      expect(tree.tag).toBe('Play')
+      if (tree.tag === 'Play') {
+        expect(tree.params.s).toBe('bd')
+        expect(tree.params.slice).toBe(2)
+      }
+    })
+
+    it('non-sample mode still records the slice index', () => {
+      const tree = parseMini('c4:1')
+      expect(tree.tag).toBe('Play')
+      if (tree.tag === 'Play') expect(tree.params.slice).toBe(1)
+    })
+
+    it('composes with repeat — slice resolves first, then *N wraps', () => {
+      const tree = parseMini('bd:2*3', true)
+      // Fast(3, Play(bd, slice:2))
+      expect(tree.tag).toBe('Fast')
+      if (tree.tag === 'Fast') {
+        expect(tree.factor).toBe(3)
+        if (tree.body.tag === 'Play') expect(tree.body.params.slice).toBe(2)
+      }
+    })
+
+    it('mixes with plain atoms in a sequence', () => {
+      const tree = parseMini('bd bd:1 bd:2', true)
+      expect(tree.tag).toBe('Seq')
+      if (tree.tag === 'Seq') {
+        expect(tree.children).toHaveLength(3)
+        const slices = tree.children
+          .map(c => (c.tag === 'Play' ? c.params.slice : undefined))
+        expect(slices).toEqual([undefined, 1, 2])
+      }
+    })
+
+    it('rejects negative or non-numeric slice — falls through silently', () => {
+      // The character after `:` is not a digit, so the colon stays with
+      // the next token (or is dropped). Atom is parsed without slice.
+      const tree = parseMini('bd:abc', true)
+      // We don't promise an exact shape for malformed input — just that
+      // it doesn't throw and Play.slice isn't set.
+      const play = tree.tag === 'Play' ? tree
+        : tree.tag === 'Seq' ? (tree.children[0].tag === 'Play' ? tree.children[0] : null)
+        : null
+      if (play) expect(play.params.slice).toBeUndefined()
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

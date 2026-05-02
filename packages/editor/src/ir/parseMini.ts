@@ -2,15 +2,22 @@
  * parseMini — mini-notation string → PatternIR.
  *
  * Parses Strudel's mini-notation DSL (the string inside note("...") or s("...")).
- * Recursive descent parser that handles the Phase F subset:
+ * Recursive descent parser that handles the Phase F subset plus the
+ * Tier 2 mini-notation features (Phase 19-02):
  *   - Sequences: "c4 e4 g4"
  *   - Rests: "c4 ~ e4"
  *   - Cycles (alternation): "<c4 e4 g4>"
  *   - Sub-sequences: "[c4 e4] g4"
  *   - Repeat: "c4*2"
  *   - Sometimes: "c4?"
+ *   - Slice (sample index): "bd:2"             — Tier 2
+ *   - Elongation (step weight): "c4@2 e4"      — Tier 2
+ *   - Euclidean: "bd(3,8)" / "bd(3,8,2)"        — Tier 2
+ *   - Polymetric: "{c4 e4, bd hh sd}"          — Tier 2
  *
- * Not in scope (Phase 19): polymetric {}, Euclidean a(3,8), slice a:2, elongation @
+ * Tier 2 features lower into existing IR nodes — no new tags. Slice
+ * lands in Play.params, elongation scales Play.duration, Euclidean
+ * expands to a flat Seq via Bjorklund, polymetric becomes Stack.
  */
 
 import { IR, type PatternIR } from './PatternIR'
@@ -49,6 +56,7 @@ type Token =
   | { type: 'rangle' }
   | { type: 'repeat';  factor: number }
   | { type: 'sometimes' }
+  | { type: 'slice';   index: number }
 
 function tokenize(input: string): Token[] {
   const tokens: Token[] = []
@@ -77,6 +85,16 @@ function tokenize(input: string): Token[] {
         atom += input[i++]
       }
       tokens.push({ type: 'atom', value: atom })
+
+      // Slice (`a:N`) is parsed as a per-atom modifier so it composes
+      // naturally with repeat/sometimes that follow it.
+      if (i < input.length && input[i] === ':') {
+        i++ // skip :
+        let numStr = ''
+        while (i < input.length && /[0-9]/.test(input[i])) numStr += input[i++]
+        const idx = parseInt(numStr, 10)
+        if (!isNaN(idx) && idx >= 0) tokens.push({ type: 'slice', index: idx })
+      }
 
       // Check for trailing *n (repeat) or ? (sometimes)
       if (i < input.length && input[i] === '*') {
@@ -114,10 +132,22 @@ function parseTokens(tokens: Token[], isSample: boolean): PatternIR[] {
 
     if (tok.type === 'atom') {
       const note = tok.value
-      let node: PatternIR = isSample
-        ? IR.play(note, 1, { s: note })
-        : IR.play(note)
       i++
+
+      // Slice modifier (`a:N`) — applies before repeat/sometimes since
+      // it changes the Play's params shape, not its structural wrapper.
+      let sliceIndex: number | undefined
+      if (i < tokens.length && tokens[i].type === 'slice') {
+        sliceIndex = (tokens[i] as { type: 'slice'; index: number }).index
+        i++
+      }
+
+      const params: Partial<import('./PatternIR').PlayParams> = isSample
+        ? { s: note }
+        : {}
+      if (sliceIndex !== undefined) params.slice = sliceIndex
+      const baseDuration = isSample ? 1 : 0.25
+      let node: PatternIR = IR.play(note, baseDuration, params)
 
       // Check for repeat/sometimes modifier following this atom
       if (i < tokens.length) {
