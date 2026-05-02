@@ -10,13 +10,39 @@
  */
 
 import type * as Monaco from 'monaco-editor'
-import type { DocsIndex } from './types'
+import type { CommonMistake, DocsIndex } from './types'
 import { validateDocsIndex } from './types'
 import { registerRuntimeProviders } from './providers'
 import RAW from './data/hydra.json'
 
 validateDocsIndex('hydra.json', RAW)
-export const HYDRA_DOCS_INDEX: DocsIndex = RAW as DocsIndex
+
+/**
+ * Hand-curated overlay applied after JSON load (same pattern as p5).
+ * Sonic Pi has its own (Ruby) error surface and isn't seeded here yet
+ * — see issue tracker for follow-up curation.
+ */
+const HYDRA_GLOBAL_MISTAKES: CommonMistake[] = [
+  {
+    // `out` is a method on a chain (`osc().out()`), not a free fn.
+    // Calling it bare surfaces as `out is not a function` (when it's
+    // shadowed) or — more often — `out is not defined`. Levenshtein
+    // would match `out` to itself as a symbol, but the existing fuzzy
+    // path returns "Did you mean out?" which isn't useful.
+    detect: { kind: 'message', match: /^out is not (?:a function|defined)$/ },
+    hint: 'Hydra outputs render by calling `.out()` on a chain — try `osc().out()`.',
+    example: 'osc(20, 0.1, 1.0).out()',
+  },
+]
+
+const HYDRA_RAW_INDEX = RAW as DocsIndex
+export const HYDRA_DOCS_INDEX: DocsIndex = {
+  ...HYDRA_RAW_INDEX,
+  globalMistakes: [
+    ...(HYDRA_RAW_INDEX.globalMistakes ?? []),
+    ...HYDRA_GLOBAL_MISTAKES,
+  ],
+}
 
 export function registerHydraProviders(
   monaco: typeof Monaco,

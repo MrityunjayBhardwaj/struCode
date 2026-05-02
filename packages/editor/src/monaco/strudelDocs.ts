@@ -56,6 +56,19 @@ export const STRUDEL_DOCS: Record<string, RuntimeDoc> = {
     signature: '.every(n, fn)',
     description: 'Apply fn to the pattern every n cycles.',
     example: 'note("c4 e4 g4").every(4, x => x.rev())',
+    commonMistakes: [
+      {
+        // Calling `every(n, fn)` as a free function instead of chaining
+        // it on a Pattern. The Strudel autoplay path then dereferences
+        // `.p` on the partial application to get a Pattern, surfacing
+        // as `every(...).p is not a function`. The plainer
+        // `every is not a function` shape fires when `every` is
+        // shadowed; both are caught by the same loose-matched word.
+        detect: { kind: 'message', match: /\bevery\b[^\n]*\bis not a function\b/ },
+        hint: '`.every(n, fn)` is a method on a Pattern — chain it after `note(...)` or `s(...)`.',
+        weight: 2,
+      },
+    ],
   },
   sometimes: {
     signature: '.sometimes(fn)',
@@ -182,6 +195,36 @@ export const STRUDEL_DOCS: Record<string, RuntimeDoc> = {
 export const STRUDEL_DOCS_INDEX: DocsIndex = {
   runtime: 'strudel',
   docs: STRUDEL_DOCS,
+  // Catch-all friendly-error hints that aren't tied to a single symbol.
+  // The two cases below are the highest-frequency Strudel papercut:
+  // bare note / drum names outside a string. JS evaluates them as
+  // identifiers and throws ReferenceError — without these hints the
+  // user sees "c4 is not defined" with a Levenshtein neighbour
+  // ("cat"?) that doesn't help.
+  globalMistakes: [
+    {
+      detect: {
+        kind: 'message',
+        // Note names: c, d, e, f, g, a, b — optional sharp/flat,
+        // optional octave digit. Anchored to start so we don't match
+        // mid-message references.
+        match: /^[a-g][s#b]?\d? is not defined$/i,
+      },
+      hint: 'Looks like a note name — wrap it in a string: `note("c4")`.',
+      example: 'note("c4 e4 g4")',
+    },
+    {
+      detect: {
+        kind: 'message',
+        // Drum / sample shorthands. Curated list; expand as we
+        // observe new ones in the wild.
+        match:
+          /^(bd|sd|hh|oh|cp|cb|rim|tom|cy|kick|snare|hat|clap|crash|ride) is not defined$/i,
+      },
+      hint: 'Looks like a drum name — wrap it in a string: `s("bd")`.',
+      example: 's("bd sd hh sd")',
+    },
+  ],
   meta: {
     source: 'hand-curated',
     // Strudel's jsdoc isn't published with per-function permalinks, so
