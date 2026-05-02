@@ -20,27 +20,17 @@ import RAW from './data/p5.json'
 validateDocsIndex('p5.json', RAW)
 
 /**
- * Hand-curated overlay applied after JSON load. p5.js's own FES
- * already covers most p5-API mistakes — the hints below target errors
- * that escape FES (typically thrown from user code that touches the
- * `stave` namespace or runs before `setup` resolves).
+ * Hand-curated overlay slot applied after JSON load. p5.js's own FES
+ * already catches most p5-API mistakes inside the runtime, so v1 ships
+ * the slot wired but unfilled — hints here target errors that escape
+ * FES, and we'd rather seed those once we observe one in practice than
+ * fabricate a hint upfront.
  *
- * Lives in TS rather than the JSON so a `node scripts/fetch-docs/p5.mjs`
- * regenerate doesn't clobber the curation. Same shape as a JSON
- * `commonMistakes` field.
+ * To add a hint later: append a CommonMistake here. The TS-side overlay
+ * survives `node scripts/fetch-docs/p5.mjs` regeneration; the JSON side
+ * doesn't carry hints by design.
  */
-const P5_GLOBAL_MISTAKES: CommonMistake[] = [
-  {
-    // A common pattern from session-5 observation: `width` / `height`
-    // referenced before `setup()` ran — the wrapper-time stack puts
-    // these as `ReferenceError: width is not defined` because they're
-    // sketch-instance properties, not real globals.
-    detect: { kind: 'message', match: /^(width|height) is not defined$/ },
-    hint:
-      "`width` / `height` only become available once `setup()` runs. " +
-      'Move the read inside `setup()` or `draw()`.',
-  },
-]
+const P5_GLOBAL_MISTAKES: CommonMistake[] = []
 
 const RAW_INDEX = RAW as DocsIndex
 export const P5_DOCS_INDEX: DocsIndex = {

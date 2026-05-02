@@ -58,11 +58,13 @@ export const STRUDEL_DOCS: Record<string, RuntimeDoc> = {
     example: 'note("c4 e4 g4").every(4, x => x.rev())',
     commonMistakes: [
       {
-        // Calling `every(...)` as a free function instead of chaining
-        // it on a Pattern surfaces as `every is not a function` (when
-        // shadowed) or `every is not defined`. Both end up confusing —
-        // the curated hint points at the `.every()` shape directly.
-        detect: { kind: 'message', match: /every is not (?:a function|defined)/ },
+        // Calling `every(n, fn)` as a free function instead of chaining
+        // it on a Pattern. The Strudel autoplay path then dereferences
+        // `.p` on the partial application to get a Pattern, surfacing
+        // as `every(...).p is not a function`. The plainer
+        // `every is not a function` shape fires when `every` is
+        // shadowed; both are caught by the same loose-matched word.
+        detect: { kind: 'message', match: /\bevery\b[^\n]*\bis not a function\b/ },
         hint: '`.every(n, fn)` is a method on a Pattern — chain it after `note(...)` or `s(...)`.',
         weight: 2,
       },

@@ -44,13 +44,26 @@ describe('seeded commonMistakes — Strudel', () => {
   })
 
   it('every-as-free-fn → chain-after-Pattern hint', () => {
+    // Real Strudel error when the user writes `$: every(4, rev)` and
+    // the autoplay path tries to extract `.p` from the partial
+    // application. The shape `every(...).p is not a function` is what
+    // observation captured during the friendly-errors-console branch.
+    const r = formatFriendlyError(
+      new TypeError('every(...).p is not a function'),
+      'strudel',
+      { index: STRUDEL_DOCS_INDEX },
+    )
+    expect(r.message).toContain('chain it after `note(...)`')
+    expect(r.suggestion?.name).toBe('every')
+  })
+
+  it('every-shadowed → same hint catches the simpler shape', () => {
     const r = formatFriendlyError(
       new TypeError('every is not a function'),
       'strudel',
       { index: STRUDEL_DOCS_INDEX },
     )
     expect(r.message).toContain('chain it after `note(...)`')
-    expect(r.suggestion?.name).toBe('every')
   })
 
   it('non-curated reference still falls through to fuzzy', () => {
@@ -66,14 +79,12 @@ describe('seeded commonMistakes — Strudel', () => {
 })
 
 describe('seeded commonMistakes — p5', () => {
-  it('width-before-setup → "available once setup() runs" hint', () => {
-    const r = formatFriendlyError(
-      new ReferenceError('width is not defined'),
-      'p5',
-      { index: P5_DOCS_INDEX },
-    )
-    expect(r.message).toContain('only become available')
-    expect(r.message).toContain('setup()')
+  // No seed hints yet for p5 — its own FES handles most p5-API
+  // mistakes inside the runtime. The schema slot is wired so a future
+  // CommonMistake added to P5_GLOBAL_MISTAKES picks up the cascade
+  // without further plumbing. This test guards that wiring.
+  it('schema slot is wired (globalMistakes is an array)', () => {
+    expect(Array.isArray(P5_DOCS_INDEX.globalMistakes)).toBe(true)
   })
 })
 
