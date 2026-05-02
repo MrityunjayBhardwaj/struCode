@@ -31,7 +31,10 @@ import {
   formatFriendlyError,
   parseStrudel,
   collect,
+  runPasses,
   publishIRSnapshot,
+  type Pass,
+  type PatternIR,
   STRUDEL_DOCS_INDEX,
   SONICPI_DOCS_INDEX,
   type DocsIndex,
@@ -42,6 +45,22 @@ import {
   type PreviewProvider,
 } from "@stave/editor";
 import { PIANOROLL_P5_CODE, PIANOROLL_HYDRA_CODE, seedMissingPresetFiles } from "../templates";
+
+
+// ---------------------------------------------------------------------------
+// Strudel IR pass list (Phase 19-02)
+// ---------------------------------------------------------------------------
+// v1: only the parse stage exists as a real IR-shaped step. Future passes
+// (parser decomposition into Raw / Mini-expanded / Chain-applied; JS API
+// Tier 4 desugaring) append here. The "Collected" stage is event-shaped,
+// not IR-shaped, so it lives in snap.events — NOT in this pass list (per
+// CONTEXT D-01/D-04).
+//
+// Invariant (PV24): every pass that rewrites Play nodes MUST preserve or
+// compose `loc`. Identity passes (the v1 default) trivially satisfy this.
+const STRUDEL_PASSES: readonly Pass<PatternIR>[] = [
+  { name: "Parsed", run: (ir) => ir },
+];
 
 
 // ---------------------------------------------------------------------------
@@ -311,13 +330,20 @@ export default function StrudelEditorClient({
       if (runtimeId === "strudel" && fileNow) {
         try {
           const ir = parseStrudel(fileNow.content);
-          const events = collect(ir);
+          const passes = runPasses(ir, STRUDEL_PASSES);
+          // finalIR drives both `collect` (events reflect post-pass IR
+          // when real passes land later) and the `ir` alias on the
+          // snapshot. Single source of truth — passes[last].ir and the
+          // alias cannot drift apart.
+          const finalIR = passes[passes.length - 1].ir;
+          const events = collect(finalIR);
           publishIRSnapshot({
             ts: Date.now(),
             source: fileNow.id,
             runtime: "strudel",
             code: fileNow.content,
-            ir,
+            passes,
+            ir: finalIR, // alias of passes[last].ir per IRSnapshot contract
             events,
           });
         } catch {
