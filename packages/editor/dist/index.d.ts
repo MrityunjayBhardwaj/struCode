@@ -178,6 +178,10 @@ type PatternIR = {
     factor: number;
     body: PatternIR;
 } | {
+    tag: 'Elongate';
+    factor: number;
+    body: PatternIR;
+} | {
     tag: 'Loop';
     body: PatternIR;
 } | {
@@ -200,6 +204,7 @@ declare const IR: {
     readonly ramp: (param: string, from: number, to: number, cycles: number, body: PatternIR) => PatternIR;
     readonly fast: (factor: number, body: PatternIR) => PatternIR;
     readonly slow: (factor: number, body: PatternIR) => PatternIR;
+    readonly elongate: (factor: number, body: PatternIR) => PatternIR;
     readonly loop: (body: PatternIR) => PatternIR;
     readonly code: (code: string) => PatternIR;
 };
@@ -272,15 +277,22 @@ declare function patternFromJSON(json: string): PatternIR;
  * parseMini — mini-notation string → PatternIR.
  *
  * Parses Strudel's mini-notation DSL (the string inside note("...") or s("...")).
- * Recursive descent parser that handles the Phase F subset:
+ * Recursive descent parser that handles the Phase F subset plus the
+ * Tier 2 mini-notation features (Phase 19-02):
  *   - Sequences: "c4 e4 g4"
  *   - Rests: "c4 ~ e4"
  *   - Cycles (alternation): "<c4 e4 g4>"
  *   - Sub-sequences: "[c4 e4] g4"
  *   - Repeat: "c4*2"
  *   - Sometimes: "c4?"
+ *   - Slice (sample index): "bd:2"             — Tier 2
+ *   - Elongation (step weight): "c4@2 e4"      — Tier 2
+ *   - Euclidean: "bd(3,8)" / "bd(3,8,2)"        — Tier 2
+ *   - Polymetric: "{c4 e4, bd hh sd}"          — Tier 2
  *
- * Not in scope (Phase 19): polymetric {}, Euclidean a(3,8), slice a:2, elongation @
+ * Tier 2 features lower into existing IR nodes — no new tags. Slice
+ * lands in Play.params, elongation scales Play.duration, Euclidean
+ * expands to a flat Seq via Bjorklund, polymetric becomes Stack.
  */
 
 /** Parse a mini-notation string. Returns Pure for empty input. Never throws. */

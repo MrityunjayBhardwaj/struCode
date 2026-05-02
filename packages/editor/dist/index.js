@@ -2926,6 +2926,7 @@ var IR = {
   ramp: (param, from, to, cycles, body2) => ({ tag: "Ramp", param, from, to, cycles, body: body2 }),
   fast: (factor, body2) => ({ tag: "Fast", factor, body: body2 }),
   slow: (factor, body2) => ({ tag: "Slow", factor, body: body2 }),
+  elongate: (factor, body2) => ({ tag: "Elongate", factor, body: body2 }),
   loop: (body2) => ({ tag: "Loop", body: body2 }),
   code: (code) => ({ tag: "Code", code, lang: "strudel" })
 };
@@ -2996,16 +2997,21 @@ function walk(ir, ctx) {
       return [];
     case "Seq": {
       if (ir.children.length === 0) return [];
-      const slotDuration = ctx.duration / ir.children.length;
+      const weights = ir.children.map((c) => c.tag === "Elongate" ? c.factor : 1);
+      const total = weights.reduce((s, w) => s + w, 0);
+      if (total <= 0) return [];
       const events = [];
       let cursor = ctx.time;
-      for (const child of ir.children) {
+      for (let i2 = 0; i2 < ir.children.length; i2++) {
+        const child = ir.children[i2];
+        const slotDuration = ctx.duration * (weights[i2] / total);
+        const target = child.tag === "Elongate" ? child.body : child;
         const childCtx = {
           ...ctx,
           time: cursor,
           duration: slotDuration
         };
-        const childEvents = walk(child, childCtx);
+        const childEvents = walk(target, childCtx);
         events.push(...childEvents);
         cursor += slotDuration / ctx.speed;
       }
@@ -3075,6 +3081,9 @@ function walk(ir, ctx) {
       return walk(ir.body, childCtx);
     }
     case "Loop": {
+      return walk(ir.body, ctx);
+    }
+    case "Elongate": {
       return walk(ir.body, ctx);
     }
   }
@@ -3174,6 +3183,8 @@ function gen(ir) {
       return `${body2}.slow(${ir.factor})`;
     }
     case "Loop":
+      return gen(ir.body);
+    case "Elongate":
       return gen(ir.body);
   }
 }
@@ -3396,6 +3407,15 @@ function validateNode(raw, path) {
         body: validateNode(node.body, `${path}.body`)
       };
     }
+    case "Elongate": {
+      requireField(node, "factor", ["number"], path);
+      requireField(node, "body", ["object"], path);
+      return {
+        tag: "Elongate",
+        factor: node.factor,
+        body: validateNode(node.body, `${path}.body`)
+      };
+    }
     case "Code": {
       requireField(node, "code", ["string"], path);
       return { tag: "Code", code: node.code, lang: "strudel" };
@@ -3469,6 +3489,21 @@ function tokenize(input) {
       i2++;
       continue;
     }
+    if (ch === "{") {
+      tokens.push({ type: "lcurly" });
+      i2++;
+      continue;
+    }
+    if (ch === "}") {
+      tokens.push({ type: "rcurly" });
+      i2++;
+      continue;
+    }
+    if (ch === ",") {
+      tokens.push({ type: "comma" });
+      i2++;
+      continue;
+    }
     if (ch === "~") {
       tokens.push({ type: "rest" });
       i2++;
@@ -3480,6 +3515,42 @@ function tokenize(input) {
         atom += input[i2++];
       }
       tokens.push({ type: "atom", value: atom });
+      if (i2 < input.length && input[i2] === ":") {
+        i2++;
+        let numStr = "";
+        while (i2 < input.length && /[0-9]/.test(input[i2])) numStr += input[i2++];
+        const idx = parseInt(numStr, 10);
+        if (!isNaN(idx) && idx >= 0) tokens.push({ type: "slice", index: idx });
+      }
+      if (i2 < input.length && input[i2] === "(") {
+        i2++;
+        const args2 = [];
+        let buf = "";
+        while (i2 < input.length && input[i2] !== ")") {
+          const c = input[i2];
+          if (c === ",") {
+            const n = parseInt(buf.trim(), 10);
+            if (!isNaN(n)) args2.push(n);
+            buf = "";
+          } else {
+            buf += c;
+          }
+          i2++;
+        }
+        if (buf.trim().length > 0) {
+          const n = parseInt(buf.trim(), 10);
+          if (!isNaN(n)) args2.push(n);
+        }
+        if (i2 < input.length && input[i2] === ")") i2++;
+        if (args2.length >= 2 && args2[0] >= 0 && args2[1] > 0) {
+          tokens.push({
+            type: "euclid",
+            hits: args2[0],
+            steps: args2[1],
+            rotation: args2.length >= 3 ? args2[2] : 0
+          });
+        }
+      }
       if (i2 < input.length && input[i2] === "*") {
         i2++;
         let numStr = "";
@@ -3491,12 +3562,58 @@ function tokenize(input) {
       } else if (i2 < input.length && input[i2] === "?") {
         i2++;
         tokens.push({ type: "sometimes" });
+      } else if (i2 < input.length && input[i2] === "@") {
+        i2++;
+        let numStr = "";
+        while (i2 < input.length && /[0-9.]/.test(input[i2])) numStr += input[i2++];
+        const factor = parseFloat(numStr);
+        if (!isNaN(factor) && factor > 0) {
+          tokens.push({ type: "elongate", factor });
+        }
       }
       continue;
     }
     i2++;
   }
   return tokens;
+}
+function bjorklund(hits, steps) {
+  if (hits <= 0 || steps <= 0) return new Array(Math.max(steps, 0)).fill(false);
+  if (hits >= steps) return new Array(steps).fill(true);
+  let groups = [
+    ...Array.from({ length: hits }, () => [true]),
+    ...Array.from({ length: steps - hits }, () => [false])
+  ];
+  while (true) {
+    let firstTail = -1;
+    for (let i2 = 1; i2 < groups.length; i2++) {
+      if (groups[i2][0] !== groups[0][0]) {
+        firstTail = i2;
+        break;
+      }
+    }
+    if (firstTail === -1) break;
+    const tailCount = groups.length - firstTail;
+    if (tailCount <= 1) break;
+    const merged = [];
+    const headCount = firstTail;
+    const pairs = Math.min(headCount, tailCount);
+    for (let i2 = 0; i2 < pairs; i2++) {
+      merged.push([...groups[i2], ...groups[firstTail + i2]]);
+    }
+    if (headCount > tailCount) {
+      for (let i2 = tailCount; i2 < headCount; i2++) merged.push(groups[i2]);
+    } else if (tailCount > headCount) {
+      for (let i2 = headCount; i2 < tailCount; i2++) merged.push(groups[firstTail + i2]);
+    }
+    groups = merged;
+  }
+  return groups.flat();
+}
+function rotate(arr, by) {
+  if (arr.length === 0) return arr;
+  const n = (by % arr.length + arr.length) % arr.length;
+  return [...arr.slice(n), ...arr.slice(0, n)];
 }
 function parseTokens(tokens, isSample) {
   const nodes = [];
@@ -3505,8 +3622,25 @@ function parseTokens(tokens, isSample) {
     const tok = tokens[i2];
     if (tok.type === "atom") {
       const note2 = tok.value;
-      let node = isSample ? IR.play(note2, 1, { s: note2 }) : IR.play(note2);
       i2++;
+      let sliceIndex;
+      if (i2 < tokens.length && tokens[i2].type === "slice") {
+        sliceIndex = tokens[i2].index;
+        i2++;
+      }
+      const params = isSample ? { s: note2 } : {};
+      if (sliceIndex !== void 0) params.slice = sliceIndex;
+      const baseDuration = isSample ? 1 : 0.25;
+      let node = IR.play(note2, baseDuration, params);
+      if (i2 < tokens.length && tokens[i2].type === "euclid") {
+        const e = tokens[i2];
+        i2++;
+        let pattern = bjorklund(e.hits, e.steps);
+        if (e.rotation) pattern = rotate(pattern, e.rotation);
+        const restSlot = IR.sleep(1);
+        const slots = pattern.map((onset) => onset ? node : restSlot);
+        node = slots.length === 1 ? slots[0] : IR.seq(...slots);
+      }
       if (i2 < tokens.length) {
         const next = tokens[i2];
         if (next.type === "repeat") {
@@ -3514,6 +3648,9 @@ function parseTokens(tokens, isSample) {
           i2++;
         } else if (next.type === "sometimes") {
           node = IR.choice(0.5, node, IR.pure());
+          i2++;
+        } else if (next.type === "elongate") {
+          node = IR.elongate(next.factor, node);
           i2++;
         }
       }
@@ -3541,6 +3678,33 @@ function parseTokens(tokens, isSample) {
       const subNodes = parseTokens(subTokens, isSample);
       if (subNodes.length > 0) {
         nodes.push(subNodes.length === 1 ? subNodes[0] : IR.seq(...subNodes));
+      }
+    } else if (tok.type === "lcurly") {
+      i2++;
+      const segments = [[]];
+      let depth = 1;
+      while (i2 < tokens.length && depth > 0) {
+        const t = tokens[i2];
+        if (t.type === "lcurly") depth++;
+        if (t.type === "rcurly") {
+          depth--;
+          if (depth === 0) {
+            i2++;
+            break;
+          }
+        }
+        if (depth === 1 && t.type === "comma") {
+          segments.push([]);
+        } else {
+          segments[segments.length - 1].push(t);
+        }
+        i2++;
+      }
+      const trackNodes = segments.map((seg) => parseTokens(seg, isSample)).filter((s) => s.length > 0).map((s) => s.length === 1 ? s[0] : IR.seq(...s));
+      if (trackNodes.length === 0) ; else if (trackNodes.length === 1) {
+        nodes.push(trackNodes[0]);
+      } else {
+        nodes.push(IR.stack(...trackNodes));
       }
     } else if (tok.type === "langle") {
       i2++;
@@ -5637,8 +5801,8 @@ var BG6 = "#090912";
 var ACTIVE_COLOR3 = "#75baff";
 var INACTIVE_COLOR3 = "#8a919966";
 var PLAYHEAD_COLOR3 = "#ffffff";
-function xyOnSpiral(rotations, margin, cx, cy, rotate) {
-  const angle = ((rotations + rotate) * 360 - 90) * (Math.PI / 180);
+function xyOnSpiral(rotations, margin, cx, cy, rotate2) {
+  const angle = ((rotations + rotate2) * 360 - 90) * (Math.PI / 180);
   return [cx + Math.cos(angle) * margin * rotations, cy + Math.sin(angle) * margin * rotations];
 }
 function SpiralSketch(_hapStreamRef, _analyserRef, schedulerRef) {
@@ -5673,7 +5837,7 @@ function SpiralSketch(_hapStreamRef, _analyserRef, schedulerRef) {
       const size = Math.min(W, H) * 0.38;
       const margin = size / 3;
       const inset = 3;
-      const rotate = now;
+      const rotate2 = now;
       for (const hap of haps) {
         const isActive = hap.begin <= now && hap.endClipped > now;
         const from = hap.begin - now + inset;
@@ -5689,7 +5853,7 @@ function SpiralSketch(_hapStreamRef, _analyserRef, schedulerRef) {
         const inc2 = 1 / 60;
         let angle2 = from;
         while (angle2 <= to) {
-          const [x, y] = xyOnSpiral(angle2, margin, cx, cy, rotate);
+          const [x, y] = xyOnSpiral(angle2, margin, cx, cy, rotate2);
           p.vertex(x, y);
           angle2 += inc2;
         }
@@ -5701,7 +5865,7 @@ function SpiralSketch(_hapStreamRef, _analyserRef, schedulerRef) {
       p.beginShape();
       let angle = inset - 0.02;
       while (angle <= inset) {
-        const [x, y] = xyOnSpiral(angle, margin, cx, cy, rotate);
+        const [x, y] = xyOnSpiral(angle, margin, cx, cy, rotate2);
         p.vertex(x, y);
         angle += 1 / 60;
       }
@@ -20518,14 +20682,14 @@ function line(start2, finish, stepsOrOpts = 4) {
 function spread(hits, total, rotation = 0) {
   if (hits >= total) return new Ring(Array(total).fill(true));
   if (hits <= 0) return new Ring(Array(total).fill(false));
-  let pattern = bjorklund(hits, total);
+  let pattern = bjorklund2(hits, total);
   if (rotation !== 0) {
     const r = (rotation % total + total) % total;
     pattern = [...pattern.slice(r), ...pattern.slice(0, r)];
   }
   return new Ring(pattern);
 }
-function bjorklund(hits, total) {
+function bjorklund2(hits, total) {
   let groups = [];
   for (let i2 = 0; i2 < total; i2++) {
     groups.push([i2 < hits]);
