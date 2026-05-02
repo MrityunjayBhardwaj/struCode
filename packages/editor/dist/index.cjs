@@ -3782,17 +3782,17 @@ function extractTracks(code) {
   const hasPrefix = lines.some((l) => l.trim().startsWith("$:"));
   if (!hasPrefix) return [];
   const trackExprs = [];
-  let current = "";
+  let current2 = "";
   for (const line2 of lines) {
     const trimmed = line2.trim();
     if (trimmed.startsWith("$:")) {
-      if (current) trackExprs.push(current.trim());
-      current = trimmed.slice(2).trim();
-    } else if (current && trimmed) {
-      current += "\n" + trimmed;
+      if (current2) trackExprs.push(current2.trim());
+      current2 = trimmed.slice(2).trim();
+    } else if (current2 && trimmed) {
+      current2 += "\n" + trimmed;
     }
   }
-  if (current) trackExprs.push(current.trim());
+  if (current2) trackExprs.push(current2.trim());
   return trackExprs;
 }
 function parseExpression(expr) {
@@ -3838,14 +3838,14 @@ function parseRoot(root) {
 function applyChain(ir, chain) {
   if (!chain.trim()) return ir;
   let remaining = chain.trim();
-  let current = ir;
+  let current2 = ir;
   while (remaining.startsWith(".")) {
     const { method, args: args2, rest } = extractNextMethod(remaining);
     if (!method) break;
-    current = applyMethod(current, method, args2);
+    current2 = applyMethod(current2, method, args2);
     remaining = rest;
   }
-  return current;
+  return current2;
 }
 function applyMethod(ir, method, args2) {
   switch (method) {
@@ -4001,40 +4001,40 @@ function extractParenContent(expr, prefix) {
 function splitArgs(argsStr) {
   const args2 = [];
   let depth = 0;
-  let current = "";
+  let current2 = "";
   let inString = false;
   let stringChar = "";
   for (let i2 = 0; i2 < argsStr.length; i2++) {
     const ch = argsStr[i2];
     if (inString) {
-      current += ch;
+      current2 += ch;
       if (ch === stringChar && argsStr[i2 - 1] !== "\\") inString = false;
       continue;
     }
     if (ch === '"' || ch === "'") {
       inString = true;
       stringChar = ch;
-      current += ch;
+      current2 += ch;
       continue;
     }
     if (ch === "(" || ch === "[" || ch === "{") {
       depth++;
-      current += ch;
+      current2 += ch;
       continue;
     }
     if (ch === ")" || ch === "]" || ch === "}") {
       depth--;
-      current += ch;
+      current2 += ch;
       continue;
     }
     if (ch === "," && depth === 0) {
-      args2.push(current.trim());
-      current = "";
+      args2.push(current2.trim());
+      current2 = "";
     } else {
-      current += ch;
+      current2 += ch;
     }
   }
-  if (current.trim()) args2.push(current.trim());
+  if (current2.trim()) args2.push(current2.trim());
   return args2;
 }
 function splitFirstArg(argsStr) {
@@ -4047,15 +4047,15 @@ function splitFirstArg(argsStr) {
 // src/ir/propagation.ts
 function propagate(bag, systems) {
   const sorted = [...systems].sort((a, b) => a.stratum - b.stratum);
-  let current = bag;
+  let current2 = bag;
   for (const system of sorted) {
     const hasAllInputs = system.inputs.every(
-      (key) => current[key] !== void 0 && current[key] !== null
+      (key) => current2[key] !== void 0 && current2[key] !== null
     );
     if (!hasAllInputs) continue;
-    current = system.run(current);
+    current2 = system.run(current2);
   }
-  return current;
+  return current2;
 }
 var StrudelParseSystem = {
   name: "StrudelParseSystem",
@@ -6347,9 +6347,9 @@ function ensureUndoManager() {
     }
   };
   files.observe(filesObserver);
-  const listeners4 = /* @__PURE__ */ new Set();
+  const listeners5 = /* @__PURE__ */ new Set();
   const notify2 = () => {
-    for (const l of listeners4) l();
+    for (const l of listeners5) l();
   };
   const onStackItemAdded = () => notify2();
   const onStackItemPopped = () => notify2();
@@ -6359,7 +6359,7 @@ function ensureUndoManager() {
   um.on("stack-cleared", onStackCleared);
   active = {
     um,
-    listeners: listeners4,
+    listeners: listeners5,
     cleanup: () => {
       um.off("stack-item-added", onStackItemAdded);
       um.off("stack-item-popped", onStackItemPopped);
@@ -6396,10 +6396,10 @@ function canRedo() {
 }
 function subscribeToUndoState(cb) {
   ensureUndoManager();
-  const listeners4 = active.listeners;
-  listeners4.add(cb);
+  const listeners5 = active.listeners;
+  listeners5.add(cb);
   return () => {
-    listeners4.delete(cb);
+    listeners5.delete(cb);
   };
 }
 
@@ -6563,10 +6563,10 @@ function subscribe(id, cb) {
   }
   set.add(cb);
   return () => {
-    const current = subscribersByFile.get(id);
-    if (!current) return;
-    current.delete(cb);
-    if (current.size === 0) {
+    const current2 = subscribersByFile.get(id);
+    if (!current2) return;
+    current2.delete(cb);
+    if (current2.size === 0) {
       subscribersByFile.delete(id);
     }
   };
@@ -6764,12 +6764,12 @@ function pruneZoneOverrides(fileId, currentViz) {
   const stale = [];
   for (const [trackKey, value] of overrides.entries()) {
     const entry = value;
-    const current = currentViz.get(trackKey);
-    if (!current) {
+    const current2 = currentViz.get(trackKey);
+    if (!current2) {
       stale.push(trackKey);
-    } else if (entry.vizId && entry.vizId !== current.vizId) {
+    } else if (entry.vizId && entry.vizId !== current2.vizId) {
       stale.push(trackKey);
-    } else if (entry.contentHash && current.contentHash && entry.contentHash !== current.contentHash) {
+    } else if (entry.contentHash && current2.contentHash && entry.contentHash !== current2.contentHash) {
       stale.push(trackKey);
     }
   }
@@ -14859,10 +14859,10 @@ function subscribe2(ref, cb) {
   return () => {
     if (unsubscribed) return;
     unsubscribed = true;
-    const current = pinnedSubscribers.get(fileId);
-    if (!current) return;
-    current.delete(cb);
-    if (current.size === 0) {
+    const current2 = pinnedSubscribers.get(fileId);
+    if (!current2) return;
+    current2.delete(cb);
+    if (current2.size === 0) {
       pinnedSubscribers.delete(fileId);
     }
   };
@@ -17966,12 +17966,12 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
     const handler = (e) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key !== "s" && e.key !== "S") return;
-      const current = onSaveFileRef.current;
-      if (!current) return;
+      const current2 = onSaveFileRef.current;
+      if (!current2) return;
       const tab = activeTab;
       if (!tab || tab.kind !== "editor") return;
       e.preventDefault();
-      current(tab);
+      current2(tab);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -18209,24 +18209,24 @@ var WorkspaceShell = React.forwardRef(function WorkspaceShell2({
                     }
                   },
                   onChangePreviewSource: (nextRef) => {
-                    const current = shellActionsRef.current.findTabByFileId(
+                    const current2 = shellActionsRef.current.findTabByFileId(
                       tab.fileId,
                       "preview"
                     );
-                    if (!current) return;
-                    updateGroup(current.groupId, (g) => ({
+                    if (!current2) return;
+                    updateGroup(current2.groupId, (g) => ({
                       ...g,
                       tabs: g.tabs.map(
-                        (t) => t.id === current.tabId && t.kind === "preview" ? { ...t, sourceRef: nextRef } : t
+                        (t) => t.id === current2.tabId && t.kind === "preview" ? { ...t, sourceRef: nextRef } : t
                       )
                     }));
                   },
                   onOpenPreview: (selectedSourceRef) => {
-                    const current = shellActionsRef.current.findTabByFileId(
+                    const current2 = shellActionsRef.current.findTabByFileId(
                       tab.fileId,
                       "preview"
                     );
-                    if (current) {
+                    if (current2) {
                       return;
                     }
                     const sourceRef = selectedSourceRef ?? { kind: "default" };
@@ -20696,6 +20696,32 @@ var Ramp = class {
     return this.items[Symbol.iterator]();
   }
 };
+function doubles(start2, num_doubles = 1) {
+  if (typeof start2 !== "number") {
+    throw new Error(`Start value for doubles needs to be a number, got: ${String(start2)}`);
+  }
+  if (num_doubles < 0) return halves(start2, -num_doubles);
+  const out2 = [];
+  let v = start2;
+  for (let i2 = 0; i2 < num_doubles; i2++) {
+    out2.push(v);
+    v *= 2;
+  }
+  return new Ring(out2);
+}
+function halves(start2, num_halves = 1) {
+  if (typeof start2 !== "number") {
+    throw new Error(`Start value for halves needs to be a number, got: ${String(start2)}`);
+  }
+  if (num_halves < 0) return doubles(start2, -num_halves);
+  const out2 = [];
+  let v = start2;
+  for (let i2 = 0; i2 < num_halves; i2++) {
+    out2.push(v);
+    v /= 2;
+  }
+  return new Ring(out2);
+}
 function line(start2, finish, stepsOrOpts = 4) {
   const steps = typeof stepsOrOpts === "number" ? stepsOrOpts : stepsOrOpts.steps ?? 4;
   const result = [];
@@ -21477,17 +21503,80 @@ var ProgramBuilder = class _ProgramBuilder {
     }
     return this;
   }
+  /**
+   * Tier B PR #2 (#233) — block-form tuplet scheduling.
+   *
+   * `tuplets [70, [72, 72], 70, [82, 82, 82]] do |n| play n end`
+   *   - Bare element → `block.call(n); sleep duration` (default 1 beat).
+   *   - Sub-list of size N → fits N `block + sleep` calls into `duration`
+   *     beats by wrapping in `with_density(N)`.
+   *
+   * Optional `swing:` opt offsets every Nth tuplet by that many beats via
+   * `at([swing], …)`. Swing is density-scaled inside sub-lists so the
+   * offset stays proportional to the local pulse. Mirrors upstream
+   * `core.rb:486-512`. Pre-resolved at build time (the block runs N times
+   * synchronously, pushing N play+sleep step pairs); the resulting steps
+   * fire at scheduled virtual time exactly like a hand-written sequence.
+   */
+  tuplets(tuplet_list, optsOrFn, maybeFn) {
+    const opts = typeof optsOrFn === "function" ? {} : optsOrFn;
+    const fn = typeof optsOrFn === "function" ? optsOrFn : maybeFn;
+    if (typeof fn !== "function") {
+      throw new Error("tuplets requires a block");
+    }
+    const duration = opts.duration ?? 1;
+    const swing = opts.swing ?? 0;
+    const swing_pulse = opts.swing_pulse ?? 2;
+    const swing_offset = (opts.swing_offset ?? 0) + 1;
+    const items = tuplet_list instanceof Ring ? tuplet_list.toArray() : Array.from(tuplet_list);
+    for (const el of items) {
+      if (Array.isArray(el)) {
+        const n = el.length;
+        this.with_density(n, (b) => {
+          el.forEach((tuplet, idx) => {
+            const should_swing = swing !== 0 && n % swing_pulse === 0 && (idx + swing_offset) % swing_pulse === 0;
+            if (should_swing) {
+              b.at([swing / n], null, (inner) => fn(inner, tuplet));
+            } else {
+              fn(b, tuplet);
+            }
+            b.sleep(duration);
+          });
+        });
+      } else {
+        fn(this, el);
+        this.sleep(duration);
+      }
+    }
+    return this;
+  }
   /** Return the current synth name. */
   get current_synth_name() {
     return this.currentSynth;
   }
-  /** Return the current synth defaults hash. */
-  get current_synth_defaults_hash() {
+  /**
+   * Tier B PR #2 (#233) — defaults / setting introspection. All four are
+   * called bare (`puts current_debug`) so they're methods returning a value,
+   * not getters — see BARE_CALLABLE in TreeSitterTranspiler.ts which emits
+   * `__b.NAME()` with parens.
+   */
+  current_synth_defaults() {
     return { ...this._synthDefaults };
   }
-  /** Return the current sample defaults hash. */
-  get current_sample_defaults_hash() {
+  current_sample_defaults() {
     return { ...this._sampleDefaults };
+  }
+  current_debug() {
+    return this._debug;
+  }
+  /**
+   * We don't validate synth arg names against synthinfo — unknown args are
+   * silently dropped at SoundLayer normalization. Returning the upstream
+   * default (`true`) keeps existing user code that branches on this read
+   * working. When `use_arg_checks` ships in Tier C, this becomes a real read.
+   */
+  current_arg_checks() {
+    return true;
   }
   /** Deferred set — fires at runtime (interleaved with sleeps). */
   set(key, value) {
@@ -24027,7 +24116,32 @@ var DSL_NAMES = [
   "recording_start",
   "recording_stop",
   "recording_save",
-  "recording_delete"
+  "recording_delete",
+  // Tier B PR #2 — pure ring constructors (#233). Both delegate to each
+  // other for negative counts (matches upstream `core.rb:1919-1970`).
+  "doubles",
+  "halves",
+  // Tier B PR #2 — defaults / setting introspection (#233). Inside live_loops
+  // these route via __b for per-task reads; at top level they read the
+  // topLevelBuilder's state. current_arg_checks returns constant true (we
+  // don't validate arg names yet — see ProgramBuilder).
+  "current_synth_defaults",
+  "current_sample_defaults",
+  "current_arg_checks",
+  "current_debug",
+  // Tier B PR #2 — block-form tuplet scheduling (#233). The transpiler
+  // routes `tuplets [...] do |x| ... end` to __b.tuplets(list, opts, cb),
+  // resolving the list/opts at build time then pushing N play+sleep step
+  // pairs per the block (one per leaf element). Density wraps each
+  // sub-list so N elements fit in `duration` beats.
+  "tuplets",
+  // Tier B PR #2 — defonce (#212 / #233). The transpiler emits a bare
+  // assignment `name = defonce("name", opts, (__b) => { ...; return last })`
+  // so the cached value lands in proxy storage. The runtime registrar caches
+  // against engine.defonceCache; opts.override re-runs the body. Cached
+  // values are spread into persistedFns at the next eval so removing the
+  // defonce line doesn't break still-running live_loops that read `name`.
+  "defonce"
 ];
 
 // ../../../sonicPiWeb/src/engine/Sandbox.ts
@@ -24409,6 +24523,7 @@ var BUILDER_METHODS = /* @__PURE__ */ new Set([
   "kill",
   "play_chord",
   "play_pattern",
+  "tuplets",
   "with_octave",
   "with_random_seed",
   "with_density",
@@ -24447,6 +24562,12 @@ var BUILDER_METHODS = /* @__PURE__ */ new Set([
   "rand_back",
   "rand_skip",
   "rand_reset",
+  // Tier B PR #2 — defaults / setting introspection (#233). Per-task pure
+  // reads — route through __b so per-loop use_*_defaults are visible.
+  "current_synth_defaults",
+  "current_sample_defaults",
+  "current_arg_checks",
+  "current_debug",
   // Deferred-step DSL contract (issue #193 — must mirror methods on
   // ProgramBuilder so they fire at scheduled virtual time, not build time).
   "stop_loop",
@@ -24580,7 +24701,13 @@ var BARE_CALLABLE = /* @__PURE__ */ new Set([
   "recording_start",
   "recording_stop",
   "recording_delete",
-  "recording_save"
+  "recording_save",
+  // Tier B PR #2 — defaults / setting introspection (#233). Routinely called
+  // bare in user code (`puts current_debug`, `if current_arg_checks`).
+  "current_synth_defaults",
+  "current_sample_defaults",
+  "current_arg_checks",
+  "current_debug"
 ]);
 var BARE_CALLABLE_TOP_LEVEL = /* @__PURE__ */ new Set([
   "current_bpm"
@@ -25062,7 +25189,7 @@ function transpileProgram(node, ctx) {
     const isBareLoopNode = method === "loop" && child.namedChildren.some((c) => c.type === "do_block" || c.type === "block");
     if (method && TOP_LEVEL_SETTINGS.has(method)) {
       topLevel.push(child);
-    } else if (method && !isBareFxNode && (method === "live_loop" || method === "define" || method === "ndefine" || method === "with_fx" || method === "in_thread" || isBareLoopNode)) {
+    } else if (method && !isBareFxNode && (method === "live_loop" || method === "define" || method === "ndefine" || method === "defonce" || method === "with_fx" || method === "in_thread" || isBareLoopNode)) {
       blocks.push(child);
     } else {
       bareCode.push(child);
@@ -25127,6 +25254,9 @@ function transpileMethodCall(node, ctx) {
     if (methodName === "define" || methodName === "ndefine") {
       return transpileDefine(node, argsNode, blockNode, ctx, methodName);
     }
+    if (methodName === "defonce") {
+      return transpileDefonce(node, argsNode, blockNode, ctx);
+    }
     if (methodName === "with_fx" || methodName === "with_synth" || methodName === "with_bpm" || methodName === "with_transpose" || methodName === "with_arg_bpm_scaling" || methodName === "with_synth_defaults" || methodName === "with_sample_defaults" || methodName === "with_random_seed" || methodName === "with_octave" || methodName === "with_density") {
       return transpileWithBlock(methodName, argsNode, blockNode, ctx);
     }
@@ -25138,6 +25268,9 @@ function transpileMethodCall(node, ctx) {
     }
     if (methodName === "time_warp") {
       return transpileTimeWarp(argsNode, blockNode, ctx);
+    }
+    if (methodName === "tuplets") {
+      return transpileTuplets(argsNode, blockNode, ctx);
     }
     if (methodName === "assert_error" && blockNode) {
       const bodyCtx = { ...ctx, insideLoop: true };
@@ -25525,6 +25658,40 @@ ${ctx.indent}define(${JSON.stringify(name2)}, ${name2})`;
   }
   return decl;
 }
+function transpileDefonce(node, argsNode, blockNode, ctx) {
+  const args2 = argsNode?.namedChildren ?? [];
+  let name2 = "unnamed";
+  const optPairs = [];
+  for (const arg of args2) {
+    if (arg.type === "simple_symbol") {
+      name2 = arg.text.slice(1);
+    } else if (arg.type === "pair") {
+      const key = arg.namedChildren[0];
+      const val = arg.namedChildren[1];
+      const keyName = key.type === "hash_key_symbol" ? key.text.replace(/:$/, "") : key.type === "simple_symbol" ? key.text.slice(1) : transpileNode(key, ctx);
+      optPairs.push(`${keyName}: ${transpileNode(val, ctx)}`);
+    }
+  }
+  if (!blockNode) {
+    const line2 = node.startPosition?.row != null ? node.startPosition.row + 1 : "?";
+    ctx.errors.push(`Parse error at line ${line2}: defonce :${name2} is missing 'do ... end' block`);
+    return `/* parse error: defonce :${name2} missing block */`;
+  }
+  const bodyChildren = blockNode.namedChildren.filter((c) => c.type !== "block_parameters");
+  if (bodyChildren.length === 0) {
+    return `${name2} = defonce(${JSON.stringify(name2)}, ${optPairs.length > 0 ? `{ ${optPairs.join(", ")} }` : "{}"}, (__b) => undefined)`;
+  }
+  const bodyCtx = { ...ctx, insideLoop: true };
+  const lastIdx = bodyChildren.length - 1;
+  const stmts = bodyChildren.map((c, i2) => {
+    const expr = transpileNode(c, bodyCtx);
+    return i2 === lastIdx ? `${ctx.indent}  return ${expr}` : `${ctx.indent}  ${expr}`;
+  });
+  const optsStr = optPairs.length > 0 ? `{ ${optPairs.join(", ")} }` : "{}";
+  return `${name2} = defonce(${JSON.stringify(name2)}, ${optsStr}, (__b) => {
+${stmts.join("\n")}
+${ctx.indent}})`;
+}
 function transpileWithBlock(methodName, argsNode, blockNode, ctx) {
   const args2 = argsNode?.namedChildren ?? [];
   const positional = [];
@@ -25676,6 +25843,32 @@ function transpileTimeWarp(argsNode, blockNode, ctx) {
   const bodyCtx = { ...ctx, insideLoop: true };
   const bodyStr = transpileBlockBody(blockNode, bodyCtx);
   return `${prefix}at([${offset}], null, (__b) => {
+${bodyStr}
+${ctx.indent}})`;
+}
+function transpileTuplets(argsNode, blockNode, ctx) {
+  if (!blockNode) {
+    const line2 = argsNode?.startPosition?.row != null ? argsNode.startPosition.row + 1 : "?";
+    ctx.errors.push(`Parse error at line ${line2}: tuplets is missing 'do ... end' block`);
+    return `/* parse error: tuplets missing block */`;
+  }
+  const args2 = argsNode?.namedChildren ?? [];
+  const positional = args2.filter((a) => a.type !== "pair").map((a) => transpileNode(a, ctx));
+  const pairs = args2.filter((a) => a.type === "pair");
+  const listExpr = positional[0] ?? "[]";
+  const optsExpr = pairs.length > 0 ? "{ " + pairs.map((p) => {
+    const key = p.namedChildren[0];
+    const val = p.namedChildren[1];
+    const keyName = key.type === "hash_key_symbol" ? key.text.replace(/:$/, "") : key.type === "simple_symbol" ? key.text.slice(1) : transpileNode(key, ctx);
+    return `${keyName}: ${transpileNode(val, ctx)}`;
+  }).join(", ") + " }" : "{}";
+  const prefix = ctx.insideLoop ? "__b." : "";
+  const bodyCtx = { ...ctx, insideLoop: true };
+  const params = blockNode.namedChildren.find((c) => c.type === "block_parameters");
+  const paramNames = params?.namedChildren.map((c) => c.text) ?? [];
+  const bodyStr = transpileBlockBody(blockNode, bodyCtx);
+  const paramStr = paramNames.length > 0 ? ", " + paramNames.join(", ") : "";
+  return `${prefix}tuplets(${listExpr}, ${optsExpr}, (__b${paramStr}) => {
 ${bodyStr}
 ${ctx.indent}})`;
 }
@@ -27366,6 +27559,9 @@ var SonicPiEngine = class {
      *  next eval's scopeBase so removing a `define` line from the buffer does not
      *  break a still-running live_loop that calls it. (#215) */
     this.definedFns = /* @__PURE__ */ new Map();
+    /** Cached `defonce` values (#212 / #233). Survive across re-evals — that's
+     *  the whole point. Cleared only on full engine reset / dispose. */
+    this.defonceCache = /* @__PURE__ */ new Map();
     /** Host-provided OSC send handler. Engine fires this; host wires to actual transport. */
     this.oscHandler = null;
     /** Active Recorder instance (#228). Null when not recording. */
@@ -28188,6 +28384,41 @@ var SonicPiEngine = class {
         },
         (...args2) => {
           topLevelBuilder.recording_delete(...args2);
+        },
+        // Tier B PR #2 — pure ring constructors (#233)
+        doubles,
+        halves,
+        // Tier B PR #2 — defaults / setting introspection (#233). Forward
+        // to topLevelBuilder so the value reflects top-level use_*_defaults
+        // calls. Inside live_loops the transpiler routes through __b.
+        () => topLevelBuilder.current_synth_defaults(),
+        () => topLevelBuilder.current_sample_defaults(),
+        () => topLevelBuilder.current_arg_checks(),
+        () => topLevelBuilder.current_debug(),
+        // Tier B PR #2 — block-form tuplets (#233). Forwards to topLevelBuilder
+        // so steps land on the top-level program. Inside live_loops the
+        // transpiler emits `__b.tuplets(...)` directly via BUILDER_METHODS.
+        (list, optsOrFn, maybeFn) => {
+          topLevelBuilder.tuplets(
+            list,
+            optsOrFn,
+            maybeFn
+          );
+        },
+        // Tier B PR #2 — defonce (#212 / #233). Cache lookup; runs body once
+        // (or again on `override: true`). The transpiler emits a bare
+        // assignment `name = defonce(...)` so the Sandbox proxy captures the
+        // cached value into scope-isolated storage. Spread back into
+        // persistedFns above so `name` reads still work after the line is
+        // removed from the buffer (matches define persistence #215).
+        (name2, opts, fn) => {
+          if (typeof name2 !== "string" || typeof fn !== "function") return void 0;
+          if (!opts?.override && this.defonceCache.has(name2)) {
+            return this.defonceCache.get(name2);
+          }
+          const value = fn(topLevelBuilder);
+          this.defonceCache.set(name2, value);
+          return value;
         }
       ];
       const codeWarnings = validateCode(transpiledCode);
@@ -28195,7 +28426,10 @@ var SonicPiEngine = class {
         if (this.printHandler) this.printHandler(`[Warning] ${warning}`);
         else console.warn("[SonicPi]", warning);
       }
-      const persistedFns = Object.fromEntries(this.definedFns);
+      const persistedFns = {
+        ...Object.fromEntries(this.defonceCache),
+        ...Object.fromEntries(this.definedFns)
+      };
       const sandbox = createIsolatedExecutor(transpiledCode, dslNames, persistedFns);
       scopeHandle = sandbox.scopeHandle;
       await sandbox.execute(...dslValues);
@@ -28260,6 +28494,7 @@ var SonicPiEngine = class {
     this.loopSynced.clear();
     this.globalStore.clear();
     this.definedFns.clear();
+    this.defonceCache.clear();
     this.persistentFx.clear();
     this.reusableFx.clear();
     this.loopFxScope.clear();
@@ -28286,6 +28521,7 @@ var SonicPiEngine = class {
     this.loopSeeds.clear();
     this.globalStore.clear();
     this.definedFns.clear();
+    this.defonceCache.clear();
   }
   /** Register a handler for runtime errors inside `live_loop` bodies. */
   setRuntimeErrorHandler(handler) {
@@ -30578,6 +30814,35 @@ function emitFromGlobal(err2, _kind) {
   });
 }
 
+// src/engine/irInspector.ts
+var current = null;
+var listeners4 = /* @__PURE__ */ new Set();
+function publishIRSnapshot(snap) {
+  current = snap;
+  for (const l of listeners4) {
+    try {
+      l(snap);
+    } catch {
+    }
+  }
+}
+function clearIRSnapshot() {
+  current = null;
+  for (const l of listeners4) {
+    try {
+      l(null);
+    } catch {
+    }
+  }
+}
+function getIRSnapshot() {
+  return current;
+}
+function subscribeIRSnapshot(fn) {
+  listeners4.add(fn);
+  return () => listeners4.delete(fn);
+}
+
 exports.AUTO_SNAPSHOT_PREFIX = AUTO_SNAPSHOT_PREFIX;
 exports.BACKDROP_BLUR_VAR = BACKDROP_BLUR_VAR;
 exports.BUNDLED_PREFIX = BUNDLED_PREFIX;
@@ -30639,6 +30904,7 @@ exports.bumpEditorFontSize = bumpEditorFontSize;
 exports.bundledPresetId = bundledPresetId;
 exports.canRedo = canRedo;
 exports.canUndo = canUndo;
+exports.clearIRSnapshot = clearIRSnapshot;
 exports.clearLog = clearLog;
 exports.collect = collect;
 exports.compilePreset = compilePreset;
@@ -30670,6 +30936,7 @@ exports.getEditorUiIconSize = getEditorUiIconSize;
 exports.getFile = getFile;
 exports.getFixedMarkers = getFixedMarkers;
 exports.getFolderOrder = getFolderOrder;
+exports.getIRSnapshot = getIRSnapshot;
 exports.getInlineVizActionSize = getInlineVizActionSize;
 exports.getLastOpenedProject = getLastOpenedProject;
 exports.getLogHistory = getLogHistory;
@@ -30721,6 +30988,7 @@ exports.patternToJSON = patternToJSON;
 exports.previewProviderRegistry = previewProviderRegistry;
 exports.propagate = propagate;
 exports.pruneZoneOverrides = pruneZoneOverrides;
+exports.publishIRSnapshot = publishIRSnapshot;
 exports.redo = redo;
 exports.registerNamedViz = registerNamedViz;
 exports.registerPresetAsNamedViz = registerPresetAsNamedViz;
@@ -30758,6 +31026,7 @@ exports.setZoneHeightOverride = setZoneHeightOverride;
 exports.startSampleSound = startSampleSound;
 exports.stopSampleSound = stopSampleSound;
 exports.subscribeFixed = subscribeFixed;
+exports.subscribeIRSnapshot = subscribeIRSnapshot;
 exports.subscribeLog = subscribeLog;
 exports.subscribeToDocUpdate = subscribeToDocUpdate;
 exports.subscribeToFileList = subscribeToFileList;
