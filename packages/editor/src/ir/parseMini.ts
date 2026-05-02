@@ -58,6 +58,7 @@ type Token =
   | { type: 'sometimes' }
   | { type: 'slice';   index: number }
   | { type: 'elongate'; factor: number }
+  | { type: 'euclid';   hits: number; steps: number; rotation: number }
 
 function tokenize(input: string): Token[] {
   const tokens: Token[] = []
@@ -97,6 +98,38 @@ function tokenize(input: string): Token[] {
         if (!isNaN(idx) && idx >= 0) tokens.push({ type: 'slice', index: idx })
       }
 
+      // Euclidean rhythm `a(hits, steps, rotation?)` — must come
+      // before the *n / @n / ? checks because `(` is the marker.
+      if (i < input.length && input[i] === '(') {
+        i++ // skip (
+        const args: number[] = []
+        let buf = ''
+        while (i < input.length && input[i] !== ')') {
+          const c = input[i]
+          if (c === ',') {
+            const n = parseInt(buf.trim(), 10)
+            if (!isNaN(n)) args.push(n)
+            buf = ''
+          } else {
+            buf += c
+          }
+          i++
+        }
+        if (buf.trim().length > 0) {
+          const n = parseInt(buf.trim(), 10)
+          if (!isNaN(n)) args.push(n)
+        }
+        if (i < input.length && input[i] === ')') i++ // skip )
+        if (args.length >= 2 && args[0] >= 0 && args[1] > 0) {
+          tokens.push({
+            type: 'euclid',
+            hits: args[0],
+            steps: args[1],
+            rotation: args.length >= 3 ? args[2] : 0,
+          })
+        }
+      }
+
       // Check for trailing *n (repeat), ? (sometimes), or @n (elongate)
       if (i < input.length && input[i] === '*') {
         i++ // skip *
@@ -129,6 +162,56 @@ function tokenize(input: string): Token[] {
 }
 
 // ---------------------------------------------------------------------------
+// Bjorklund — distribute `hits` evenly across `steps` slots.
+// Returns a boolean array of length `steps`; true = onset, false = rest.
+// ---------------------------------------------------------------------------
+
+export function bjorklund(hits: number, steps: number): boolean[] {
+  if (hits <= 0 || steps <= 0) return new Array(Math.max(steps, 0)).fill(false)
+  if (hits >= steps) return new Array(steps).fill(true)
+
+  // Iterative Bjorklund: build groups [[true],[true],...,[false],[false],...],
+  // then merge from the tail until at most one "remainder" group remains.
+  let groups: boolean[][] = [
+    ...Array.from({ length: hits }, () => [true]),
+    ...Array.from({ length: steps - hits }, () => [false]),
+  ]
+
+  while (true) {
+    let firstTail = -1
+    for (let i = 1; i < groups.length; i++) {
+      if (groups[i][0] !== groups[0][0]) {
+        firstTail = i
+        break
+      }
+    }
+    if (firstTail === -1) break
+    const tailCount = groups.length - firstTail
+    if (tailCount <= 1) break
+    const merged: boolean[][] = []
+    const headCount = firstTail
+    const pairs = Math.min(headCount, tailCount)
+    for (let i = 0; i < pairs; i++) {
+      merged.push([...groups[i], ...groups[firstTail + i]])
+    }
+    if (headCount > tailCount) {
+      for (let i = tailCount; i < headCount; i++) merged.push(groups[i])
+    } else if (tailCount > headCount) {
+      for (let i = headCount; i < tailCount; i++) merged.push(groups[firstTail + i])
+    }
+    groups = merged
+  }
+
+  return groups.flat()
+}
+
+function rotate<T>(arr: T[], by: number): T[] {
+  if (arr.length === 0) return arr
+  const n = ((by % arr.length) + arr.length) % arr.length
+  return [...arr.slice(n), ...arr.slice(0, n)]
+}
+
+// ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
 
@@ -157,6 +240,19 @@ function parseTokens(tokens: Token[], isSample: boolean): PatternIR[] {
       if (sliceIndex !== undefined) params.slice = sliceIndex
       const baseDuration = isSample ? 1 : 0.25
       let node: PatternIR = IR.play(note, baseDuration, params)
+
+      // Euclidean modifier — applies to the just-parsed atom and
+      // expands to a Seq of Play / Sleep slots. Must come before
+      // repeat/sometimes/elongate so those wrap the expanded Seq.
+      if (i < tokens.length && tokens[i].type === 'euclid') {
+        const e = tokens[i] as { type: 'euclid'; hits: number; steps: number; rotation: number }
+        i++
+        let pattern = bjorklund(e.hits, e.steps)
+        if (e.rotation) pattern = rotate(pattern, e.rotation)
+        const restSlot: PatternIR = IR.sleep(1)
+        const slots = pattern.map(onset => (onset ? node : restSlot))
+        node = slots.length === 1 ? slots[0] : IR.seq(...slots)
+      }
 
       // Check for repeat / sometimes / elongate modifier following this atom
       if (i < tokens.length) {

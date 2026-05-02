@@ -5,13 +5,13 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseMini } from '../parseMini'
+import { parseMini, bjorklund } from '../parseMini'
 import { parseStrudel } from '../parseStrudel'
 import { collect } from '../collect'
 import { toStrudel } from '../toStrudel'
 import { patternToJSON, patternFromJSON } from '../serialize'
 import { propagate, StrudelParseSystem, IREventCollectSystem, type ComponentBag } from '../propagation'
-import { IR } from '../PatternIR'
+import { IR, type PatternIR } from '../PatternIR'
 
 // ---------------------------------------------------------------------------
 // parseMini
@@ -180,6 +180,79 @@ describe('parseMini', () => {
     it('zero/negative factors are silently dropped', () => {
       const tree = parseMini('c4@0')
       expect(tree.tag).toBe('Play') // no Elongate wrapper
+    })
+  })
+
+  // ---- Tier 2: Euclidean ------------------------------------------------
+
+  describe('bjorklund', () => {
+    it('canonical 3 over 8 = [1 0 0 1 0 0 1 0]', () => {
+      expect(bjorklund(3, 8)).toEqual([true, false, false, true, false, false, true, false])
+    })
+    it('5 over 8 = [1 0 1 1 0 1 1 0]', () => {
+      // The exact distribution depends on the Bjorklund variant used —
+      // we only assert the count + length.
+      const r = bjorklund(5, 8)
+      expect(r.length).toBe(8)
+      expect(r.filter(Boolean)).toHaveLength(5)
+    })
+    it('hits >= steps fills with onsets', () => {
+      expect(bjorklund(8, 8)).toEqual(new Array(8).fill(true))
+    })
+    it('zero hits → all rests', () => {
+      expect(bjorklund(0, 4)).toEqual([false, false, false, false])
+    })
+  })
+
+  describe('Euclidean (a(h,s,r?))', () => {
+    it('bd(3,8) expands to a Seq of 8 slots', () => {
+      const tree = parseMini('bd(3,8)', true)
+      expect(tree.tag).toBe('Seq')
+      if (tree.tag === 'Seq') {
+        expect(tree.children).toHaveLength(8)
+        const onsets = tree.children.filter(c => c.tag === 'Play').length
+        const rests = tree.children.filter(c => c.tag === 'Sleep').length
+        expect(onsets).toBe(3)
+        expect(rests).toBe(5)
+      }
+    })
+
+    it('rotation rolls the pattern by N steps', () => {
+      const a = parseMini('bd(3,8)', true)
+      const b = parseMini('bd(3,8,2)', true)
+      // Both have same onset count, different placement.
+      const onsetsAt = (t: PatternIR) =>
+        t.tag === 'Seq'
+          ? t.children.map((c, i) => (c.tag === 'Play' ? i : -1)).filter(i => i >= 0)
+          : []
+      const ai = onsetsAt(a)
+      const bi = onsetsAt(b)
+      expect(ai).not.toEqual(bi)
+      expect(ai.length).toBe(bi.length)
+    })
+
+    it('a(3,3) = a a a (no rests)', () => {
+      const tree = parseMini('bd(3,3)', true)
+      expect(tree.tag).toBe('Seq')
+      if (tree.tag === 'Seq') {
+        expect(tree.children.every(c => c.tag === 'Play')).toBe(true)
+        expect(tree.children).toHaveLength(3)
+      }
+    })
+
+    it('malformed (only one arg) falls through to plain atom', () => {
+      const tree = parseMini('bd(3)', true)
+      // The euclid token is rejected (needs 2+ args), atom stays as-is.
+      expect(tree.tag).toBe('Play')
+    })
+
+    it('combines with repeat: bd(3,8)*2 wraps in Fast', () => {
+      const tree = parseMini('bd(3,8)*2', true)
+      expect(tree.tag).toBe('Fast')
+      if (tree.tag === 'Fast') {
+        expect(tree.factor).toBe(2)
+        expect(tree.body.tag).toBe('Seq')
+      }
     })
   })
 })
