@@ -9338,11 +9338,13 @@ var STRUDEL_DOCS = {
     example: 'note("c4 e4 g4").every(4, x => x.rev())',
     commonMistakes: [
       {
-        // Calling `every(...)` as a free function instead of chaining
-        // it on a Pattern surfaces as `every is not a function` (when
-        // shadowed) or `every is not defined`. Both end up confusing —
-        // the curated hint points at the `.every()` shape directly.
-        detect: { kind: "message", match: /every is not (?:a function|defined)/ },
+        // Calling `every(n, fn)` as a free function instead of chaining
+        // it on a Pattern. The Strudel autoplay path then dereferences
+        // `.p` on the partial application to get a Pattern, surfacing
+        // as `every(...).p is not a function`. The plainer
+        // `every is not a function` shape fires when `every` is
+        // shadowed; both are caught by the same loose-matched word.
+        detect: { kind: "message", match: /\bevery\b[^\n]*\bis not a function\b/ },
         hint: "`.every(n, fn)` is a method on a Pattern \u2014 chain it after `note(...)` or `s(...)`.",
         weight: 2
       }
@@ -13725,16 +13727,7 @@ var p5_default = {
 
 // src/monaco/docs/p5.ts
 validateDocsIndex("p5.json", p5_default);
-var P5_GLOBAL_MISTAKES = [
-  {
-    // A common pattern from session-5 observation: `width` / `height`
-    // referenced before `setup()` ran — the wrapper-time stack puts
-    // these as `ReferenceError: width is not defined` because they're
-    // sketch-instance properties, not real globals.
-    detect: { kind: "message", match: /^(width|height) is not defined$/ },
-    hint: "`width` / `height` only become available once `setup()` runs. Move the read inside `setup()` or `draw()`."
-  }
-];
+var P5_GLOBAL_MISTAKES = [];
 var RAW_INDEX = p5_default;
 var P5_DOCS_INDEX = {
   ...RAW_INDEX,
