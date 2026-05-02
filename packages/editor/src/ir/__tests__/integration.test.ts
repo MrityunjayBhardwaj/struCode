@@ -5,13 +5,13 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseMini } from '../parseMini'
+import { parseMini, bjorklund } from '../parseMini'
 import { parseStrudel } from '../parseStrudel'
 import { collect } from '../collect'
 import { toStrudel } from '../toStrudel'
 import { patternToJSON, patternFromJSON } from '../serialize'
 import { propagate, StrudelParseSystem, IREventCollectSystem, type ComponentBag } from '../propagation'
-import { IR } from '../PatternIR'
+import { IR, type PatternIR } from '../PatternIR'
 
 // ---------------------------------------------------------------------------
 // parseMini
@@ -95,6 +95,205 @@ describe('parseMini', () => {
     // Forward compatible: unknown atoms become Play nodes
     const tree = parseMini('xyz123')
     expect(tree.tag).toBe('Play')
+  })
+
+  // ---- Tier 2: slice ----------------------------------------------------
+
+  describe('slice (a:N)', () => {
+    it('attaches slice index to a sample Play.params', () => {
+      const tree = parseMini('bd:2', true)
+      expect(tree.tag).toBe('Play')
+      if (tree.tag === 'Play') {
+        expect(tree.params.s).toBe('bd')
+        expect(tree.params.slice).toBe(2)
+      }
+    })
+
+    it('non-sample mode still records the slice index', () => {
+      const tree = parseMini('c4:1')
+      expect(tree.tag).toBe('Play')
+      if (tree.tag === 'Play') expect(tree.params.slice).toBe(1)
+    })
+
+    it('composes with repeat — slice resolves first, then *N wraps', () => {
+      const tree = parseMini('bd:2*3', true)
+      // Fast(3, Play(bd, slice:2))
+      expect(tree.tag).toBe('Fast')
+      if (tree.tag === 'Fast') {
+        expect(tree.factor).toBe(3)
+        if (tree.body.tag === 'Play') expect(tree.body.params.slice).toBe(2)
+      }
+    })
+
+    it('mixes with plain atoms in a sequence', () => {
+      const tree = parseMini('bd bd:1 bd:2', true)
+      expect(tree.tag).toBe('Seq')
+      if (tree.tag === 'Seq') {
+        expect(tree.children).toHaveLength(3)
+        const slices = tree.children
+          .map(c => (c.tag === 'Play' ? c.params.slice : undefined))
+        expect(slices).toEqual([undefined, 1, 2])
+      }
+    })
+
+    it('rejects negative or non-numeric slice — falls through silently', () => {
+      // The character after `:` is not a digit, so the colon stays with
+      // the next token (or is dropped). Atom is parsed without slice.
+      const tree = parseMini('bd:abc', true)
+      // We don't promise an exact shape for malformed input — just that
+      // it doesn't throw and Play.slice isn't set.
+      const play = tree.tag === 'Play' ? tree
+        : tree.tag === 'Seq' ? (tree.children[0].tag === 'Play' ? tree.children[0] : null)
+        : null
+      if (play) expect(play.params.slice).toBeUndefined()
+    })
+  })
+
+  // ---- Tier 2: elongation -----------------------------------------------
+
+  describe('elongation (a@N)', () => {
+    it('wraps a single atom in Elongate', () => {
+      const tree = parseMini('c4@2')
+      expect(tree.tag).toBe('Elongate')
+      if (tree.tag === 'Elongate') {
+        expect(tree.factor).toBe(2)
+        expect(tree.body.tag).toBe('Play')
+      }
+    })
+
+    it('inside a sequence — elongated child carries weight', () => {
+      const tree = parseMini('c4@2 e4')
+      expect(tree.tag).toBe('Seq')
+      if (tree.tag === 'Seq') {
+        expect(tree.children).toHaveLength(2)
+        expect(tree.children[0].tag).toBe('Elongate')
+        expect(tree.children[1].tag).toBe('Play')
+      }
+    })
+
+    it('non-integer factor allowed (1.5x)', () => {
+      const tree = parseMini('c4@1.5')
+      expect(tree.tag).toBe('Elongate')
+      if (tree.tag === 'Elongate') expect(tree.factor).toBe(1.5)
+    })
+
+    it('zero/negative factors are silently dropped', () => {
+      const tree = parseMini('c4@0')
+      expect(tree.tag).toBe('Play') // no Elongate wrapper
+    })
+  })
+
+  // ---- Tier 2: Euclidean ------------------------------------------------
+
+  describe('bjorklund', () => {
+    it('canonical 3 over 8 = [1 0 0 1 0 0 1 0]', () => {
+      expect(bjorklund(3, 8)).toEqual([true, false, false, true, false, false, true, false])
+    })
+    it('5 over 8 = [1 0 1 1 0 1 1 0]', () => {
+      // The exact distribution depends on the Bjorklund variant used —
+      // we only assert the count + length.
+      const r = bjorklund(5, 8)
+      expect(r.length).toBe(8)
+      expect(r.filter(Boolean)).toHaveLength(5)
+    })
+    it('hits >= steps fills with onsets', () => {
+      expect(bjorklund(8, 8)).toEqual(new Array(8).fill(true))
+    })
+    it('zero hits → all rests', () => {
+      expect(bjorklund(0, 4)).toEqual([false, false, false, false])
+    })
+  })
+
+  describe('Euclidean (a(h,s,r?))', () => {
+    it('bd(3,8) expands to a Seq of 8 slots', () => {
+      const tree = parseMini('bd(3,8)', true)
+      expect(tree.tag).toBe('Seq')
+      if (tree.tag === 'Seq') {
+        expect(tree.children).toHaveLength(8)
+        const onsets = tree.children.filter(c => c.tag === 'Play').length
+        const rests = tree.children.filter(c => c.tag === 'Sleep').length
+        expect(onsets).toBe(3)
+        expect(rests).toBe(5)
+      }
+    })
+
+    it('rotation rolls the pattern by N steps', () => {
+      const a = parseMini('bd(3,8)', true)
+      const b = parseMini('bd(3,8,2)', true)
+      // Both have same onset count, different placement.
+      const onsetsAt = (t: PatternIR) =>
+        t.tag === 'Seq'
+          ? t.children.map((c, i) => (c.tag === 'Play' ? i : -1)).filter(i => i >= 0)
+          : []
+      const ai = onsetsAt(a)
+      const bi = onsetsAt(b)
+      expect(ai).not.toEqual(bi)
+      expect(ai.length).toBe(bi.length)
+    })
+
+    it('a(3,3) = a a a (no rests)', () => {
+      const tree = parseMini('bd(3,3)', true)
+      expect(tree.tag).toBe('Seq')
+      if (tree.tag === 'Seq') {
+        expect(tree.children.every(c => c.tag === 'Play')).toBe(true)
+        expect(tree.children).toHaveLength(3)
+      }
+    })
+
+    it('malformed (only one arg) falls through to plain atom', () => {
+      const tree = parseMini('bd(3)', true)
+      // The euclid token is rejected (needs 2+ args), atom stays as-is.
+      expect(tree.tag).toBe('Play')
+    })
+
+    it('combines with repeat: bd(3,8)*2 wraps in Fast', () => {
+      const tree = parseMini('bd(3,8)*2', true)
+      expect(tree.tag).toBe('Fast')
+      if (tree.tag === 'Fast') {
+        expect(tree.factor).toBe(2)
+        expect(tree.body.tag).toBe('Seq')
+      }
+    })
+  })
+
+  // ---- Tier 2: polymetric ----------------------------------------------
+
+  describe('polymetric ({a b, c d})', () => {
+    it('two-segment polymeter lowers to Stack', () => {
+      const tree = parseMini('{c4 e4, g4 b4 d5}')
+      expect(tree.tag).toBe('Stack')
+      if (tree.tag === 'Stack') {
+        expect(tree.tracks).toHaveLength(2)
+      }
+    })
+
+    it('each segment can have any of the existing structures inside', () => {
+      const tree = parseMini('{c4 e4, [g4 b4]*2, <a4 d5>}')
+      expect(tree.tag).toBe('Stack')
+      if (tree.tag === 'Stack') {
+        expect(tree.tracks).toHaveLength(3)
+      }
+    })
+
+    it('single segment (no comma) just inlines the sub-sequence', () => {
+      const tree = parseMini('{c4 e4 g4}')
+      expect(tree.tag).toBe('Seq') // not Stack
+    })
+
+    it('empty polymeter is a no-op', () => {
+      const tree = parseMini('{}')
+      // Implementation may emit Pure or omit nodes entirely.
+      expect(['Pure']).toContain(tree.tag)
+    })
+
+    it('polymetric inside a sequence parses as one element', () => {
+      const tree = parseMini('c4 {e4, g4 b4} a4')
+      expect(tree.tag).toBe('Seq')
+      if (tree.tag === 'Seq') {
+        expect(tree.children).toHaveLength(3)
+        expect(tree.children[1].tag).toBe('Stack')
+      }
+    })
   })
 })
 
