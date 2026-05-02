@@ -241,6 +241,11 @@ function countLines(src: string, offset: number): number {
 
 export function IRInspectorPanel(): React.ReactElement {
   const [snap, setSnap] = useState<IRSnapshot | null>(getIRSnapshot);
+  // Tab selection persists across snapshots via name (not index): if the
+  // user picked "Parsed" and a later snapshot still has a "Parsed" pass,
+  // the selection survives. Falls back to the last (rightmost) pass when
+  // the previously-selected name is gone (pre-mortem #2 of plan 19-02).
+  const [selectedTabName, setSelectedTabName] = useState<string | null>(null);
 
   useEffect(() => {
     return subscribeIRSnapshot((s) => setSnap(s));
@@ -253,6 +258,20 @@ export function IRInspectorPanel(): React.ReactElement {
     if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
     return `${Math.round(ms / 60_000)}m ago`;
   }, [snap]);
+
+  const effectiveTab = useMemo<string | null>(() => {
+    if (!snap || snap.passes.length === 0) return null;
+    if (selectedTabName && snap.passes.some((p) => p.name === selectedTabName)) {
+      return selectedTabName;
+    }
+    return snap.passes[snap.passes.length - 1].name;
+  }, [snap, selectedTabName]);
+
+  const selectedIndex = useMemo<number>(() => {
+    if (!snap || effectiveTab == null) return -1;
+    const i = snap.passes.findIndex((p) => p.name === effectiveTab);
+    return i >= 0 ? i : snap.passes.length - 1;
+  }, [snap, effectiveTab]);
 
   if (!snap) {
     return (
@@ -297,14 +316,64 @@ export function IRInspectorPanel(): React.ReactElement {
         </div>
       </div>
 
-      <details open data-testid="ir-tree-section">
-        <summary style={{ cursor: "pointer", fontWeight: 600, padding: "4px 0" }}>
-          IR tree
-        </summary>
-        <div style={{ paddingLeft: 4 }}>
-          <IRNodeRow node={snap.ir} depth={0} />
+      {/*
+        Tab row above the IR tree (Phase 19-02, decision D-01/D-04).
+        v1 ships a single "Parsed" tab — intentional scaffold for future
+        passes (parser decomposition, JS API Tier 4). The events section
+        below is independent of tab selection.
+      */}
+      <div
+        role="tablist"
+        aria-label="IR passes"
+        data-testid="ir-passes-tablist"
+        style={{
+          display: "flex",
+          gap: 4,
+          borderBottom: "1px solid var(--panel-border, rgba(128,128,128,0.2))",
+          marginBottom: 6,
+        }}
+        onKeyDown={(e) => {
+          if (snap == null || snap.passes.length === 0) return;
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          const dir = e.key === "ArrowRight" ? 1 : -1;
+          const next = (selectedIndex + dir + snap.passes.length) % snap.passes.length;
+          setSelectedTabName(snap.passes[next].name);
+          e.preventDefault();
+        }}
+      >
+        {snap.passes.map((p, i) => (
+          <button
+            key={p.name}
+            role="tab"
+            aria-selected={i === selectedIndex}
+            aria-controls="ir-tree-panel"
+            tabIndex={i === selectedIndex ? 0 : -1}
+            onClick={() => setSelectedTabName(p.name)}
+            data-testid={`ir-pass-tab-${p.name}`}
+            style={{
+              padding: "4px 10px",
+              fontSize: "0.85em",
+              fontWeight: i === selectedIndex ? 600 : 400,
+              background: i === selectedIndex ? "var(--panel-active, rgba(128,128,128,0.15))" : "transparent",
+              border: "none",
+              borderBottom: i === selectedIndex ? "2px solid var(--accent, #3b82f6)" : "2px solid transparent",
+              cursor: "pointer",
+              color: "inherit",
+            }}
+          >
+            {p.name}
+          </button>
+        ))}
+      </div>
+
+      <div role="tabpanel" id="ir-tree-panel" data-testid="ir-tree-section">
+        <div style={{ fontWeight: 600, padding: "4px 0", opacity: 0.85 }}>
+          IR tree{snap.passes.length > 1 && effectiveTab ? ` · ${effectiveTab}` : null}
         </div>
-      </details>
+        <div style={{ paddingLeft: 4 }}>
+          {selectedIndex >= 0 && <IRNodeRow node={snap.passes[selectedIndex].ir} depth={0} />}
+        </div>
+      </div>
 
       <details open data-testid="ir-events-section" style={{ marginTop: 12 }}>
         <summary style={{ cursor: "pointer", fontWeight: 600, padding: "4px 0" }}>
