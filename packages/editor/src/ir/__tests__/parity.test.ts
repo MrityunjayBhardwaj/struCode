@@ -6,46 +6,39 @@
  * degrade/chunk/ply) gets an `it()` block that compares two pipelines and
  * asserts event-list equivalence on the dimensions our IR claims to model.
  *
- * Pipeline A (reference): construct the equivalent Strudel pattern via the
- *   real `@strudel/core/pattern.mjs` + `signal.mjs` exports, then call
- *   `pattern.queryArc(c, c+1)` per cycle. Pan range is normalised from
- *   Strudel's [0,1] (juxBy at pattern.mjs:2356-2381) to our IR's [-1,1]
- *   convention (PatternIR.ts:23) via `normalizeStrudelPan`.
+ * Pipeline A (reference): the *real* Strudel evaluator path documented in
+ *   RESEARCH §6.1 — `await evalScope(core, mini); miniAllStrings()` once
+ *   in `beforeAll`, then per-test `await evaluate(code)` followed by
+ *   `pattern.queryArc(c, c+1)` per cycle. This is the same boot sequence
+ *   the production engine uses (StrudelEngine.init), so parity mismatches
+ *   here would surface in real playback.
  *
  * Pipeline B (ours): parseStrudel → collect, looped per-cycle via the
  *   inline `collectCycles` helper.
  *
- * --- Why no `evalScope` / `evaluate` / mini-notation ---
+ * --- Boot enablement: vitest config + kabelsalat stub ---
  *
- * The natural approach (RESEARCH §6.1) was `await evalScope(core, mini);
- * miniAllStrings()` followed by `evaluate(code)`. That requires importing
- * `@strudel/core` (package root) and `@strudel/mini` (which itself
- * imports `@strudel/core`). The package root resolves to
- * `dist/index.mjs`, which does `import { SalatRepl } from
- * '@kabelsalat/web'`. Under vitest the `@kabelsalat/web` package
- * resolves to its CJS `dist/index.js`, which has no named ESM exports;
- * the static ESM linker rejects the import before any test setup runs.
- * Vite alias / `server.deps.inline` configurations did not redirect the
- * transitive import (vite-node externalises node_modules via the native
- * Node ESM resolver, which does not honour vite aliases for transitive
- * imports inside externalised packages).
+ * `@strudel/core` (package root → dist/index.mjs) imports `SalatRepl`
+ * from `@kabelsalat/web`. Under vite-node the kabelsalat package
+ * resolves to its CJS UMD `dist/index.js`, which has no named ESM
+ * exports — the static linker rejects the import before any test setup
+ * runs. We work around this in TWO PLACES that must both be present:
  *
- * Resolution: import the source-level Strudel submodules directly
- * (`pattern.mjs`, `signal.mjs`, `controls.mjs`, …). These do not
- * transitively import `repl.mjs` and so do not pull in kabelsalat. We
- * build expected patterns via the registered combinators (`fastcat`,
- * `pure`, `s`, `note`, `late`, `jux`, `off`, `chunk`, …) directly. This
- * gives us Strudel's real evaluator behaviour without going through the
- * code-string parser. Per-method tests document the JS construction
- * alongside the Strudel string our parser sees.
+ *   1. `vitest.config.ts` aliases `@kabelsalat/web` to a tiny ESM stub
+ *      (`test/stubs/kabelsalat-web.mjs`) exporting `class SalatRepl {}`.
+ *   2. `vitest.config.ts` inlines `@strudel/*` via `server.deps.inline`
+ *      so vite-node transforms Strudel rather than externalising it
+ *      through Node's resolver. Aliases applied to externalised package
+ *      transitive imports are silently ignored; inlining flips that.
  *
- * Diff: sort both sides by (begin, s, note); assert lengths; per pair
+ * We never call into `repl.mjs` during tests, so the stub is sufficient.
+ * Production builds use the real kabelsalat package — the alias is
+ * scoped to vitest only.
+ *
+ * Diff: sort both sides by (begin, s, note); dedupe Strudel's clipped
+ *   boundary pairs by `(whole.begin, s)`; assert lengths; per pair
  *   assert each requested dimension matches and `loc` is present on the
  *   actual (ours) event (PV24 — every IREvent must carry loc).
- *
- * Init: nothing. Source-level submodule imports register their
- *   combinators on Strudel's internal Pattern prototype at module-load
- *   time.
  *
  * Known scope limitations (documented in test bodies as they land):
  *   - Inputs use decimal literals (`0.125`), not fraction literals
@@ -55,12 +48,13 @@
  *   - `degrade` uses event-count tolerance (seededRand differs from
  *     Strudel's getRandsAtTime; RESEARCH §5).
  */
-import { describe, it, expect } from 'vitest'
-// Source-level Strudel imports — see header comment for why we cannot
-// use `@strudel/core` (package root).
-import * as corePattern from '@strudel/core/pattern.mjs'
-import * as coreSignal from '@strudel/core/signal.mjs'
-import * as coreControls from '@strudel/core/controls.mjs'
+import { describe, it, expect, beforeAll } from 'vitest'
+// Documented Strudel evaluator path (RESEARCH §6.1). The package-root
+// import works under vitest because the config inlines `@strudel/*` and
+// aliases `@kabelsalat/web` to a stub — see header comment.
+import { evalScope, evaluate } from '@strudel/core/evaluate.mjs'
+import * as strudelCore from '@strudel/core'
+import { mini, miniAllStrings } from '@strudel/mini/mini.mjs'
 
 import {
   parseStrudel,
@@ -75,36 +69,76 @@ import {
 import { normalizeStrudelHap } from '../../engine/NormalizedHap'
 
 // --------------------------------------------------------------------------
-// Pipeline A — Strudel reference events from a constructed Pattern.
-// `buildPattern` is per-method: each per-method `it()` block constructs
-// the equivalent Strudel pattern manually using the registered
-// combinators (e.g., `s('bd').late(0.125)` becomes
-// `corePattern.s('bd').late(0.125)`).
+// One-time Strudel scope boot. evalScope+miniAllStrings registers core
+// combinators on Pattern.prototype and wires the mini-notation transpiler
+// into the global scope so `evaluate('s("bd hh")')` parses the string.
+// --------------------------------------------------------------------------
+beforeAll(async () => {
+  await evalScope(Promise.resolve(strudelCore), Promise.resolve({ mini }))
+  miniAllStrings()
+})
+
+// --------------------------------------------------------------------------
+// Pipeline A — Strudel reference events from a code string.
+// `evaluate(code)` returns `{ pattern, mode, meta }`. We query the
+// pattern per cycle and normalise haps into IREvents.
+//
+// `whole.begin` (preserved by normalizeStrudelHap as `event.begin`) is
+// the un-clipped onset — events crossing a cycle boundary are returned
+// twice by Strudel (once on each side, both clipped); both copies share
+// the same `whole.begin`. We dedupe by `(begin, s)` to recover the
+// whole-event view that our IR uses.
 // --------------------------------------------------------------------------
 type StrudelPattern = {
   queryArc: (begin: number, end: number) => unknown[]
 }
 
-export function strudelEventsFromPattern(
-  pattern: StrudelPattern,
+async function strudelEventsFromCode(
+  code: string,
   cyclesToQuery = 1,
-): IREvent[] {
+  startCycle = 0,
+): Promise<IREvent[]> {
+  const evaluated = await evaluate(code)
+  const pattern = evaluated.pattern as StrudelPattern
   const haps: unknown[] = []
-  for (let c = 0; c < cyclesToQuery; c++) {
+  for (let c = startCycle; c < startCycle + cyclesToQuery; c++) {
     haps.push(...pattern.queryArc(c, c + 1))
   }
   return haps.map((h) => normalizeStrudelHap(h))
 }
 
-// Re-export a tightened handle on the Strudel surface we use, so per-
-// method tests can build patterns without re-importing the .mjs files.
-// Merge the three source-level submodules into one bag — `s`/`note` from
-// controls, `late`/`jux`/`off`/`chunk` from pattern, `degrade*` from
-// signal.
-export const strudel: Record<string, unknown> = {
-  ...(corePattern as unknown as Record<string, unknown>),
-  ...(coreSignal as unknown as Record<string, unknown>),
-  ...(coreControls as unknown as Record<string, unknown>),
+/**
+ * Reduce Strudel's hap stream to one event per unique `whole.begin` (the
+ * stable un-clipped onset). Boundary-crossing events that Strudel returns
+ * as two clipped pieces (same `whole.begin`, different `part`) collapse
+ * to a single event — matching our IR's whole-event view.
+ */
+function dedupeByWholeBegin(events: IREvent[]): IREvent[] {
+  const seen = new Set<string>()
+  const out: IREvent[] = []
+  for (const e of events) {
+    const key = `${e.begin.toFixed(9)}|${e.s ?? ''}|${e.note ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(e)
+  }
+  return out
+}
+
+/**
+ * Filter Strudel events to those whose un-clipped onset (`whole.begin`)
+ * falls inside the queried cycle window. Strudel's transforms can leak
+ * neighbouring cycles' events into a queried window (e.g. `late(t)`
+ * pulls the previous cycle's tail forward into the current cycle).
+ * Our IR collects per-cycle and wraps within the cycle window — to
+ * compare like-for-like, drop the leaked neighbours.
+ */
+function withOnsetInWindow(
+  events: IREvent[],
+  begin: number,
+  end: number,
+): IREvent[] {
+  return events.filter((e) => e.begin >= begin && e.begin < end)
 }
 
 // --------------------------------------------------------------------------
@@ -184,19 +218,14 @@ export function diffEvents(
 }
 
 // --------------------------------------------------------------------------
-// Boot smoke — verifies the file loads under vitest node env, the
-// Strudel source-level imports register cleanly, and an empty body
-// yields 0 events on both pipelines. Per-method `it()` blocks land in
-// subsequent waves.
+// Boot smoke — verifies evalScope+miniAllStrings ran cleanly and the
+// mini-notation transpiler is wired into the global scope.
 // --------------------------------------------------------------------------
 describe('parity harness', () => {
-  it('boots: source-level Strudel submodules load and register pattern combinators', () => {
-    // The fact that this `it()` runs at all proves all imports resolved
-    // (no kabelsalat fallout). Surface-checks: `s` and `late` are
-    // present on the Strudel pattern surface.
-    expect(typeof (strudel as { s?: unknown }).s).toBe('function')
-    expect(typeof (strudel as { late?: unknown }).late).toBe('function')
-    expect(typeof (strudel as { fastcat?: unknown }).fastcat).toBe('function')
+  it('boots: evalScope+miniAllStrings registered combinators and mini transpiler', async () => {
+    const r = await evaluate('s("bd")')
+    const haps = (r.pattern as StrudelPattern).queryArc(0, 1)
+    expect(haps.length).toBe(1)
   })
 
   it('empty pattern yields 0 events on the ours pipeline', () => {
@@ -208,53 +237,50 @@ describe('parity harness', () => {
   // Phase 19-03 Task 03 — `.late(t)` parity.
   //
   // Parses the user-typed Strudel string into our IR (Late tag), then
-  // collects events. Builds the Strudel-side equivalent pattern via
-  // direct combinator construction — `fastcat(pure({s}))×4).late(0.125)`
-  // — and queries it. Diff asserts EVENT COUNT and SET-OF-(s,note)
-  // matches.
+  // collects events. Asks Strudel's real evaluator for the same code
+  // string and queries the resulting pattern. Diff asserts EVENT COUNT,
+  // SET-OF-(s,note), and PER-EVENT `begin`.
   //
-  // What we DO NOT diff yet: per-event `begin` positions. Strudel's
-  // queryArc(0, 1) returns clipped haps for events that cross the
-  // cycle boundary (an event at [0.875, 1.125) becomes two clipped
-  // pieces [0.875, 1) and [0, 0.125)). Our `Late` collect arm wraps
-  // begin into the current cycle window but does not split. Both
-  // representations are faithful — they're just different surfaces of
-  // the same semantic. Aligning on per-event begin would require a
-  // clipping helper on our side or a re-gluing helper on Strudel's
-  // side; deferred to a future hardening pass on the harness. Event
-  // COUNT — the load-bearing "no dropped events" assertion — is
-  // checkable today and is what this test covers.
+  // Strudel's `queryArc(0, 1)` returns clipped haps for events that
+  // cross the cycle boundary (an event at [0.875, 1.125) becomes two
+  // clipped pieces [0.875, 1) and [0, 0.125)). `whole.begin` (preserved
+  // as IREvent.begin via normalizeStrudelHap) is the stable un-clipped
+  // onset; we dedupe by `(begin, s)` to recover the whole-event view
+  // our IR uses, then compare per-event begins directly.
   // ------------------------------------------------------------------
-  it('late parity: s("bd hh sd cp").late(0.125) — event count and (s,note) set match Strudel', () => {
+  it('late parity: s("bd hh sd cp").late(0.125) — count, (s,note) set, and per-event begin match Strudel', async () => {
     const code = 's("bd hh sd cp").late(0.125)'
-    // Strudel-side equivalent built directly via core combinators.
-    // Same semantic Strudel.evaluate(code) would produce after
-    // `evalScope+miniAllStrings`, without going through the package
-    // root that would fail under vitest (see header comment).
-    const fastcat = strudel.fastcat as (...pats: unknown[]) => StrudelPattern
-    const pure = strudel.pure as (v: unknown) => StrudelPattern
-    const sFn = strudel.s as (p: unknown) => StrudelPattern
-    type WithLate = StrudelPattern & { late: (t: number) => StrudelPattern }
-    const seqPat = fastcat(
-      sFn(pure('bd')),
-      sFn(pure('hh')),
-      sFn(pure('sd')),
-      sFn(pure('cp')),
-    ) as unknown as WithLate
-    const expected = strudelEventsFromPattern(seqPat.late(0.125), 1).map(normalizeStrudelPan)
+    // Strudel's queryArc(0,1) for `late(t)` returns:
+    //   - 4 in-window haps with whole.begin in [0.125, 0.875]
+    //   - the boundary-crossing cp split into two clipped pieces (same
+    //     whole.begin=0.875)
+    //   - the *previous* cycle's cp leaking forward (whole.begin=-0.125)
+    // We dedupe by `whole.begin` to collapse the boundary pair, then
+    // restrict to onsets in [0, 1) so the leaked previous-cycle hap
+    // doesn't inflate the count. The result is the same whole-event
+    // view our IR produces.
+    const rawExpected = (await strudelEventsFromCode(code, 1)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 1)
     const ours = collectCycles(parseStrudel(code), 0, 1)
-    // Dedupe Strudel's clipped pairs by `s` so the count matches a
-    // whole-event model. Each unique (s) symbol should produce 1 event
-    // (4 unique sounds → 4 events on our side; Strudel may return 4 or 5
-    // depending on whether the last step crosses the cycle boundary).
+    // Count + (s,note) set.
     const expectedSounds = new Set(expected.map((e) => e.s))
     const oursSounds = new Set(ours.map((e) => e.s))
     expect(oursSounds).toEqual(expectedSounds)
-    // Quick sanity: ours produces exactly one event per unique sound
-    // (no duplicates from the wrap branch).
     expect(ours.length).toBe(oursSounds.size)
+    expect(ours.length).toBe(expected.length)
+    // Per-event `begin` — the load-bearing assertion that the relaxed
+    // Wave 1 harness could not check. Strudel reports `whole.begin` for
+    // each hap; our IR's `Late` wraps within the cycle window. They
+    // should agree on the unique-by-`s` onset.
+    const byS = (es: IREvent[]) => new Map(es.map((e) => [e.s as string, e]))
+    const expBy = byS(expected)
+    const ourBy = byS(ours)
+    for (const [s, oe] of ourBy) {
+      const ee = expBy.get(s)
+      expect(ee).toBeDefined()
+      expect(Math.abs(oe!.begin - ee!.begin)).toBeLessThan(1e-9)
+    }
     // PV24 — every IREvent on our side must carry loc.
     for (const e of ours) expect(e.loc).toBeDefined()
   })
 })
-
