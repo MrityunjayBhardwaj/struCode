@@ -630,43 +630,52 @@ describe('Chunk tag (Tier 4)', () => {
     }
   })
 
-  it('rotates the active slot through the body across cycles', () => {
-    // 4-step body, n=4 — slot k of body plays during outer cycle k,
-    // re-timed to fill the full outer cycle. Transform is identity for
-    // this test (transform === body), so each outer cycle plays one of
-    // the body's events.
+  it('plays the full body each cycle, applying transform only to the active slot', () => {
+    // Strudel's chunk(n, func) plays the body in full every cycle and
+    // applies func only to the slot-k events on cycle k (verified
+    // against pattern.mjs:2569-2578 + repeatCycles which repeats —
+    // does not slow). Transform here is gain(0.5) on the body.
     const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
-    const tree = IR.chunk(4, body, body)
-    const allEvents = []
+    const transform = IR.fx('gain', { gain: 0.5 }, body)
+    const tree = IR.chunk(4, transform, body)
+    const allEvents: ReturnType<typeof collect> = []
     for (let c = 0; c < 4; c++) {
       const cycleEvents = collect(tree, {
         cycle: c, time: c, begin: c, end: c + 1, duration: 1,
       })
       allEvents.push(...cycleEvents)
     }
-    expect(allEvents.length).toBe(4)
-    expect(allEvents[0].note).toBe('a')
-    expect(allEvents[1].note).toBe('b')
-    expect(allEvents[2].note).toBe('c')
-    expect(allEvents[3].note).toBe('d')
-    // Each event spans the full outer cycle.
-    expect(allEvents[0].begin).toBeCloseTo(0, 9)
-    expect(allEvents[0].end).toBeCloseTo(1, 9)
-    expect(allEvents[1].begin).toBeCloseTo(1, 9)
-    expect(allEvents[2].begin).toBeCloseTo(2, 9)
+    // Full body plays each cycle — 4 events × 4 cycles = 16.
+    expect(allEvents.length).toBe(16)
+    // Cycle 0: slot 0 active ⇒ event 'a' has gain 0.5; rest are body's default 1.
+    const cycle0 = allEvents.filter((e) => e.begin >= 0 && e.begin < 1)
+    expect(cycle0.find((e) => e.note === 'a')?.gain).toBe(0.5)
+    expect(cycle0.find((e) => e.note === 'b')?.gain).toBe(1)
+    // Cycle 1: slot 1 active ⇒ 'b' has gain 0.5.
+    const cycle1 = allEvents.filter((e) => e.begin >= 1 && e.begin < 2)
+    expect(cycle1.find((e) => e.note === 'b')?.gain).toBe(0.5)
+    expect(cycle1.find((e) => e.note === 'a')?.gain).toBe(1)
+    // Cycle 3: slot 3 active ⇒ 'd' has gain 0.5.
+    const cycle3 = allEvents.filter((e) => e.begin >= 3 && e.begin < 4)
+    expect(cycle3.find((e) => e.note === 'd')?.gain).toBe(0.5)
   })
 
-  it('applies transform params to slot events', () => {
+  it('applies transform params to slot events on cycle 0', () => {
     const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
     const transform = IR.fx('gain', { gain: 0.5 }, body)
     const tree = IR.chunk(4, transform, body)
     const events = collect(tree, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
-    expect(events.length).toBe(1)
+    expect(events.length).toBe(4)
+    // Slot 0 (begin in [0, 0.25)) is 'a'; transform applies → gain 0.5.
     expect(events[0].note).toBe('a')
     expect(events[0].gain).toBe(0.5)
+    // Slot 1..3 are body events with default gain.
+    expect(events[1].note).toBe('b')
+    expect(events[1].gain).toBe(1)
   })
 
-  it('propagates loc through transformed slot events (PV24)', () => {
+  it('propagates loc through events on every cycle (PV24)', () => {
+    // n=1 ⇒ slot 0 is the whole cycle ⇒ transform applies to all events.
     const loc = [{ start: 1, end: 2 }]
     const body = IR.play('a', 0.25, {}, loc)
     const transform = IR.fx('gain', { gain: 0.5 }, body)

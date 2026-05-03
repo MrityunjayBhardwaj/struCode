@@ -346,61 +346,58 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
 
     case 'Chunk': {
       // Strudel's `chunk(n, func)` (pattern.mjs:2569-2578):
-      //   binary = [true, false × (n-1)]; binary_pat = _iter(n, sequence(binary), true)
+      //   binary = [true, false × (n-1)]
+      //   binary_pat = _iter(n, sequence(binary), true)
       //   pat = pat.repeatCycles(n)
       //   return pat.when(binary_pat, func)
       //
-      // `repeatCycles(n)` (pattern.mjs:2530-2545) makes one source cycle
-      // span `n` outer cycles — outer cycle k plays only the source's
-      // [k/n, (k+1)/n) slice. Combined with the rotated binary, every
-      // event the source emits during outer cycle k is in the active
-      // slot, so `func` is applied to ALL emitted events.
+      // `repeatCycles(n)` (pattern.mjs:2530-2545) does NOT slow the body
+      // — it repeats the SAME source cycle on every outer cycle. The
+      // rotated binary pattern picks slot k mod n on cycle k, and `func`
+      // is applied to events whose time-within-cycle falls in the active
+      // slot. So on each outer cycle we see the FULL body, with the
+      // transform applied to the slot-k events and the un-transformed
+      // body events filling the rest. Verified directly:
+      //   s("bd hh sd cp").chunk(4, x=>x.gain(0.5)) over 4 cycles emits
+      //   16 haps (4 per cycle), and exactly 4 of them carry gain=0.5
+      //   (one per cycle, rotating through bd,hh,sd,cp).
       //
-      // We model this by querying the body in its NATURAL single-cycle
-      // window (ctx adjusted to begin=0, end=1, cycle=0), then keeping
-      // only events whose source-time falls in the slot for the current
-      // outer cycle. Slot events are taken from `ir.transform` (parsed
-      // at the same body position by `parseTransform`) so that arbitrary
-      // user-supplied transforms — including ones that change params or
-      // re-time within the slot — produce the right output. Events
-      // outside the active slot are dropped (they belong to other outer
-      // cycles, just like Strudel's slowed body wouldn't emit them
-      // here). The active-slot events are then re-timed from
-      // [slot/n, (slot+1)/n) up to fill [outerCycle, outerCycle+1).
+      // Algorithm: walk both `body` and `transform` for the current
+      // ctx (NOT a rebuilt single-cycle ctx — Strudel queries the full
+      // outer cycle's body unchanged). For events whose time-within-
+      // cycle falls in the active slot [slot/n, (slot+1)/n), take the
+      // transform's version (matched by event begin within tolerance).
+      // For events outside the active slot, take the body version.
+      // `loc` flows through naturally because both walks pass ctx
+      // unchanged (PV24).
       //
-      // v1 limitation (documented in PLAN pre-mortem 3): bodies that are
-      // themselves multi-cycle aren't handled — we always pull from a
-      // single normalised body cycle. Strudel's repeatCycles handles
-      // multi-cycle source patterns by rolling the source forward; we
-      // don't model that here.
+      // v1 limitation (PLAN pre-mortem #3): bodies that are themselves
+      // multi-cycle aren't fully captured — Strudel's `repeatCycles`
+      // resamples every outer cycle to the SAME source cycle, so a
+      // multi-cycle body would freeze at source cycle 0. Our IR walks
+      // the body with the outer cycle's ctx, so it naturally advances —
+      // the divergence shows up as different events on cycles 1..n-1.
+      // Single-cycle bodies (the common case) are exact.
       const slot = ((ctx.cycle % ir.n) + ir.n) % ir.n
       const slotStart = slot / ir.n
       const slotEnd = (slot + 1) / ir.n
-      const sourceCtx: CollectContext = {
-        ...ctx,
-        cycle: 0,
-        time: 0,
-        begin: 0,
-        end: 1,
-        duration: 1,
+      const baseEvents = walk(ir.body, ctx)
+      const transformedEvents = walk(ir.transform, ctx)
+      const inSlot = (e: IREvent): boolean => {
+        const cyclePos = e.begin - ctx.cycle
+        return cyclePos >= slotStart - 1e-9 && cyclePos < slotEnd - 1e-9
       }
-      const transformedEvents = walk(ir.transform, sourceCtx)
-      const inSlot = (e: IREvent): boolean =>
-        e.begin >= slotStart - 1e-9 && e.begin < slotEnd - 1e-9
-      const slotEvents = transformedEvents.filter(inSlot)
-      // Re-time: stretch [slotStart, slotEnd) → [outerCycle, outerCycle+1).
-      // outer = (within - slotStart) * n + ctx.cycle
-      return slotEvents.map((e) => {
-        const remappedBegin = (e.begin - slotStart) * ir.n + ctx.cycle
-        const remappedEnd = (e.end - slotStart) * ir.n + ctx.cycle
-        const remappedEndClipped =
-          (e.endClipped - slotStart) * ir.n + ctx.cycle
-        return {
-          ...e,
-          begin: remappedBegin,
-          end: remappedEnd,
-          endClipped: remappedEndClipped,
+      // Index transformed events by begin so we can swap the matching
+      // body event with its transformed counterpart. We compare with
+      // tolerance because Strudel uses Fraction; our IR uses Number.
+      const findTransformed = (e: IREvent): IREvent | undefined =>
+        transformedEvents.find((t) => Math.abs(t.begin - e.begin) < 1e-9)
+      return baseEvents.map((e) => {
+        if (inSlot(e)) {
+          const replaced = findTransformed(e)
+          return replaced ?? e
         }
+        return e
       })
     }
   }

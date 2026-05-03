@@ -256,6 +256,38 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       return ir
     }
 
+    case 'chunk': {
+      // Tier 4 (Phase 19-03 Task 09). `.chunk(n, transform)` desugars
+      // (pattern.mjs:2569-2578):
+      //   binary = [true, false × (n-1)]
+      //   binary_pat = _iter(n, sequence(binary), true)
+      //   pat = pat.repeatCycles(n)
+      //   return pat.when(binary_pat, transform)
+      //
+      // Because `repeatCycles(n)` slows the body to span n outer cycles,
+      // each outer cycle plays only one slot of the body. Combined with
+      // the rotated binary, the transform is applied to ALL events the
+      // chunk emits in any given outer cycle.
+      //
+      // Our IR's Chunk tag stores `transform` as the body with the user
+      // transform pre-applied (parseTransform), so the slot-replacement
+      // logic in collect can take events directly from `transform`. This
+      // mirrors the existing Every shape (Every.body = transformed,
+      // Every.default_ = base).
+      //
+      // v1 limitation (pre-mortem #3): single-cycle bodies only.
+      // Multi-cycle bodies would require modelling repeatCycles' source
+      // rolling, deferred to a follow-up. parseTransform doesn't thread
+      // baseOffset through (P39 / pre-mortem #10), so loc on transformed
+      // events points back to the body — PV24 presence holds, value
+      // precision is the existing limitation.
+      const [nStr, transformStr] = splitFirstArg(args)
+      const n = parseInt(nStr.trim(), 10)
+      if (isNaN(n) || n < 1) return ir
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir) : ir
+      return IR.chunk(n, transform, ir)
+    }
+
     case 'degrade': {
       // Tier 4 (Phase 19-03 Task 07). `.degrade()` shorthand for
       // `.degradeBy(0.5)` (signal.mjs:720). Our Degrade.p is the

@@ -481,4 +481,76 @@ describe('parity harness', () => {
     expect(b.tag).toBe('Degrade')
     if (b.tag === 'Degrade') expect(b.p).toBeCloseTo(0.7, 9)
   })
+
+  // ------------------------------------------------------------------
+  // Phase 19-03 Task 09 — `.chunk(n, f)` parity.
+  //
+  // Ground truth: pattern.mjs:2569-2578 (chunk) + 2490-2497 (_iter) +
+  // 2530-2545 (repeatCycles).
+  //   chunk(n, func, pat) = _chunk(n, func, pat, false, false)
+  //   _chunk: binary = [true, false × (n-1)]
+  //           binary_pat = _iter(n, sequence(binary), true)
+  //           pat = pat.repeatCycles(n)
+  //           return pat.when(binary_pat, func)
+  //
+  // CRITICAL: `repeatCycles(n)` does NOT slow the body — it repeats
+  // the same source cycle on every outer cycle (verified directly:
+  // `s("bd hh sd cp").chunk(4, x=>x.gain(0.5))` over 4 cycles produces
+  // 16 raw haps (4 per cycle), with exactly 4 carrying gain=0.5 — one
+  // per cycle, rotating through the slot positions). The rotated binary
+  // picks slot k%n on cycle k; `func` is applied to events whose
+  // time-within-cycle falls in [slot/n, (slot+1)/n).
+  //
+  // Our Chunk.collect plays the FULL body on every cycle and swaps
+  // body events for transformed events when they're in the active slot.
+  //
+  // Input: s("bd hh sd cp").chunk(4, x => x.gain(0.5)) over 4 cycles
+  //   ⇒ 16 events. On cycle k, the event in slot k carries gain=0.5;
+  //   the other three carry the body's default gain (1).
+  //
+  // Choice of `gain(0.5)` (not `fast(2)`): same Fast-IR limitation as
+  // off (W2) — Fast in our IR compresses time without re-playing the
+  // body, so a `fast(2)` transform on a chunk slot wouldn't multiply
+  // events the way Strudel's does. gain(0.5) exercises the slot-
+  // replacement path with a non-multiplying parameter change.
+  //
+  // Diff: count, (begin, s, gain) tuples — gain in the key so we
+  // catch the slot-rotation semantic, not just event positions. PV24.
+  // ------------------------------------------------------------------
+  it('chunk parity: s("bd hh sd cp").chunk(4, x => x.gain(0.5)) — full body each cycle, transform on rotating slot, matches Strudel', async () => {
+    const code = 's("bd hh sd cp").chunk(4, x => x.gain(0.5))'
+    const rawExpected = (await strudelEventsFromCode(code, 4)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    // 4 events per cycle × 4 cycles = 16.
+    expect(ours.length).toBe(16)
+    expect(ours.length).toBe(expected.length)
+    // (begin, s, gain) tuples — gain in the key so the slot rotation is
+    // load-bearing on the diff. Strudel marks un-transformed body
+    // events with `gain=undefined` (no gain key set); our IR uses the
+    // body's default gain=1. To compare like-for-like, treat both as
+    // "default" — the load-bearing assertion is which events GOT the
+    // transform applied.
+    const norm = (g: unknown): unknown => (g === undefined ? 1 : g)
+    const tuple = (e: IREvent): string =>
+      `${e.begin.toFixed(9)}|${e.s ?? ''}|${norm(e.gain)}`
+    expect(new Set(ours.map(tuple))).toEqual(new Set(expected.map(tuple)))
+    // Slot rotation check: exactly 4 of our 16 events have gain=0.5
+    // (one per cycle), and they follow the slot rotation bd,hh,sd,cp.
+    const transformed = ours.filter((e) => e.gain === 0.5)
+    expect(transformed.length).toBe(4)
+    const transformedSorted = [...transformed].sort((a, b) => a.begin - b.begin)
+    expect(transformedSorted.map((e) => e.s)).toEqual(['bd', 'hh', 'sd', 'cp'])
+    // PV24 — loc presence on every event.
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  it('parseStrudel routes .chunk(n, f) to Chunk tag', () => {
+    const ir = parseStrudel('s("bd hh sd cp").chunk(4, x => x.gain(0.5))')
+    expect(ir.tag).toBe('Chunk')
+    if (ir.tag === 'Chunk') {
+      expect(ir.n).toBe(4)
+      expect(ir.transform.tag).toBe('FX')
+    }
+  })
 })
