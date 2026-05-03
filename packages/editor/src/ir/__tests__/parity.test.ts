@@ -283,4 +283,56 @@ describe('parity harness', () => {
     // PV24 — every IREvent on our side must carry loc.
     for (const e of ours) expect(e.loc).toBeDefined()
   })
+
+  // ------------------------------------------------------------------
+  // Phase 19-03 Task 04 — `.off(t, f)` parity.
+  //
+  // Ground truth: pattern.mjs:2236-2238 — off literally desugars to
+  //   stack(pat, func(pat.late(time_pat)))
+  // Our `case 'off':` in parseStrudel mirrors this 1:1 as
+  //   Stack(body, transform(Late(t, body)))
+  // — transform is applied to `body.late(t)`, so Late is INSIDE the
+  // transform, not outside. Order matters when the transform re-times.
+  //
+  // Input: s("bd hh sd cp").off(0.125, x => x.gain(0.5))
+  //   body events @ {0, 0.25, 0.5, 0.75}: bd, hh, sd, cp
+  //   late(0.125)(body) shifts each by +0.125, wrapping cp@0.875 → 0.0.
+  //   gain(0.5) applied to that adds {gain: 0.5} to each event's params.
+  //   Stack of body + offset gives 8 unique-by-(begin,s) events per cycle.
+  //
+  // Choice of `gain(0.5)` (not `fast(2)` as the orchestrator brief
+  // suggested): Strudel's `fast(N)` plays the body N times per cycle
+  // (event-count-multiplying), but our IR's `Fast` only compresses time
+  // without re-playing the body — a documented limitation predating this
+  // wave. A `fast(2)` transform on the offset side produces 8 Strudel
+  // events but only 4 ours. To keep the parity assertion strict and
+  // load-bearing for the off-desugar (rather than a Fast-semantics
+  // discrepancy), we use a non-multiplying transform. Fast-multiplication
+  // parity is its own follow-up.
+  //
+  // We dedupe Strudel's clipped boundary pairs by (begin, s, note) and
+  // restrict to in-window onsets. Diff is on count, (begin, s) tuples,
+  // and gain dimension on the offset side.
+  // ------------------------------------------------------------------
+  it('off parity: s("bd hh sd cp").off(0.125, x => x.gain(0.5)) — count and per-event (begin, s) match Strudel', async () => {
+    const code = 's("bd hh sd cp").off(0.125, x => x.gain(0.5))'
+    const rawExpected = (await strudelEventsFromCode(code, 1)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 1)
+    const ours = collectCycles(parseStrudel(code), 0, 1)
+    // 4 body + 4 offset = 8.
+    expect(ours.length).toBe(expected.length)
+    expect(ours.length).toBe(8)
+    // (begin, s) tuples must match as sets — same onset set, same sample
+    // assignments. This is the load-bearing diff for the off desugar.
+    const tuple = (e: IREvent): string =>
+      `${e.begin.toFixed(9)}|${e.s ?? ''}`
+    const expSet = new Set(expected.map(tuple))
+    const oursSet = new Set(ours.map(tuple))
+    expect(oursSet).toEqual(expSet)
+    // PV24 — every IREvent on our side must carry loc (presence, not
+    // value precision — parseTransform doesn't thread baseOffset, so
+    // events from the transform sub-tree carry the body's loc, which
+    // is acceptable per pre-mortem item 10).
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
 })

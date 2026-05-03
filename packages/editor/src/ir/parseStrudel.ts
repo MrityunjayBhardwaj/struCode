@@ -267,6 +267,40 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       return IR.late(t, ir)
     }
 
+    case 'off': {
+      // Tier 4 (Phase 19-03 Task 04). `.off(t, f)` literally desugars to
+      //   stack(pat, func(pat.late(time_pat)))     [pattern.mjs:2236-2238]
+      // i.e., the user-supplied transform is applied to `pat.late(t)` —
+      // late is computed FIRST, then the transform wraps that. So our
+      // mirror is Stack(body, transform(Late(t, body))).
+      //
+      // Order matters. The plan-task draft used Stack(body, Late(t,
+      // transform(body))) — that puts transform inside Late, not outside,
+      // which produces a different event stream when the transform
+      // re-times (e.g., `fast(2)`: applying fast AFTER late differs from
+      // applying late AFTER fast — the latter is what Strudel does).
+      // This was caught by parity diff and corrected; the desugar below
+      // is the one Ground Truth supports.
+      //
+      // Round-trip: no Off tag exists by design — the desugar is exact.
+      // For now toStrudel emits the structural Stack (no recovery); a
+      // future bidirectional-editing pass (#8) can shape-match and
+      // re-emit `.off(t, …)`. Accepted soft target per CONTEXT round-trip
+      // discipline (which applies fully only to 1:1 method↔tag mappings,
+      // not desugars).
+      //
+      // Known limitation: `parseTransform` does not thread `baseOffset`,
+      // so events from the transform sub-tree carry the body's `loc`
+      // rather than the transform-arg position (pre-existing P39 gap;
+      // PRE-MORTEM #10). Parity asserts `loc` PRESENCE, not value.
+      const [tStr, transformStr] = splitFirstArg(args)
+      const t = parseFloat(tStr.trim())
+      if (isNaN(t)) return ir
+      const lateBody = IR.late(t, ir)
+      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody) : lateBody
+      return IR.stack(ir, transformed)
+    }
+
     case 'room':
     case 'delay':
     case 'reverb':

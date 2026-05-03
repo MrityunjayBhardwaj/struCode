@@ -500,6 +500,31 @@ describe('parseStrudel', () => {
     }
   })
 
+  it('parses .off(0.25, x => x.fast(2)) into Stack(body, Fast(2, Late(0.25, body))) (Tier 4)', () => {
+    // Ground truth: pattern.mjs:2236-2238
+    //   off(time_pat, func, pat) = stack(pat, func(pat.late(time_pat)))
+    // The transform is applied to `pat.late(t)`, so Late is INSIDE the
+    // transform, not outside. Our desugar mirrors that order exactly.
+    const tree = parseStrudel('s("bd").off(0.25, x => x.fast(2))')
+    expect(tree.tag).toBe('Stack')
+    if (tree.tag === 'Stack') {
+      expect(tree.tracks.length).toBe(2)
+      // Left track is the original body (s("bd") — a Play).
+      expect(tree.tracks[0].tag).toBe('Play')
+      // Right track is Fast(2, Late(0.25, body)) — transform OUTSIDE Late.
+      const right = tree.tracks[1]
+      expect(right.tag).toBe('Fast')
+      if (right.tag === 'Fast') {
+        expect(right.factor).toBe(2)
+        expect(right.body.tag).toBe('Late')
+        if (right.body.tag === 'Late') {
+          expect(right.body.offset).toBe(0.25)
+          expect(right.body.body.tag).toBe('Play')
+        }
+      }
+    }
+  })
+
   describe('source-range tracking', () => {
     it('single-line note("c4 e4") — Play.loc points at exact char ranges', () => {
       // 0123456789012345
