@@ -267,6 +267,35 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       return IR.late(t, ir)
     }
 
+    case 'jux': {
+      // Tier 4 (Phase 19-03 Task 05). `.jux(f)` desugars per
+      //   pattern.mjs:2379-2381: jux(func, pat) = pat._juxBy(1, func, pat)
+      //   pattern.mjs:2356-2368: juxBy halves the `by` arg, then
+      //     left  = pat.withValue(v => { pan: (v.pan ?? 0.5) - by/2 })
+      //     right = func(pat.withValue(v => { pan: (v.pan ?? 0.5) + by/2 }))
+      //     return stack(left, right)
+      // For `jux(f)` with by=1: by/2 = 0.5 → left pan = 0.0 (full left),
+      // right pan = 1.0 (full right) in Strudel's [0,1] convention.
+      //
+      // Our IR's pan convention is [-1, 1] centered at 0 (PatternIR.ts:23
+      // PlayParams). Mapping: Strudel 0.0 → ours -1; Strudel 1.0 → ours +1.
+      // The parity harness applies `normalizeStrudelPan` (p*2-1) to the
+      // Strudel side before diff so both sides land in [-1, 1].
+      //
+      // Round-trip: no Jux tag exists by design — the desugar is exact.
+      // toStrudel emits the structural Stack(FX(pan,…), FX(pan,…))
+      // form (no `.jux(...)` recovery in this wave). Accepted soft target
+      // per CONTEXT round-trip discipline.
+      //
+      // Known limitation: same parseTransform baseOffset gap as off
+      // (P39, pre-mortem 10). loc PRESENCE asserted, not value.
+      const transformed = args.trim() ? parseTransform(args.trim(), ir) : ir
+      return IR.stack(
+        IR.fx('pan', { pan: -1 }, ir),
+        IR.fx('pan', { pan: 1 }, transformed),
+      )
+    }
+
     case 'off': {
       // Tier 4 (Phase 19-03 Task 04). `.off(t, f)` literally desugars to
       //   stack(pat, func(pat.late(time_pat)))     [pattern.mjs:2236-2238]

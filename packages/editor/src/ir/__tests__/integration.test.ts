@@ -500,6 +500,39 @@ describe('parseStrudel', () => {
     }
   })
 
+  it('parses .jux(x => x.gain(0.5)) into Stack(FX(pan,-1, body), FX(pan,+1, transform(body))) (Tier 4)', () => {
+    // Ground truth: pattern.mjs:2379-2381 (jux) + 2356-2368 (juxBy):
+    //   jux(f)(pat) = juxBy(1, f, pat)
+    //   juxBy(1, …) halves to by=0.5, splits onto two pans:
+    //     left  = pat with pan = (default 0.5) - 0.5 = 0.0  (Strudel [0,1])
+    //     right = f(pat with pan = (default 0.5) + 0.5 = 1.0)
+    // Mapping to our IR's [-1, 1] pan convention: Strudel 0.0 → ours -1,
+    // Strudel 1.0 → ours +1. The parity harness normalises Strudel-side
+    // events before diff (normalizeStrudelPan).
+    const tree = parseStrudel('s("bd hh sd cp").jux(x => x.gain(0.5))')
+    expect(tree.tag).toBe('Stack')
+    if (tree.tag === 'Stack') {
+      expect(tree.tracks.length).toBe(2)
+      const [left, right] = tree.tracks
+      expect(left.tag).toBe('FX')
+      if (left.tag === 'FX') {
+        expect(left.name).toBe('pan')
+        expect(left.params.pan).toBe(-1)
+      }
+      expect(right.tag).toBe('FX')
+      if (right.tag === 'FX') {
+        expect(right.name).toBe('pan')
+        expect(right.params.pan).toBe(1)
+        // Right body is the transformed body — gain(0.5) wraps the body in FX.
+        expect(right.body.tag).toBe('FX')
+        if (right.body.tag === 'FX') {
+          expect(right.body.name).toBe('gain')
+          expect(right.body.params.gain).toBe(0.5)
+        }
+      }
+    }
+  })
+
   it('parses .off(0.25, x => x.fast(2)) into Stack(body, Fast(2, Late(0.25, body))) (Tier 4)', () => {
     // Ground truth: pattern.mjs:2236-2238
     //   off(time_pat, func, pat) = stack(pat, func(pat.late(time_pat)))

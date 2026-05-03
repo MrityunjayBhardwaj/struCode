@@ -108,16 +108,24 @@ async function strudelEventsFromCode(
 }
 
 /**
- * Reduce Strudel's hap stream to one event per unique `whole.begin` (the
- * stable un-clipped onset). Boundary-crossing events that Strudel returns
- * as two clipped pieces (same `whole.begin`, different `part`) collapse
- * to a single event — matching our IR's whole-event view.
+ * Reduce Strudel's hap stream to one event per unique
+ *   (whole.begin, s, note, pan)
+ * Boundary-crossing events that Strudel returns as two clipped pieces
+ * share the same `whole.begin`, `s`, `note`, and `pan` — collapse to one.
+ *
+ * `pan` is part of the key because transforms like `jux(f)` produce
+ * legitimately distinct events at the same `(begin, s)` on different
+ * pan channels (left/right). Dedupe must NOT collapse those — they are
+ * real, simultaneous events on parallel tracks. Including pan in the
+ * key keeps boundary collapse working without losing channel-distinct
+ * events.
  */
 function dedupeByWholeBegin(events: IREvent[]): IREvent[] {
   const seen = new Set<string>()
   const out: IREvent[] = []
   for (const e of events) {
-    const key = `${e.begin.toFixed(9)}|${e.s ?? ''}|${e.note ?? ''}`
+    const pan = e.params?.pan ?? ''
+    const key = `${e.begin.toFixed(9)}|${e.s ?? ''}|${e.note ?? ''}|${pan}`
     if (seen.has(key)) continue
     seen.add(key)
     out.push(e)
@@ -333,6 +341,52 @@ describe('parity harness', () => {
     // value precision — parseTransform doesn't thread baseOffset, so
     // events from the transform sub-tree carry the body's loc, which
     // is acceptable per pre-mortem item 10).
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  // ------------------------------------------------------------------
+  // Phase 19-03 Task 05 — `.jux(f)` parity.
+  //
+  // Ground truth: pattern.mjs:2379-2381 (jux) + 2356-2368 (juxBy).
+  //   jux(f)(pat) = pat._juxBy(1, f, pat)
+  //   juxBy halves `by` → 0.5; emits two pans on a stack:
+  //     left  pan = (default 0.5) - 0.5 = 0.0   (full left,  Strudel [0,1])
+  //     right pan = (default 0.5) + 0.5 = 1.0   (full right, Strudel [0,1])
+  //   right channel is `func` applied to the panned body.
+  //
+  // Our IR uses [-1, 1] pan convention (PatternIR.ts:23). Strudel pan 0.0
+  // maps to our -1; Strudel pan 1.0 maps to our +1. The harness applies
+  // normalizeStrudelPan (p*2-1) to the Strudel side before diff.
+  //
+  // Input: s("bd hh sd cp").jux(x => x.gain(0.5))
+  //   Strudel emits 8 haps: 4 panned 0.0 (gain default ~1) + 4 panned
+  //   1.0 with gain=0.5. After normalisation: pans ∈ {-1, +1}.
+  //   Our desugar produces Stack(FX(pan,-1, body), FX(pan,+1, gain(0.5)(body))) — also 8.
+  //
+  // Diff: count + (begin, s) set + per-event pan dimension matches.
+  // ------------------------------------------------------------------
+  it('jux parity: s("bd hh sd cp").jux(x => x.gain(0.5)) — count, (begin,s), and pan match Strudel', async () => {
+    const code = 's("bd hh sd cp").jux(x => x.gain(0.5))'
+    const rawExpected = (await strudelEventsFromCode(code, 1)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 1)
+    const ours = collectCycles(parseStrudel(code), 0, 1)
+    // 4 left-panned + 4 right-panned = 8 events (count multiset, since
+    // the same (begin, s) pair appears at both pans we cannot collapse
+    // by (begin, s) alone — diff on (begin, s, pan)).
+    expect(ours.length).toBe(8)
+    expect(expected.length).toBe(8)
+    // Per-event tuples include pan so left/right channels are distinct.
+    const tupleWithPan = (e: IREvent): string => {
+      const pan = e.params?.pan
+      return `${e.begin.toFixed(9)}|${e.s ?? ''}|${pan}`
+    }
+    const expSet = new Set(expected.map(tupleWithPan))
+    const oursSet = new Set(ours.map(tupleWithPan))
+    expect(oursSet).toEqual(expSet)
+    // Every ours event has pan ∈ {-1, +1} after the desugar.
+    const oursPans = new Set(ours.map((e) => e.params?.pan))
+    expect(oursPans).toEqual(new Set([-1, 1]))
+    // PV24 — loc presence on every event.
     for (const e of ours) expect(e.loc).toBeDefined()
   })
 })
