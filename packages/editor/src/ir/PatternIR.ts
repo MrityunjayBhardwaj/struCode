@@ -41,6 +41,8 @@ export type PatternIR =
   | { tag: 'Slow';   factor: number; body: PatternIR }
   | { tag: 'Elongate'; factor: number; body: PatternIR }  // Mini-notation `a@N` — weights this slot inside a parent Seq
   | { tag: 'Late';   offset: number; body: PatternIR }  // Tier 4 — shifts events forward by `offset` cycles, preserving cycle length
+  | { tag: 'Degrade'; p: number; body: PatternIR }  // Tier 4 — `p` is the per-event RETENTION probability; .degrade() ⇒ p=0.5; .degradeBy(x) ⇒ p=1-x
+  | { tag: 'Chunk';  n: number; transform: PatternIR; body: PatternIR }  // Tier 4 — per-cycle slot rotation; `transform` is the body with the user transform pre-applied
   | { tag: 'Loop';   body: PatternIR }
   | { tag: 'Code';   code: string; lang: 'strudel' }  // Opaque fallback for unparseable fragments
 
@@ -79,6 +81,9 @@ export const IR = {
   slow: (factor: number, body: PatternIR): PatternIR => ({ tag: 'Slow', factor, body }),
   elongate: (factor: number, body: PatternIR): PatternIR => ({ tag: 'Elongate', factor, body }),
   late: (offset: number, body: PatternIR): PatternIR => ({ tag: 'Late', offset, body }),
+  degrade: (p: number, body: PatternIR): PatternIR => ({ tag: 'Degrade', p, body }),
+  chunk: (n: number, transform: PatternIR, body: PatternIR): PatternIR =>
+    ({ tag: 'Chunk', n, transform, body }),
   loop: (body: PatternIR): PatternIR => ({ tag: 'Loop', body }),
   code: (code: string): PatternIR => ({ tag: 'Code', code, lang: 'strudel' }),
 } as const

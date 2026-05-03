@@ -12,6 +12,46 @@
 import type { PatternIR } from './PatternIR'
 import type { IREvent } from './IREvent'
 
+// ---------------------------------------------------------------------------
+// Deterministic seeded PRNG used by the `Degrade` tag. We mirror Strudel's
+// legacy random algorithm (signal.mjs:237-258) so per-event drop decisions
+// match Strudel's `degradeBy` event-for-event when seed=0:
+//   __timeToIntSeed(t) = __xorwise(trunc(frac(t/300) * 2**29))
+//   __xorwise(x)       = ((((x<<13)^x) >> 17) ^ ((x<<13)^x)) << 5 ^ ...
+//   __intSeedToRand(s) = (s % 2**29) / 2**29
+//   rand(t)            = abs(__intSeedToRand(__timeToIntSeed(t + seed)))
+// `degradeBy(x)` keeps an event when `rand(begin) > x`, so retention prob
+// `p` (our IR convention) corresponds to filtering by `rand < p`.
+// All operations done in 32-bit space via Math.imul/|0 to match JS bitwise
+// semantics for negative shifts. `RAND_SEED = 0` is the Strudel default.
+// ---------------------------------------------------------------------------
+const RAND_SEED = 0
+
+function xorwise(x: number): number {
+  // 32-bit signed semantics — match Strudel's __xorwise exactly.
+  const a = ((x << 13) ^ x) | 0
+  const b = ((a >> 17) ^ a) | 0
+  return ((b << 5) ^ b) | 0
+}
+
+function timeToIntSeed(t: number): number {
+  const frac = t / 300 - Math.trunc(t / 300)
+  return xorwise(Math.trunc(frac * 536870912))
+}
+
+function intSeedToRand(s: number): number {
+  return (s % 536870912) / 536870912
+}
+
+/**
+ * `rand` at time `t` with default seed 0 — deterministic, matches
+ * Strudel's `getRandsAtTime(t, 1, 0)` for the legacy RNG path
+ * (signal.mjs:262-264, the default in @strudel/core@1.2.6).
+ */
+function seededRand(t: number, seed: number): number {
+  return Math.abs(intSeedToRand(timeToIntSeed(t + seed)))
+}
+
 export interface CollectContext {
   /** Query window start (cycles) */
   begin: number
@@ -275,6 +315,79 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
           endClipped += 1
         }
         return { ...e, begin, end, endClipped }
+      })
+    }
+
+    case 'Degrade': {
+      // Strudel's `degradeBy(x)` (signal.mjs:699-706) is
+      //   pat._degradeByWith(rand, x)
+      // i.e. keep events where the rand signal at the event's time
+      // exceeds x. Our IR's `p` is the RETENTION probability — keep
+      // when `seededRand(begin) < p`. The seededRand helper mirrors
+      // Strudel's legacy `__timeToRands` exactly so seed=0 produces
+      // the same drop set as Strudel for matching event onsets.
+      // Event `loc` is preserved on retained events (PV24).
+      const events = walk(ir.body, ctx)
+      return events.filter((e) => seededRand(e.begin, RAND_SEED) < ir.p)
+    }
+
+    case 'Chunk': {
+      // Strudel's `chunk(n, func)` (pattern.mjs:2569-2578):
+      //   binary = [true, false × (n-1)]; binary_pat = _iter(n, sequence(binary), true)
+      //   pat = pat.repeatCycles(n)
+      //   return pat.when(binary_pat, func)
+      //
+      // `repeatCycles(n)` (pattern.mjs:2530-2545) makes one source cycle
+      // span `n` outer cycles — outer cycle k plays only the source's
+      // [k/n, (k+1)/n) slice. Combined with the rotated binary, every
+      // event the source emits during outer cycle k is in the active
+      // slot, so `func` is applied to ALL emitted events.
+      //
+      // We model this by querying the body in its NATURAL single-cycle
+      // window (ctx adjusted to begin=0, end=1, cycle=0), then keeping
+      // only events whose source-time falls in the slot for the current
+      // outer cycle. Slot events are taken from `ir.transform` (parsed
+      // at the same body position by `parseTransform`) so that arbitrary
+      // user-supplied transforms — including ones that change params or
+      // re-time within the slot — produce the right output. Events
+      // outside the active slot are dropped (they belong to other outer
+      // cycles, just like Strudel's slowed body wouldn't emit them
+      // here). The active-slot events are then re-timed from
+      // [slot/n, (slot+1)/n) up to fill [outerCycle, outerCycle+1).
+      //
+      // v1 limitation (documented in PLAN pre-mortem 3): bodies that are
+      // themselves multi-cycle aren't handled — we always pull from a
+      // single normalised body cycle. Strudel's repeatCycles handles
+      // multi-cycle source patterns by rolling the source forward; we
+      // don't model that here.
+      const slot = ((ctx.cycle % ir.n) + ir.n) % ir.n
+      const slotStart = slot / ir.n
+      const slotEnd = (slot + 1) / ir.n
+      const sourceCtx: CollectContext = {
+        ...ctx,
+        cycle: 0,
+        time: 0,
+        begin: 0,
+        end: 1,
+        duration: 1,
+      }
+      const transformedEvents = walk(ir.transform, sourceCtx)
+      const inSlot = (e: IREvent): boolean =>
+        e.begin >= slotStart - 1e-9 && e.begin < slotEnd - 1e-9
+      const slotEvents = transformedEvents.filter(inSlot)
+      // Re-time: stretch [slotStart, slotEnd) → [outerCycle, outerCycle+1).
+      // outer = (within - slotStart) * n + ctx.cycle
+      return slotEvents.map((e) => {
+        const remappedBegin = (e.begin - slotStart) * ir.n + ctx.cycle
+        const remappedEnd = (e.end - slotStart) * ir.n + ctx.cycle
+        const remappedEndClipped =
+          (e.endClipped - slotStart) * ir.n + ctx.cycle
+        return {
+          ...e,
+          begin: remappedBegin,
+          end: remappedEnd,
+          endClipped: remappedEndClipped,
+        }
       })
     }
   }

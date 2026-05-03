@@ -154,6 +154,27 @@ function gen(ir: PatternIR): string {
       // Tier 4 — `late(offset)` shifts events forward by `offset` cycles
       // while preserving cycle length (pattern.mjs:2081-2089).
       return `${gen(ir.body)}.late(${ir.offset})`
+
+    case 'Degrade': {
+      // Tier 4 — `Degrade.p` is the per-event RETENTION probability.
+      // Round-trip: `.degrade()` when p === 0.5 (the Strudel shorthand,
+      // signal.mjs:720); `.degradeBy(1 - p)` otherwise (signal.mjs:699-706
+      // — Strudel's amount is the DROP probability).
+      const body = gen(ir.body)
+      if (ir.p === 0.5) return `${body}.degrade()`
+      const dropAmount = +(1 - ir.p).toFixed(4)
+      return `${body}.degradeBy(${dropAmount})`
+    }
+
+    case 'Chunk': {
+      // Tier 4 — `chunk(n, f)` (pattern.mjs:2569-2578). The IR stores
+      // `transform` as the body with the user's transform pre-applied
+      // (extracted at parse time), so we recover the transform string
+      // the same way `Every` does — via `extractTransform`.
+      const baseCode = gen(ir.body)
+      const transformStr = extractTransform(ir.transform, ir.body)
+      return `${baseCode}.chunk(${ir.n}, ${transformStr})`
+    }
   }
 }
 

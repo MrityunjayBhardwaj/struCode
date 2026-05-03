@@ -539,6 +539,145 @@ describe('Late tag (Tier 4)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Degrade tag — Tier 4 forced tag (Phase 19-03 Task 06)
+// ---------------------------------------------------------------------------
+
+describe('Degrade tag (Tier 4)', () => {
+  it('IR.degrade() constructs Degrade node with retention probability', () => {
+    const tree = IR.degrade(0.5, IR.play('c4'))
+    expect(tree.tag).toBe('Degrade')
+    if (tree.tag === 'Degrade') {
+      expect(tree.p).toBe(0.5)
+      expect(tree.body.tag).toBe('Play')
+    }
+  })
+
+  it('p=1 keeps every event', () => {
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const events = collect(IR.degrade(1, body))
+    expect(events.length).toBe(4)
+  })
+
+  it('p=0 drops every event', () => {
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const events = collect(IR.degrade(0, body))
+    expect(events.length).toBe(0)
+  })
+
+  it('is deterministic: same input produces same output across calls', () => {
+    const body = IR.seq(
+      IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'),
+      IR.play('e'), IR.play('f'), IR.play('g'), IR.play('h'),
+    )
+    const a = collect(IR.degrade(0.5, body)).map((e) => e.note)
+    const b = collect(IR.degrade(0.5, body)).map((e) => e.note)
+    expect(a).toEqual(b)
+  })
+
+  it('retention rate roughly matches p over a large sample', () => {
+    // Build 64 sequential events to get a reasonable sample. The
+    // seededRand used by Degrade is deterministic, so we can assert
+    // a window rather than a probabilistic bound.
+    const children = Array.from({ length: 64 }, (_, i) => IR.play(`n${i}`))
+    const body = IR.seq(...children)
+    const kept = collect(IR.degrade(0.5, body)).length
+    // Empirically the retention rate over 64 events near the start
+    // of the rand signal lands close to 50%. Allow a generous window
+    // (25%..75%) to absorb seed-distribution skew.
+    expect(kept).toBeGreaterThan(16)
+    expect(kept).toBeLessThan(48)
+  })
+
+  it('propagates loc on retained events (PV24)', () => {
+    const loc = [{ start: 7, end: 9 }]
+    const body = IR.play('c4', 0.25, {}, loc)
+    const events = collect(IR.degrade(1, body))
+    expect(events.length).toBe(1)
+    expect(events[0].loc).toEqual(loc)
+  })
+
+  it('toStrudel(Degrade) emits .degrade() when p=0.5, else .degradeBy(1-p)', () => {
+    expect(toStrudel(IR.degrade(0.5, IR.play('c4')))).toBe('note("c4").degrade()')
+    // p=0.7 → drop=0.3
+    expect(toStrudel(IR.degrade(0.7, IR.play('c4')))).toBe('note("c4").degradeBy(0.3)')
+    // p=0.2 → drop=0.8
+    expect(toStrudel(IR.degrade(0.2, IR.play('c4')))).toBe('note("c4").degradeBy(0.8)')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Chunk tag — Tier 4 forced tag (Phase 19-03 Task 08)
+// ---------------------------------------------------------------------------
+
+describe('Chunk tag (Tier 4)', () => {
+  it('IR.chunk() constructs Chunk node', () => {
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const transform = IR.fast(2, body)
+    const tree = IR.chunk(4, transform, body)
+    expect(tree.tag).toBe('Chunk')
+    if (tree.tag === 'Chunk') {
+      expect(tree.n).toBe(4)
+      expect(tree.transform.tag).toBe('Fast')
+      expect(tree.body.tag).toBe('Seq')
+    }
+  })
+
+  it('rotates the active slot through the body across cycles', () => {
+    // 4-step body, n=4 — slot k of body plays during outer cycle k,
+    // re-timed to fill the full outer cycle. Transform is identity for
+    // this test (transform === body), so each outer cycle plays one of
+    // the body's events.
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const tree = IR.chunk(4, body, body)
+    const allEvents = []
+    for (let c = 0; c < 4; c++) {
+      const cycleEvents = collect(tree, {
+        cycle: c, time: c, begin: c, end: c + 1, duration: 1,
+      })
+      allEvents.push(...cycleEvents)
+    }
+    expect(allEvents.length).toBe(4)
+    expect(allEvents[0].note).toBe('a')
+    expect(allEvents[1].note).toBe('b')
+    expect(allEvents[2].note).toBe('c')
+    expect(allEvents[3].note).toBe('d')
+    // Each event spans the full outer cycle.
+    expect(allEvents[0].begin).toBeCloseTo(0, 9)
+    expect(allEvents[0].end).toBeCloseTo(1, 9)
+    expect(allEvents[1].begin).toBeCloseTo(1, 9)
+    expect(allEvents[2].begin).toBeCloseTo(2, 9)
+  })
+
+  it('applies transform params to slot events', () => {
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const transform = IR.fx('gain', { gain: 0.5 }, body)
+    const tree = IR.chunk(4, transform, body)
+    const events = collect(tree, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(1)
+    expect(events[0].note).toBe('a')
+    expect(events[0].gain).toBe(0.5)
+  })
+
+  it('propagates loc through transformed slot events (PV24)', () => {
+    const loc = [{ start: 1, end: 2 }]
+    const body = IR.play('a', 0.25, {}, loc)
+    const transform = IR.fx('gain', { gain: 0.5 }, body)
+    const tree = IR.chunk(1, transform, body)
+    const events = collect(tree, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(1)
+    expect(events[0].loc).toEqual(loc)
+  })
+
+  it('toStrudel(Chunk) emits .chunk(n, transform)', () => {
+    const body = IR.play('c4')
+    const transform = IR.fx('gain', { gain: 0.5 }, body)
+    const result = toStrudel(IR.chunk(4, transform, body))
+    expect(result).toContain('.chunk(4,')
+    expect(result).toContain('gain(0.5)')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // JSON serialization
 // ---------------------------------------------------------------------------
 
