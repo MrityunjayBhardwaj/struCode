@@ -321,14 +321,27 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     case 'Degrade': {
       // Strudel's `degradeBy(x)` (signal.mjs:699-706) is
       //   pat._degradeByWith(rand, x)
-      // i.e. keep events where the rand signal at the event's time
-      // exceeds x. Our IR's `p` is the RETENTION probability — keep
-      // when `seededRand(begin) < p`. The seededRand helper mirrors
-      // Strudel's legacy `__timeToRands` exactly so seed=0 produces
-      // the same drop set as Strudel for matching event onsets.
-      // Event `loc` is preserved on retained events (PV24).
+      //   = pat.fmap(a => _ => a).appLeft(rand.filterValues(v => v > x))
+      // i.e. keep events where `rand` at the event's time STRICTLY
+      // EXCEEDS x. Strudel's amount `x` is the drop probability; our
+      // IR's `p` is the retention probability, so x = 1 - p.
+      // Retention condition: `seededRand(begin) > (1 - p)`.
+      //
+      // The strictness matters at boundaries:
+      //   degradeBy(0) ⇒ keep when rand > 0 — drops events whose rand
+      //                  samples to exactly 0 (e.g. the t=0 hap on
+      //                  legacy RNG). Verified against Strudel:
+      //                  `s("bd hh sd cp").degradeBy(0)` returns 3 haps
+      //                  not 4 (bd@0 dropped because rand(0) = 0 fails
+      //                  `> 0`).
+      //   degradeBy(1) ⇒ keep when rand > 1 — never (rand ∈ [0,1)).
+      //
+      // The seededRand helper mirrors Strudel's legacy __timeToRands
+      // for seed=0 verbatim, so the drop set matches event-for-event
+      // when event onsets match.
       const events = walk(ir.body, ctx)
-      return events.filter((e) => seededRand(e.begin, RAND_SEED) < ir.p)
+      const dropAmount = 1 - ir.p
+      return events.filter((e) => seededRand(e.begin, RAND_SEED) > dropAmount)
     }
 
     case 'Chunk': {

@@ -552,13 +552,18 @@ describe('Degrade tag (Tier 4)', () => {
     }
   })
 
-  it('p=1 keeps every event', () => {
+  it('p=1 keeps every event whose seeded rand > 0 (Strudel parity — strict comparison)', () => {
+    // p=1 ⇒ drop=0 ⇒ keep when rand > 0. Legacy RNG returns 0 at t=0
+    // exactly, so the t=0 onset is dropped. This matches Strudel —
+    // `s("bd hh sd cp").degradeBy(0)` returns 3 haps, not 4.
     const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
     const events = collect(IR.degrade(1, body))
-    expect(events.length).toBe(4)
+    expect(events.length).toBe(3)
+    // The dropped event is the t=0 one (note 'a').
+    expect(events.map((e) => e.note)).toEqual(['b', 'c', 'd'])
   })
 
-  it('p=0 drops every event', () => {
+  it('p=0 drops every event (rand > 1 never)', () => {
     const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
     const events = collect(IR.degrade(0, body))
     expect(events.length).toBe(0)
@@ -589,8 +594,11 @@ describe('Degrade tag (Tier 4)', () => {
   })
 
   it('propagates loc on retained events (PV24)', () => {
+    // The t=0 event is dropped under strict `rand > 0` (rand(0)=0).
+    // Place the Play inside a Seq so its onset is at 0.5 — rand(0.5) =
+    // 0.260481 > 0, so the event is kept and we can assert loc.
     const loc = [{ start: 7, end: 9 }]
-    const body = IR.play('c4', 0.25, {}, loc)
+    const body = IR.seq(IR.play('a'), IR.play('c4', 0.25, {}, loc))
     const events = collect(IR.degrade(1, body))
     expect(events.length).toBe(1)
     expect(events[0].loc).toEqual(loc)

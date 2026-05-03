@@ -256,6 +256,29 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       return ir
     }
 
+    case 'degrade': {
+      // Tier 4 (Phase 19-03 Task 07). `.degrade()` shorthand for
+      // `.degradeBy(0.5)` (signal.mjs:720). Our Degrade.p is the
+      // retention probability; 50% drop ⇒ 50% retain ⇒ p = 0.5.
+      return IR.degrade(0.5, ir)
+    }
+
+    case 'degradeBy': {
+      // Tier 4 (Phase 19-03 Task 07). `.degradeBy(amount)` filters each
+      // event with drop probability `amount` (signal.mjs:686-706 — keeps
+      // events where `rand > amount`). Our Degrade.p is the RETENTION
+      // probability — translate via p = 1 - amount.
+      //
+      // Off-by-one trap (CONTEXT pre-mortem #2 / RESEARCH §3.4): the
+      // direction of the inversion silently inverts user intent, so two
+      // boundary tests below land at degradeBy(0) (full retain) and
+      // degradeBy(1) (full drop) plus an asymmetric probe at
+      // degradeBy(0.8) that distinguishes p=0.2 from the wrong p=0.8.
+      const amount = parseFloat(args.trim())
+      if (isNaN(amount)) return ir
+      return IR.degrade(1 - amount, ir)
+    }
+
     case 'late': {
       // Tier 4 (Phase 19-03 Task 03). `.late(t)` shifts events forward by
       // `t` cycles while preserving cycle length (pattern.mjs:2081-2089).

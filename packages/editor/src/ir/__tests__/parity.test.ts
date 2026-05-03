@@ -389,4 +389,96 @@ describe('parity harness', () => {
     // PV24 — loc presence on every event.
     for (const e of ours) expect(e.loc).toBeDefined()
   })
+
+  // ------------------------------------------------------------------
+  // Phase 19-03 Task 07 — `.degrade()` / `.degradeBy(amount)` parity.
+  //
+  // Ground truth: signal.mjs:686-720 — degradeBy(x) is
+  //   pat._degradeByWith(rand, x)
+  //   = pat.fmap(a => _ => a).appLeft(rand.filterValues(v => v > x))
+  // i.e. keep an event when rand at that event's time exceeds x. `rand`
+  // is signal((t, ctrl) => getRandsAtTime(t, 1, ctrl.randSeed)) at
+  // signal.mjs:449. With default randSeed=0, the legacy generator at
+  // signal.mjs:237-264 is fully deterministic.
+  //
+  // Our Degrade.p = retention probability = 1 - Strudel's drop amount.
+  // collect.ts:seededRand mirrors __timeToRands(t,1) for seed=0 verbatim,
+  // so for matching event onsets the drop decisions match Strudel
+  // event-for-event — we can assert exact-set equality (NOT count
+  // tolerance, the orchestrator brief's fallback). The harness probes:
+  //
+  //   - .degrade()         → retention 50%, n=8 over 4 cycles → 32 trials
+  //   - .degradeBy(0.3)    → retention 70% (p=0.7)
+  //   - .degradeBy(0.8)    → retention 20% (p=0.2) — the asymmetric
+  //                          probe per plan-check warning #4 (catches
+  //                          p↔(1-p) inversion that 0.3↔0.7 doesn't).
+  //
+  // Plus boundary tests: degradeBy(0) keeps all; degradeBy(1) drops all.
+  // ------------------------------------------------------------------
+  it('degrade parity: s("bd hh sd cp ride lt mt ht").degrade() — exact retention set matches Strudel', async () => {
+    const code = 's("bd hh sd cp ride lt mt ht").degrade()'
+    const rawExpected = (await strudelEventsFromCode(code, 4)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    // seededRand mirrors Strudel's __timeToRands for seed=0 → exact
+    // event-set match (count and per-event begin).
+    expect(ours.length).toBe(expected.length)
+    const tuple = (e: IREvent): string => `${e.begin.toFixed(9)}|${e.s ?? ''}`
+    const expSet = new Set(expected.map(tuple))
+    const oursSet = new Set(ours.map(tuple))
+    expect(oursSet).toEqual(expSet)
+    // PV24 — loc presence on every retained event.
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  it('degradeBy(0.3) parity: retention ~70% — exact set match', async () => {
+    const code = 's("bd hh sd cp ride lt mt ht").degradeBy(0.3)'
+    const rawExpected = (await strudelEventsFromCode(code, 4)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    expect(ours.length).toBe(expected.length)
+    const tuple = (e: IREvent): string => `${e.begin.toFixed(9)}|${e.s ?? ''}`
+    expect(new Set(ours.map(tuple))).toEqual(new Set(expected.map(tuple)))
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  it('degradeBy(0.8) parity: retention ~20% — asymmetric probe catches p↔(1-p) inversion', async () => {
+    const code = 's("bd hh sd cp ride lt mt ht").degradeBy(0.8)'
+    const rawExpected = (await strudelEventsFromCode(code, 4)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    expect(ours.length).toBe(expected.length)
+    const tuple = (e: IREvent): string => `${e.begin.toFixed(9)}|${e.s ?? ''}`
+    expect(new Set(ours.map(tuple))).toEqual(new Set(expected.map(tuple)))
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  // Strudel's `degradeBy` uses STRICT > comparison (signal.mjs:686-706).
+  // degradeBy(0) keeps when rand > 0 — drops events whose rand samples
+  // to exactly 0 (the legacy RNG returns 0 at t=0). So `degradeBy(0)`
+  // on a 4-event pattern across [0,1) returns 3 events (the t=0 onset
+  // is dropped) — verified against Strudel.
+  it('degradeBy(0) matches Strudel exactly (boundary — strict > comparison)', async () => {
+    const code = 's("bd hh sd cp").degradeBy(0)'
+    const expected = withOnsetInWindow(
+      dedupeByWholeBegin((await strudelEventsFromCode(code, 1)).map(normalizeStrudelPan)),
+      0, 1,
+    )
+    const ours = collectCycles(parseStrudel(code), 0, 1)
+    expect(ours.length).toBe(expected.length)
+  })
+
+  it('degradeBy(1) drops every event (boundary — rand > 1 never)', () => {
+    const ours = collectCycles(parseStrudel('s("bd hh sd cp").degradeBy(1)'), 0, 1)
+    expect(ours.length).toBe(0)
+  })
+
+  it('parseStrudel routes .degrade() and .degradeBy(amount) to Degrade tag', () => {
+    const a = parseStrudel('s("bd").degrade()')
+    expect(a.tag).toBe('Degrade')
+    if (a.tag === 'Degrade') expect(a.p).toBe(0.5)
+    const b = parseStrudel('s("bd").degradeBy(0.3)')
+    expect(b.tag).toBe('Degrade')
+    if (b.tag === 'Degrade') expect(b.p).toBeCloseTo(0.7, 9)
+  })
 })
