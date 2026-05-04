@@ -749,18 +749,24 @@ function parseTransform(transformStr: string, defaultIr: PatternIR, baseOffset =
 
   const str = transformStr.trim()
 
+  // 19-05 / #74 D-10: callSiteRange covers the whole bare-form expression
+  // (`fast(2)` / `slow(2)`). For arrow paths, the recursive applyChain
+  // computes per-method callSiteRange — this outer range is unused there.
+  const trimmedStart = baseOffset + (transformStr.length - transformStr.trimStart().length)
+  const callSiteRange: [number, number] = [trimmedStart, trimmedStart + str.length]
+
   // fast(n)
   const fastMatch = str.match(/^fast\s*\(\s*([0-9.]+)\s*\)$/)
   if (fastMatch) {
     const n = parseFloat(fastMatch[1])
-    if (!isNaN(n)) return IR.fast(n, defaultIr)
+    if (!isNaN(n)) return IR.fast(n, defaultIr, tagMeta('fast', callSiteRange))
   }
 
   // slow(n)
   const slowMatch = str.match(/^slow\s*\(\s*([0-9.]+)\s*\)$/)
   if (slowMatch) {
     const n = parseFloat(slowMatch[1])
-    if (!isNaN(n)) return IR.slow(n, defaultIr)
+    if (!isNaN(n)) return IR.slow(n, defaultIr, tagMeta('slow', callSiteRange))
   }
 
   // Arrow function like "x => x.fast(2)" — recurse with the chain offset
