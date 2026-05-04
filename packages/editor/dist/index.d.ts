@@ -201,6 +201,30 @@ type PatternIR = {
     n: number;
     body: PatternIR;
 } | {
+    tag: 'Pick';
+    selector: PatternIR;
+    lookup: PatternIR[];
+} | {
+    tag: 'Struct';
+    mask: string;
+    body: PatternIR;
+} | {
+    tag: 'Swing';
+    n: number;
+    body: PatternIR;
+} | {
+    tag: 'Shuffle';
+    n: number;
+    body: PatternIR;
+} | {
+    tag: 'Scramble';
+    n: number;
+    body: PatternIR;
+} | {
+    tag: 'Chop';
+    n: number;
+    body: PatternIR;
+} | {
     tag: 'Loop';
     body: PatternIR;
 } | {
@@ -228,6 +252,12 @@ declare const IR: {
     readonly degrade: (p: number, body: PatternIR) => PatternIR;
     readonly chunk: (n: number, transform: PatternIR, body: PatternIR) => PatternIR;
     readonly ply: (n: number, body: PatternIR) => PatternIR;
+    readonly pick: (selector: PatternIR, lookup: PatternIR[]) => PatternIR;
+    readonly struct: (mask: string, body: PatternIR) => PatternIR;
+    readonly swing: (n: number, body: PatternIR) => PatternIR;
+    readonly shuffle: (n: number, body: PatternIR) => PatternIR;
+    readonly scramble: (n: number, body: PatternIR) => PatternIR;
+    readonly chop: (n: number, body: PatternIR) => PatternIR;
     readonly loop: (body: PatternIR) => PatternIR;
     readonly code: (code: string) => PatternIR;
 };
