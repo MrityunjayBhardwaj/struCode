@@ -771,6 +771,115 @@ describe('parseStrudel', () => {
     expect(code).toContain('.swing(4)')
   })
 
+  // Phase 19-04 T-05 — Shuffle + Scramble shape tests.
+  it('IR.shuffle smart constructor produces well-formed Shuffle node', () => {
+    const body = IR.play('c4')
+    const node = IR.shuffle(4, body)
+    expect(node.tag).toBe('Shuffle')
+    if (node.tag === 'Shuffle') {
+      expect(node.n).toBe(4)
+      expect(node.body).toBe(body)
+      expect(Object.keys(node).sort()).toEqual(['body', 'n', 'tag'])
+    }
+  })
+
+  it('IR.scramble smart constructor produces well-formed Scramble node', () => {
+    const body = IR.play('c4')
+    const node = IR.scramble(4, body)
+    expect(node.tag).toBe('Scramble')
+    if (node.tag === 'Scramble') {
+      expect(node.n).toBe(4)
+      expect(node.body).toBe(body)
+      expect(Object.keys(node).sort()).toEqual(['body', 'n', 'tag'])
+    }
+  })
+
+  it('collect(Shuffle) produces a per-cycle PERMUTATION (each slot used exactly once)', () => {
+    // Body = 4 notes at slots {0, 1/4, 2/4, 3/4}. Shuffle reorders the slot
+    // contents per cycle. The permutation property: across one cycle, the
+    // set of source-slot indices used is exactly {0,1,2,3}.
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.shuffle(4, body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(4)
+    // Each note appears exactly once (permutation, not independent samples).
+    const notes = events.map((e) => e.note).sort()
+    expect(notes).toEqual(['a', 'b', 'c', 'd'])
+    // Destination begins are exactly the slot grid {0, 1/4, 1/2, 3/4}.
+    const begins = events.map((e) => +e.begin.toFixed(9)).sort((a, b) => a - b)
+    expect(begins).toEqual([0, 0.25, 0.5, 0.75])
+  })
+
+  it('collect(Shuffle) is deterministic — same cycle yields same permutation', () => {
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.shuffle(4, body)
+    const a = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    const b = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(a.map((e) => e.note)).toEqual(b.map((e) => e.note))
+  })
+
+  it('collect(Shuffle) propagates loc through _collectRearrange (PV24)', () => {
+    const body = IR.seq(
+      IR.play('a', 0.25, {}, [{ start: 5, end: 6 }]),
+      IR.play('b', 0.25, {}, [{ start: 7, end: 8 }]),
+      IR.play('c', 0.25, {}, [{ start: 9, end: 10 }]),
+      IR.play('d', 0.25, {}, [{ start: 11, end: 12 }]),
+    )
+    const node = IR.shuffle(4, body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    for (const e of events) expect(e.loc).toBeDefined()
+  })
+
+  it('collect(Scramble) selector entries are each in [0, n) with replacement allowed', () => {
+    // 4 slots, n=4. Each destination slot independently samples a source
+    // index in [0, 4). Entries may repeat or be omitted (with replacement).
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.scramble(4, body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    // Count is 0..n depending on whether some source slots were never picked.
+    // The permutation property does NOT hold (with replacement). So we don't
+    // assert event count = 4. Each event MUST come from a body note in {a,b,c,d}.
+    for (const e of events) {
+      expect(['a', 'b', 'c', 'd']).toContain(String(e.note))
+    }
+  })
+
+  it('collect(Scramble) is deterministic — same cycle yields same selection', () => {
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.scramble(4, body)
+    const a = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    const b = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(a.length).toBe(b.length)
+    expect(a.map((e) => `${e.begin}|${e.note}`)).toEqual(
+      b.map((e) => `${e.begin}|${e.note}`),
+    )
+  })
+
+  it('collect(Shuffle) cycles 0 and 1 produce different permutations (per-cycle randomness)', () => {
+    // A weak property — different cycles MAY occasionally yield the same
+    // permutation by chance. With seed=0 and small n=4, however, the legacy
+    // RNG produces distinct permutations across consecutive cycles.
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.shuffle(4, body)
+    const c0 = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    const c1 = collect(node, { cycle: 1, time: 1, begin: 1, end: 2, duration: 1 })
+    const seq0 = c0.sort((a, b) => a.begin - b.begin).map((e) => e.note).join(',')
+    const seq1 = c1.sort((a, b) => a.begin - b.begin).map((e) => e.note).join(',')
+    // Per-cycle permutation differs cycle-to-cycle for at least one cycle pair.
+    // If this ever fires false, document the seed alignment.
+    expect(seq0).not.toEqual(seq1)
+  })
+
+  it('toStrudel(Shuffle) round-trips to .shuffle(n)', () => {
+    const node = IR.shuffle(4, IR.play('c4'))
+    expect(toStrudel(node)).toContain('.shuffle(4)')
+  })
+
+  it('toStrudel(Scramble) round-trips to .scramble(n)', () => {
+    const node = IR.scramble(4, IR.play('c4'))
+    expect(toStrudel(node)).toContain('.scramble(4)')
+  })
+
   describe('source-range tracking', () => {
     it('single-line note("c4 e4") — Play.loc points at exact char ranges', () => {
       // 0123456789012345

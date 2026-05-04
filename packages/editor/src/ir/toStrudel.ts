@@ -214,6 +214,18 @@ function gen(ir: PatternIR): string {
       // mapping for round-trip.
       return `${gen(ir.body)}.swing(${ir.n})`
     }
+
+    case 'Shuffle': {
+      // Tier 4 (Phase 19-04 T-05) — `shuffle(n)` (signal.mjs:392-394).
+      // 1:1 method↔tag mapping; direct round-trip.
+      return `${gen(ir.body)}.shuffle(${ir.n})`
+    }
+
+    case 'Scramble': {
+      // Tier 4 (Phase 19-04 T-05) — `scramble(n)` (signal.mjs:405-407).
+      // 1:1 method↔tag mapping; direct round-trip.
+      return `${gen(ir.body)}.scramble(${ir.n})`
+    }
   }
 }
 

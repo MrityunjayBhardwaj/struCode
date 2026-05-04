@@ -52,6 +52,44 @@ function seededRand(t: number, seed: number): number {
   return Math.abs(intSeedToRand(timeToIntSeed(t + seed)))
 }
 
+/**
+ * `getRandsAtTime(t, n, seed)` mirror — returns `n` deterministic rands
+ * derived from a SINGLE time-seed via the xorwise chain. Matches Strudel's
+ * `__timeToRandsPrime` (signal.mjs:246-256) verbatim:
+ *   seed₀ = __timeToIntSeed(t + seed)
+ *   result[i] = __intSeedToRand(seedᵢ)
+ *   seedᵢ₊₁ = __xorwise(seedᵢ)
+ *
+ * Used by `Shuffle` (signal.mjs:368) — `randrun(n)` calls
+ * `getRandsAtTime(t.floor().add(0.5), n, randSeed)`, producing n
+ * CHAINED rands from one time-seed. This is NOT n independent
+ * `seededRand(t+i/n, ...)` calls — those would re-seed the xorwise
+ * chain n times. Confirmed against `__timeToRandsPrime` source: when
+ * n>1, the seed is xorwised between samples, not re-derived from t.
+ *
+ * Note `intSeedToRand` is signed (`s % 2**29`) and `seededRand` takes
+ * its absolute value; here we follow the same convention so the result
+ * matches `__timeToRandsPrime` returning raw values, then absolute
+ * value via the consumer (`randrun` later sorts by magnitude — sort key
+ * uses raw values; for shuffle's permutation extraction the sign drops
+ * out because sort is stable on pairs).
+ *
+ * BUT: `randrun` does NOT take Math.abs before sorting (signal.mjs:371).
+ * It sorts by raw `(a[0] > b[0]) - (a[0] < b[0])`. Mirror that exactly.
+ */
+function seededRandsAtTime(t: number, n: number, seed: number): number[] {
+  if (n === 1) {
+    return [Math.abs(intSeedToRand(timeToIntSeed(t + seed)))]
+  }
+  let s = timeToIntSeed(t + seed)
+  const out: number[] = []
+  for (let i = 0; i < n; i++) {
+    out.push(intSeedToRand(s))
+    s = xorwise(s)
+  }
+  return out
+}
+
 export interface CollectContext {
   /** Query window start (cycles) */
   begin: number
@@ -123,6 +161,58 @@ function makeEvent(ctx: CollectContext, note: string | number, params: Record<st
     color: (merged.color as string | null) ?? null,
     params: merged,
   }
+}
+
+/**
+ * Shared slice-and-place for `Shuffle` and `Scramble` (D-02 — two distinct
+ * tags per PV28; one implementation since the arms are ~95% identical).
+ *
+ * Strudel's `_rearrangeWith(ipat, n, pat)` (signal.mjs:378-381):
+ *   pats = [pat.zoom(i/n, (i+1)/n) for i in 0..n]
+ *   ipat.fmap(i => pats[i].repeatCycles(n)._fast(n)).innerJoin()
+ *
+ * For each destination slot `d` in [0, n), the index pattern selects a
+ * source slot `s = selector[d]`. We slice body events whose cycle-position
+ * falls in `[s/n, (s+1)/n)` and re-emit them at destination slot `d`,
+ * preserving the within-slot offset:
+ *   newBegin = ctx.cycle + d/n + (sourcePos - s/n)
+ *
+ * `selector` is a length-n array of source slot indices; the caller
+ * (Shuffle / Scramble arms) computes it per-cycle from RNG.
+ *
+ * `loc` flows through unchanged (PV24 — every IREvent retains its loc).
+ */
+function _collectRearrange(
+  selector: number[],
+  n: number,
+  body: PatternIR,
+  ctx: CollectContext,
+): IREvent[] {
+  const bodyEvents = walk(body, ctx)
+  const out: IREvent[] = []
+  for (let d = 0; d < n; d++) {
+    const sourceIdx = ((selector[d] % n) + n) % n
+    const srcStart = sourceIdx / n
+    const srcEnd = (sourceIdx + 1) / n
+    const dstStart = d / n
+    for (const e of bodyEvents) {
+      const cyclePos = e.begin - ctx.cycle
+      // Begin-membership in source slot — matches Strudel's zoom which
+      // includes events whose onset is in [s/n, (s+1)/n).
+      if (cyclePos >= srcStart - 1e-9 && cyclePos < srcEnd - 1e-9) {
+        const offsetWithinSrc = cyclePos - srcStart
+        const newBegin = ctx.cycle + dstStart + offsetWithinSrc
+        const dur = e.end - e.begin
+        out.push({
+          ...e,
+          begin: newBegin,
+          end: newBegin + dur,
+          endClipped: newBegin + dur,
+        })
+      }
+    }
+  }
+  return out
 }
 
 /**
@@ -579,6 +669,54 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
         }
       }
       return out
+    }
+
+    case 'Shuffle': {
+      // Strudel's `shuffle(n)` (signal.mjs:392-394):
+      //   shuffle(n, pat) = _rearrangeWith(randrun(n), n, pat)
+      // `randrun(n)` (signal.mjs:365-376) produces a per-cycle PERMUTATION
+      // of [0..n-1]:
+      //   nums = [0..n-1] sorted by getRandsAtTime(t.floor().add(0.5), n, seed)
+      //   at slot i, return nums[i]
+      //
+      // Critical: `getRandsAtTime(t, n, seed)` for n>1 derives ONE time-seed
+      // from t and then chains xorwise to produce the n rands — NOT n
+      // independent calls at offset times. Mirror this with
+      // `seededRandsAtTime(ctx.cycle + 0.5, n, RAND_SEED)` so that for
+      // randSeed=0 the permutation matches Strudel event-for-event.
+      //
+      // Strudel's sort comparator uses raw values (signal.mjs:371) —
+      // `(a[0] > b[0]) - (a[0] < b[0])` — so we sort raw, not absolute.
+      //
+      // PV28: re-time direct via _collectRearrange, NOT through Fast.
+      if (ir.n < 1) return walk(ir.body, ctx)
+      const rands = seededRandsAtTime(ctx.cycle + 0.5, ir.n, RAND_SEED)
+      const perm = rands
+        .map((r, i) => [r, i] as const)
+        .sort((a, b) => (a[0] > b[0] ? 1 : a[0] < b[0] ? -1 : 0))
+        .map((x) => x[1])
+      return _collectRearrange(perm, ir.n, ir.body, ctx)
+    }
+
+    case 'Scramble': {
+      // Strudel's `scramble(n)` (signal.mjs:405-407):
+      //   scramble(n, pat) = _rearrangeWith(_irand(n)._segment(n), n, pat)
+      // `_irand(n)` = `rand.fmap(x => Math.trunc(x * n))` (signal.mjs:476).
+      // `_segment(n) = struct(pure(true)._fast(n))` (pattern.mjs:2173-2175)
+      // re-times the continuous `_irand(n)` signal to slot onsets at i/n.
+      // For each slot the signal evaluates at the slot's begin time —
+      // `signal((t, ctrl) => …)` queries with `state.span.begin`
+      // (signal.mjs:18-21) — i.e. `cycle + slot/n`. Independent samples
+      // per slot (with replacement); slices may repeat or not appear.
+      //
+      // PV28: re-time direct via _collectRearrange, NOT through Fast.
+      if (ir.n < 1) return walk(ir.body, ctx)
+      const selector: number[] = []
+      for (let slot = 0; slot < ir.n; slot++) {
+        const r = seededRand(ctx.cycle + slot / ir.n, RAND_SEED)
+        selector.push(Math.trunc(r * ir.n))
+      }
+      return _collectRearrange(selector, ir.n, ir.body, ctx)
     }
   }
 }
