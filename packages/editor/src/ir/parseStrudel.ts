@@ -569,6 +569,32 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       return IR.swing(n, ir)
     }
 
+    case 'shuffle': {
+      // Tier 4 (Phase 19-04 Task T-06). `.shuffle(n)` per signal.mjs:
+      // 392-394:
+      //   shuffle(n, pat) = _rearrangeWith(randrun(n), n, pat)
+      // Slices pat into n parts, plays them in a random per-cycle
+      // PERMUTATION (each part exactly once). Forced tag per PV28 (named
+      // after the user-typed method); collect arm + shared helper landed
+      // in T-05. Parity test in T-07. RESEARCH §1.5; PK11 step 5.
+      const n = parseInt(args.trim(), 10)
+      if (isNaN(n) || n < 1) return ir
+      return IR.shuffle(n, ir)
+    }
+
+    case 'scramble': {
+      // Tier 4 (Phase 19-04 Task T-06). `.scramble(n)` per signal.mjs:
+      // 405-407:
+      //   scramble(n, pat) = _rearrangeWith(_irand(n)._segment(n), n, pat)
+      // Slices pat into n parts and INDEPENDENTLY samples each slot's
+      // source — parts may repeat or not appear at all per cycle. Forced
+      // tag per PV28; collect arm + shared helper landed in T-05. Parity
+      // test in T-07. RESEARCH §1.6; PK11 step 5.
+      const n = parseInt(args.trim(), 10)
+      if (isNaN(n) || n < 1) return ir
+      return IR.scramble(n, ir)
+    }
+
     case 'p':
       // .p("trackId") — track assignment, pass through
       return ir
