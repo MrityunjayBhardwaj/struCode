@@ -45,6 +45,16 @@ const TAG_COLOR: Record<PatternIR["tag"], string> = {
   Degrade:  "var(--ir-degrade, #84cc16)",
   Chunk:    "var(--ir-chunk, #fb7185)",
   Ply:      "var(--ir-ply, #22d3ee)",
+  // Tier 4 (Phase 19-04) — Struct/Swing/Pick/Shuffle/Scramble/Chop. Each
+  // gets a distinct hue from the existing palette. Struct uses a lighter
+  // magenta than Elongate (#d946ef) to avoid color collision; the other
+  // five take the planner-suggested hues from RESEARCH §5.
+  Struct:   "var(--ir-struct, #e879f9)",
+  Swing:    "var(--ir-swing, #a3e635)",
+  Pick:     "var(--ir-pick, #34d399)",
+  Shuffle:  "var(--ir-shuffle, #fbbf24)",
+  Scramble: "var(--ir-scramble, #f87171)",
+  Chop:     "var(--ir-chop, #c084fc)",
   Loop:     "var(--ir-loop, #6366f1)",
   Code:     "var(--ir-code, #ef4444)",
 };
@@ -70,6 +80,12 @@ function summarize(node: PatternIR): string {
     case "Degrade": return `p=${node.p}`;
     case "Chunk":   return `n=${node.n}`;
     case "Ply":     return `n=${node.n}`;
+    case "Struct":   return `mask="${node.mask}"`;
+    case "Swing":    return `n=${node.n}`;
+    case "Pick":     return `${node.lookup.length} entries`;
+    case "Shuffle":  return `n=${node.n}`;
+    case "Scramble": return `n=${node.n}`;
+    case "Chop":     return `n=${node.n}`;
     case "Loop":   return "";
     case "Code":   return JSON.stringify(node.code).slice(0, 60);
   }
@@ -91,8 +107,17 @@ function children(node: PatternIR): readonly PatternIR[] {
     case "Late":
     case "Degrade":
     case "Ply":
+    case "Struct":
+    case "Swing":
+    case "Shuffle":
+    case "Scramble":
+    case "Chop":
     case "Loop":  return [node.body];
     case "Chunk": return [node.body, node.transform];
+    // Pick is the first IR shape with a list-of-sub-IRs alongside a
+    // distinguished selector child — render selector first, then the
+    // lookup entries as siblings.
+    case "Pick":  return [node.selector, ...node.lookup];
     default:      return [];
   }
 }
