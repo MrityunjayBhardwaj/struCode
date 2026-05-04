@@ -15,7 +15,36 @@
  */
 
 import { IR, type PatternIR } from './PatternIR'
+import type { SourceLocation } from './IREvent'
 import { parseMini } from './parseMini'
+
+/**
+ * Build the optional `meta` payload for a non-Play smart constructor or
+ * literal-construction site (19-05 / #74).
+ *
+ * - `method` is the user-typed method name (exact token, D-08 — e.g.
+ *   `'degradeBy'` ≠ `'degrade'`, `'jux'` ≠ `'layer'`). Sites that pass
+ *   the live `method` variable from `applyMethod` automatically satisfy
+ *   D-08; desugar / root sites that hard-code a method string must match
+ *   the user's vocabulary.
+ * - `callSiteRange` is the absolute source range of the method-call
+ *   substring (e.g., `.fast(2)`'s start..end in the user's full code).
+ *
+ * Returns the shape every smart constructor / literal-construction site
+ * accepts. Loc is single-element here — multi-element only arises in
+ * mini-notation `!N` repetition (not implemented today). RESEARCH §10 #12
+ * for the load-bearing arithmetic gotcha (consumed = remaining - rest).
+ */
+function tagMeta(
+  method: string,
+  callSiteRange: [number, number],
+): { loc: SourceLocation[]; userMethod: string } {
+  const [start, end] = callSiteRange
+  return {
+    loc: [{ start, end }],
+    userMethod: method,
+  }
+}
 
 /** Parse a Strudel code string. Always returns a tree (Code node for unsupported). */
 export function parseStrudel(code: string): PatternIR {
@@ -215,16 +244,29 @@ function applyChain(ir: PatternIR, chain: string, baseOffset = 0): PatternIR {
     const { method, args, rest, argsOffset } = extractNextMethod(remaining)
     if (!method) break
 
+    // Pre-compute the call-site range BEFORE applyMethod runs (19-05 / #74).
+    //   remainingOffset = position of leading '.' in user's full code.
+    //   consumed        = the substring length applyMethod is about to handle
+    //                     (RESEARCH §10 #12: must compute from
+    //                     remaining.length - rest.length BEFORE the
+    //                     advance below; off-by-one on the leading '.' is
+    //                     the silent trap).
+    const consumed = remaining.length - rest.length
+    const callSiteRange: [number, number] = [
+      remainingOffset,
+      remainingOffset + consumed,
+    ]
+
     // argsOffset is -1 when the method has no parens. We pass 0-args
     // calls through with baseOffset = remainingOffset (still > 0 for any
     // non-leading method) so the precursor test's "non-zero" assertion
     // holds even on chains that mix paren-less and paren-ful methods.
     const argsAbsoluteOffset = argsOffset >= 0 ? remainingOffset + argsOffset : remainingOffset
-    current = applyMethod(current, method, args, argsAbsoluteOffset)
+    current = applyMethod(current, method, args, argsAbsoluteOffset, callSiteRange)
 
-    // Advance remainingOffset by however many chars `extractNextMethod`
-    // consumed from `remaining` (i.e., remaining.length - rest.length).
-    remainingOffset += remaining.length - rest.length
+    // Advance remainingOffset by the consumed length (same arithmetic as
+    // before — just split across the call to make callSiteRange available).
+    remainingOffset += consumed
     remaining = rest
   }
 
@@ -236,8 +278,21 @@ function applyChain(ir: PatternIR, chain: string, baseOffset = 0): PatternIR {
  * `baseOffset` is the absolute char offset of `args[0]` in the user's
  * full code (or of the method name itself for paren-less methods),
  * threaded forward to any parseTransform calls.
+ * `callSiteRange` is the absolute source range of the whole method-call
+ * substring (e.g., `.fast(2)` start..end) — passed to `tagMeta` for
+ * `loc` + `userMethod` population on the constructed non-Play tag
+ * (19-05 / #74). Default `[0, 0]` preserves backward-compat for any
+ * potential non-applyChain caller (none exist today).
  */
-function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0): PatternIR {
+function applyMethod(
+  ir: PatternIR,
+  method: string,
+  args: string,
+  baseOffset = 0,
+  callSiteRange: [number, number] = [0, 0],
+): PatternIR {
+  // Suppress unused-parameter lint; case bodies that need the range read it.
+  void callSiteRange
   switch (method) {
     case 'fast': {
       const n = parseFloat(args.trim())
