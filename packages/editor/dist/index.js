@@ -3894,7 +3894,8 @@ function parseExpression(expr, baseOffset = 0) {
     if (rootIR.tag === "Code") {
       return IR.code(expr);
     }
-    const ir = applyChain(rootIR, chain);
+    const chainOffset = trimmedOffset + root.length;
+    const ir = applyChain(rootIR, chain, chainOffset);
     return ir;
   } catch {
     return IR.code(expr);
@@ -3928,19 +3929,23 @@ function parseRoot(root, baseOffset = 0) {
   }
   return IR.code(trimmed);
 }
-function applyChain(ir, chain) {
+function applyChain(ir, chain, baseOffset = 0) {
   if (!chain.trim()) return ir;
+  const leadingWs = chain.length - chain.trimStart().length;
   let remaining = chain.trim();
+  let remainingOffset = baseOffset + leadingWs;
   let current2 = ir;
   while (remaining.startsWith(".")) {
-    const { method, args: args2, rest } = extractNextMethod(remaining);
+    const { method, args: args2, rest, argsOffset } = extractNextMethod(remaining);
     if (!method) break;
-    current2 = applyMethod(current2, method, args2);
+    const argsAbsoluteOffset = argsOffset >= 0 ? remainingOffset + argsOffset : remainingOffset;
+    current2 = applyMethod(current2, method, args2, argsAbsoluteOffset);
+    remainingOffset += remaining.length - rest.length;
     remaining = rest;
   }
   return current2;
 }
-function applyMethod(ir, method, args2) {
+function applyMethod(ir, method, args2, baseOffset = 0) {
   switch (method) {
     case "fast": {
       const n = parseFloat(args2.trim());
@@ -3956,18 +3961,20 @@ function applyMethod(ir, method, args2) {
       const [nStr, transformStr] = splitFirstArg(args2);
       const n = parseInt(nStr.trim(), 10);
       if (isNaN(n)) return ir;
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir) : ir;
+      const transformOffset = transformStr ? offsetOfSubArg(args2, transformStr, baseOffset) : baseOffset;
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir;
       return IR.every(n, transform, ir);
     }
     case "sometimes": {
-      const transform = args2.trim() ? parseTransform(args2.trim(), ir) : ir;
+      const transform = args2.trim() ? parseTransform(args2.trim(), ir, baseOffset + (args2.length - args2.trimStart().length)) : ir;
       return IR.choice(0.5, transform, ir);
     }
     case "sometimesBy": {
       const [pStr, transformStr] = splitFirstArg(args2);
       const p = parseFloat(pStr.trim());
       if (isNaN(p)) return ir;
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir) : ir;
+      const transformOffset = transformStr ? offsetOfSubArg(args2, transformStr, baseOffset) : baseOffset;
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir;
       return IR.choice(p, transform, ir);
     }
     case "mask": {
@@ -3989,7 +3996,8 @@ function applyMethod(ir, method, args2) {
       const [nStr, transformStr] = splitFirstArg(args2);
       const n = parseInt(nStr.trim(), 10);
       if (isNaN(n) || n < 1) return ir;
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir) : ir;
+      const transformOffset = transformStr ? offsetOfSubArg(args2, transformStr, baseOffset) : baseOffset;
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir;
       return IR.chunk(n, transform, ir);
     }
     case "degrade": {
@@ -4006,7 +4014,7 @@ function applyMethod(ir, method, args2) {
       return IR.late(t, ir);
     }
     case "jux": {
-      const transformed = args2.trim() ? parseTransform(args2.trim(), ir) : ir;
+      const transformed = args2.trim() ? parseTransform(args2.trim(), ir, baseOffset + (args2.length - args2.trimStart().length)) : ir;
       return IR.stack(
         IR.fx("pan", { pan: -1 }, ir),
         IR.fx("pan", { pan: 1 }, transformed)
@@ -4024,7 +4032,8 @@ function applyMethod(ir, method, args2) {
       const t = parseFloat(tStr.trim());
       if (isNaN(t)) return ir;
       const lateBody = IR.late(t, ir);
-      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody) : lateBody;
+      const transformOffset = transformStr ? offsetOfSubArg(args2, transformStr, baseOffset) : baseOffset;
+      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody, transformOffset) : lateBody;
       return IR.stack(ir, transformed);
     }
     case "room":
@@ -4051,7 +4060,7 @@ function applyMethod(ir, method, args2) {
       return ir;
   }
 }
-function parseTransform(transformStr, defaultIr) {
+function parseTransform(transformStr, defaultIr, baseOffset = 0) {
   const str = transformStr.trim();
   const fastMatch = str.match(/^fast\s*\(\s*([0-9.]+)\s*\)$/);
   if (fastMatch) {
@@ -4065,9 +4074,19 @@ function parseTransform(transformStr, defaultIr) {
   }
   const arrowMatch = str.match(/^[a-z]\s*=>\s*[a-z]\s*\.(.+)$/);
   if (arrowMatch) {
-    return applyChain(defaultIr, "." + arrowMatch[1]);
+    const dotIdx = str.indexOf(".", str.indexOf("=>"));
+    const chainStartInTrimmed = dotIdx >= 0 ? dotIdx : 0;
+    const leadingWs = transformStr.length - transformStr.trimStart().length;
+    const chainOffset = baseOffset + leadingWs + chainStartInTrimmed;
+    return applyChain(defaultIr, "." + arrowMatch[1], chainOffset);
   }
   return defaultIr;
+}
+function offsetOfSubArg(args2, subArg, argsBaseOffset) {
+  const trimmedSub = subArg.trim();
+  if (!trimmedSub) return argsBaseOffset;
+  const idx = args2.indexOf(trimmedSub);
+  return idx >= 0 ? argsBaseOffset + idx : argsBaseOffset;
 }
 function splitRootAndChain(expr) {
   let i2 = 0;
@@ -4084,23 +4103,25 @@ function splitRootAndChain(expr) {
   };
 }
 function extractNextMethod(chain) {
-  if (!chain.startsWith(".")) return { method: "", args: "", rest: chain };
+  if (!chain.startsWith(".")) return { method: "", args: "", rest: chain, argsOffset: -1 };
   let i2 = 1;
   let method = "";
   while (i2 < chain.length && /[a-zA-Z0-9_$]/.test(chain[i2])) {
     method += chain[i2++];
   }
-  if (!method) return { method: "", args: "", rest: chain };
+  if (!method) return { method: "", args: "", rest: chain, argsOffset: -1 };
   let args2 = "";
   let rest = chain.slice(i2);
+  let argsOffset = -1;
   if (rest.startsWith("(")) {
     const closeIdx = findMatchingParen(rest, 0);
     if (closeIdx !== -1) {
       args2 = rest.slice(1, closeIdx);
+      argsOffset = i2 + 1;
       rest = rest.slice(closeIdx + 1);
     }
   }
-  return { method, args: args2, rest };
+  return { method, args: args2, rest, argsOffset };
 }
 function findMatchingParen(str, startIdx) {
   let depth = 0;
@@ -21213,6 +21234,8 @@ var ProgramBuilder = class _ProgramBuilder {
     this._synthDefaults = {};
     this._sampleDefaults = {};
     this._debug = true;
+    this._argChecks = true;
+    this._timingGuarantees = false;
     this._argBpmScaling = true;
     this._currentBpm = 60;
     // Iteration-context fields for current_time / current_beat introspection (#226).
@@ -21402,6 +21425,19 @@ var ProgramBuilder = class _ProgramBuilder {
   current_beat_duration() {
     return 60 / this._currentBpm;
   }
+  // Tier C PR #3 (#255). bt/rt are pure BPM math — NOT current_beat / current_time
+  // wrappers (audit-corrected scope). vt is an alias of current_time (= the
+  // thread's local virtual run time). Per-task bpm scoping matters: a
+  // bt(1) inside a live_loop at use_bpm 120 must read THAT loop's bpm.
+  bt(t) {
+    return t * 60 / this._currentBpm;
+  }
+  rt(t) {
+    return t * this._currentBpm / 60;
+  }
+  vt() {
+    return this.current_time();
+  }
   /**
    * Logical (virtual) time in seconds at the current build position. Quantised
    * to the most recent sleep — matches Desktop SP's "wall-clock time quantised
@@ -21533,6 +21569,25 @@ var ProgramBuilder = class _ProgramBuilder {
    */
   set_volume(vol) {
     this.steps.push({ tag: "setVolume", vol });
+    return this;
+  }
+  // --- Mixer setters (Tier C PR #3, #255) — deferred steps -----------------
+  // Fire at scheduled virtual time so sweeps sequence against playback.
+  // `set_mixer_control!` accepts an opts hash (pre_amp/amp/hpf/lpf/*_bypass);
+  // `reset_mixer!` restores the MIXER config defaults. Cross-engine ethic:
+  // arity is enforced where the step pushes (here), not in the bridge.
+  set_mixer_control(opts) {
+    if (typeof opts !== "object" || opts === null) {
+      throw new TypeError(`set_mixer_control! expects an opts hash, got ${typeof opts}`);
+    }
+    this.steps.push({ tag: "setMixerControl", opts });
+    return this;
+  }
+  reset_mixer(...args2) {
+    if (args2.length > 0) {
+      throw new Error(`reset_mixer! expects no arguments, got ${args2.length}`);
+    }
+    this.steps.push({ tag: "resetMixer" });
     return this;
   }
   // --- Recording (#228) — deferred steps -----------------------------------
@@ -21739,7 +21794,10 @@ var ProgramBuilder = class _ProgramBuilder {
    * working. When `use_arg_checks` ships in Tier C, this becomes a real read.
    */
   current_arg_checks() {
-    return true;
+    return this._argChecks;
+  }
+  current_timing_guarantees() {
+    return this._timingGuarantees;
   }
   /** Deferred set — fires at runtime (interleaved with sleeps). */
   set(key, value) {
@@ -21894,6 +21952,32 @@ var ProgramBuilder = class _ProgramBuilder {
     this._sampleDefaults = prev;
     return this;
   }
+  /** Merge new opts into the existing synth defaults (vs `use_synth_defaults` which replaces). */
+  use_merged_synth_defaults(opts) {
+    this._synthDefaults = { ...this._synthDefaults, ...opts };
+    return this;
+  }
+  /** Merge new opts into the existing sample defaults. */
+  use_merged_sample_defaults(opts) {
+    this._sampleDefaults = { ...this._sampleDefaults, ...opts };
+    return this;
+  }
+  /** Block-form merge of synth defaults — restores the previous map after the block. */
+  with_merged_synth_defaults(opts, buildFn) {
+    const prev = this._synthDefaults;
+    this._synthDefaults = { ...prev, ...opts };
+    buildFn(this);
+    this._synthDefaults = prev;
+    return this;
+  }
+  /** Block-form merge of sample defaults — restores the previous map after the block. */
+  with_merged_sample_defaults(opts, buildFn) {
+    const prev = this._sampleDefaults;
+    this._sampleDefaults = { ...prev, ...opts };
+    buildFn(this);
+    this._sampleDefaults = prev;
+    return this;
+  }
   // --- BPM block ---
   /** Temporarily set BPM for a block. Sleeps inside are scaled. Restores previous BPM after. */
   with_bpm(bpm, buildFn) {
@@ -21954,6 +22038,49 @@ var ProgramBuilder = class _ProgramBuilder {
     this._argBpmScaling = enabled;
     buildFn(this);
     this._argBpmScaling = prev;
+    return this;
+  }
+  /**
+   * Toggle synth-arg validation. Default: true. We always validate today, so
+   * this primarily exists to gate the validator without surprising users
+   * coming from desktop. `current_arg_checks` reads the same flag.
+   */
+  use_arg_checks(enabled) {
+    this._argChecks = enabled;
+    return this;
+  }
+  /** Block-form arg-checks toggle — restores previous flag after the block. */
+  with_arg_checks(enabled, buildFn) {
+    const prev = this._argChecks;
+    this._argChecks = enabled;
+    buildFn(this);
+    this._argChecks = prev;
+    return this;
+  }
+  /** Block-form debug toggle — restores previous flag after the block. */
+  with_debug(enabled, buildFn) {
+    const prev = this._debug;
+    this._debug = enabled;
+    buildFn(this);
+    this._debug = prev;
+    return this;
+  }
+  /**
+   * Toggle strict-timing mode. Desktop SP drops synth dispatches that miss
+   * their schedule window; in the browser our scheduler is already best-effort
+   * with a generous lookahead, so the flag is recorded for parity but doesn't
+   * change behavior today. `current_timing_guarantees` reads the same flag.
+   */
+  use_timing_guarantees(enabled) {
+    this._timingGuarantees = enabled;
+    return this;
+  }
+  /** Block-form timing-guarantees toggle — restores previous flag after the block. */
+  with_timing_guarantees(enabled, buildFn) {
+    const prev = this._timingGuarantees;
+    this._timingGuarantees = enabled;
+    buildFn(this);
+    this._timingGuarantees = prev;
     return this;
   }
   // --- Utility functions ---
@@ -22792,6 +22919,12 @@ async function runProgram(program, ctx, fxCounter) {
         }
         break;
       }
+      case "setMixerControl":
+        ctx.bridge?.setMixerControl(step.opts);
+        break;
+      case "resetMixer":
+        ctx.bridge?.resetMixer();
+        break;
       case "useOsc":
         break;
       case "recordingStart":
@@ -23456,6 +23589,109 @@ var _SuperSonicBridge = class _SuperSonicBridge {
     }
   }
   /**
+   * Set arbitrary mixer params (Tier C PR #3 #255 — set_mixer_control! DSL).
+   * The allowlist matches the sonic-pi-mixer synthdef's parameter vocabulary
+   * (pre_amp/amp/hpf/lpf and four bypass flags). Param names not in this
+   * set are silently dropped by scsynth, so we filter + surface a console
+   * warning instead — making the parameter-name boundary loud rather than
+   * quiet. Returns the names actually applied for telemetry / test assertion.
+   */
+  setMixerControl(opts) {
+    if (!this.sonic) return [];
+    const ALLOWED = /* @__PURE__ */ new Set([
+      "pre_amp",
+      "amp",
+      "hpf",
+      "lpf",
+      "hpf_bypass",
+      "lpf_bypass",
+      "limiter_bypass",
+      "leak_dc_bypass"
+    ]);
+    const applied = [];
+    for (const [key, value] of Object.entries(opts)) {
+      if (!ALLOWED.has(key)) {
+        console.warn(`[SonicPi] set_mixer_control! ignoring unknown param "${key}". Known: ${[...ALLOWED].join(", ")}`);
+        continue;
+      }
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      this.sonic.send("/n_set", this.mixerNodeId, key, value);
+      applied.push(key);
+    }
+    return applied;
+  }
+  /**
+   * Reset mixer to MIXER config defaults (Tier C PR #3 #255 — reset_mixer! DSL).
+   * Mirrors the initialization sequence in connect() so a sweep can be
+   * undone in one call.
+   */
+  resetMixer() {
+    if (!this.sonic) return;
+    this.sonic.send(
+      "/n_set",
+      this.mixerNodeId,
+      "amp",
+      MIXER.AMP,
+      "pre_amp",
+      MIXER.PRE_AMP,
+      "hpf",
+      MIXER.HPF,
+      "lpf",
+      MIXER.LPF,
+      "limiter_bypass",
+      MIXER.LIMITER_BYPASS,
+      "hpf_bypass",
+      0,
+      "lpf_bypass",
+      0,
+      "leak_dc_bypass",
+      0
+    );
+  }
+  /**
+   * Snapshot scsynth-side info for the `scsynth_info` DSL fn (#255).
+   * SuperSonic doesn't expose all of scsynth's runtime constants; we surface
+   * what we know (sample_rate, num_buffers from MIXER/AUDIO_BUFFERS config)
+   * and fill the rest with the values from a default scsynth instance so
+   * user code that does `scsynth_info.sample_rate` gets a real number.
+   */
+  getScsynthInfo() {
+    const sampleRate = this.sonic?.audioContext.sampleRate ?? 44100;
+    return {
+      sample_rate: sampleRate,
+      sample_dur: 1 / sampleRate,
+      radians_per_sample: 2 * Math.PI / sampleRate,
+      control_rate: sampleRate / 64,
+      control_dur: 64 / sampleRate,
+      subsample_offset: 0,
+      num_output_busses: 16,
+      num_input_busses: 16,
+      num_audio_busses: 1024,
+      num_control_busses: 4096,
+      num_buffers: 4096
+    };
+  }
+  /** Snapshot for the `status` DSL fn (#255). Counts loaded synthdefs. */
+  getStatus() {
+    const sampleRate = this.sonic?.audioContext.sampleRate ?? 44100;
+    return {
+      ugens: 0,
+      // not tracked in WASM scsynth
+      synths: 0,
+      // not tracked
+      groups: 2,
+      // synthGroup + fxGroup + mixerGroup vary; report 2 as floor
+      sdefs: this.loadedSynthDefs.size,
+      avg_cpu: 0,
+      // not exposed by SuperSonic
+      peak_cpu: 0,
+      nom_samp_rate: sampleRate,
+      act_samp_rate: sampleRate,
+      audio_busses: 1024,
+      control_busses: 4096
+    };
+  }
+  /**
    * Enable OSC trace logging — callback receives formatted trace strings
    * matching desktop Sonic Pi's output style.
    *
@@ -23926,6 +24162,37 @@ var _SuperSonicBridge = class _SuperSonicBridge {
   getSampleDuration(name2) {
     return this.sampleDurations.get(name2);
   }
+  /** Return loaded sample names (Tier C PR #2 #253 — for sample_paths host stub). */
+  getLoadedSampleNames() {
+    return Array.from(this.loadedSamples.keys());
+  }
+  /**
+   * Preload a sample into the cache (Tier C PR #2 #253 — for load_samples DSL).
+   * Returns the buffer number once loaded. Same lazy-load path used by sample
+   * playback — re-loads are deduped via pendingSampleLoads.
+   */
+  preloadSample(name2) {
+    return this.ensureSampleLoaded(name2);
+  }
+  /**
+   * Free a single sample from the loaded cache (Tier C PR #2 #253).
+   * The next `sample :name` re-loads it from CDN. We don't free the scsynth
+   * buffer slot — bufNum recycling would require tracking which synths still
+   * reference it, and the cost of holding an unused buffer is one int. Drops
+   * the duration cache entry too so beat_stretch falls back to default.
+   */
+  freeSample(name2) {
+    const had = this.loadedSamples.delete(name2);
+    this.sampleDurations.delete(name2);
+    return had;
+  }
+  /** Free every loaded sample (Tier C PR #2 #253). Returns the count freed. */
+  freeAllSamples() {
+    const count = this.loadedSamples.size;
+    this.loadedSamples.clear();
+    this.sampleDurations.clear();
+    return count;
+  }
   /** Free all synth, FX, and monitor nodes (clean slate for re-evaluate). */
   freeAllNodes() {
     if (!this.sonic) return;
@@ -24295,12 +24562,13 @@ var DSL_NAMES = [
   "halves",
   // Tier B PR #2 — defaults / setting introspection (#233). Inside live_loops
   // these route via __b for per-task reads; at top level they read the
-  // topLevelBuilder's state. current_arg_checks returns constant true (we
-  // don't validate arg names yet — see ProgramBuilder).
+  // topLevelBuilder's state. current_arg_checks/current_timing_guarantees
+  // are flag readers — Tier C wired the toggle setters that drive them.
   "current_synth_defaults",
   "current_sample_defaults",
   "current_arg_checks",
   "current_debug",
+  "current_timing_guarantees",
   // Tier B PR #2 — block-form tuplet scheduling (#233). The transpiler
   // routes `tuplets [...] do |x| ... end` to __b.tuplets(list, opts, cb),
   // resolving the list/opts at build time then pushing N play+sleep step
@@ -24335,7 +24603,45 @@ var DSL_NAMES = [
   // Tier B PR #3 — load_example (#236). Looks up an example by name in the
   // bundled registry then forwards to the host's loadExampleHandler so the
   // editor replaces its buffer + re-runs. Top-level only (host-bridge).
-  "load_example"
+  "load_example",
+  // Tier C PR #1 — state wrappers (#251). Toggle/merge family. Imperative
+  // forms mutate _argChecks/_debug/_timingGuarantees/_synthDefaults/
+  // _sampleDefaults on the builder; block forms save → set → run → restore.
+  // Inside live_loops the transpiler routes via __b through BUILDER_METHODS
+  // for the imperative forms and via the block-opener path (line ~1052) for
+  // the with_* forms. Top-level dslValues forward to topLevelBuilder.
+  "use_arg_checks",
+  "use_timing_guarantees",
+  "use_merged_synth_defaults",
+  "use_merged_sample_defaults",
+  "with_arg_checks",
+  "with_debug",
+  "with_timing_guarantees",
+  "with_merged_synth_defaults",
+  "with_merged_sample_defaults",
+  // Tier C PR #2 — sample/buffer registry (#253). Top-level host-bridge stubs
+  // for the sample-cache surface. sample_paths returns the bundled+custom
+  // names list (no real fs in browser). sample_buffer/buffer return browser
+  // shapes of the desktop Buffer object — duration-bearing info dictionaries
+  // since user-buffer recording is deferred to a later PR.
+  "sample_paths",
+  "sample_buffer",
+  "sample_free",
+  "sample_free_all",
+  "load_samples",
+  "buffer",
+  // Tier C PR #3 — mixer + introspection (#255). set_mixer_control! /
+  // reset_mixer! are deferred ProgramBuilder steps (mirror set_volume
+  // lifecycle so sweeps sequence with playback). scsynth_info / status
+  // are pure host-queries from the bridge. vt is an alias of current_time.
+  // bt / rt are pure BPM math (NOT current_beat wrappers — see #255 audit).
+  "set_mixer_control",
+  "reset_mixer",
+  "scsynth_info",
+  "status",
+  "vt",
+  "bt",
+  "rt"
 ];
 
 // ../../../sonicPiWeb/src/engine/Sandbox.ts
@@ -24751,6 +25057,12 @@ var BUILDER_METHODS = /* @__PURE__ */ new Set([
   "current_beat_duration",
   "current_time",
   "current_sched_ahead_time",
+  // Tier C PR #3 — bt/rt/vt (#255). Per-task pure reads (bt/rt depend on the
+  // calling task's bpm; vt is a current_time alias). Inside live_loops the
+  // task's __b carries the right bpm; top-level dslValues forward to topLevelBuilder.
+  "bt",
+  "rt",
+  "vt",
   // Tier B — PRNG inspection (#227). Per-task RNG mutations — route through
   // __b so they hit the calling builder's seeded random stream.
   "current_random_seed",
@@ -24763,6 +25075,19 @@ var BUILDER_METHODS = /* @__PURE__ */ new Set([
   "current_sample_defaults",
   "current_arg_checks",
   "current_debug",
+  "current_timing_guarantees",
+  // Tier C PR #1 — state wrappers (#251). Imperative toggle/merge family
+  // routes through __b so per-task state mutations don't leak to siblings.
+  // Block forms are registered separately at the block-opener path below.
+  "use_arg_checks",
+  "use_timing_guarantees",
+  "use_merged_synth_defaults",
+  "use_merged_sample_defaults",
+  "with_arg_checks",
+  "with_debug",
+  "with_timing_guarantees",
+  "with_merged_synth_defaults",
+  "with_merged_sample_defaults",
   // Deferred-step DSL contract (issue #193 — must mirror methods on
   // ProgramBuilder so they fire at scheduled virtual time, not build time).
   "stop_loop",
@@ -24791,6 +25116,11 @@ var BUILDER_METHODS = /* @__PURE__ */ new Set([
   "recording_stop",
   "recording_save",
   "recording_delete",
+  // Tier C PR #3 — mixer setters (#255). Deferred so a `set_mixer_control!
+  // lpf: 30; sleep 4; reset_mixer!` sweep sequences with playback. Same
+  // lifecycle reasoning as set_volume (#197).
+  "set_mixer_control",
+  "reset_mixer",
   // Budget
   "__checkBudget__"
 ]);
@@ -25452,7 +25782,7 @@ function transpileMethodCall(node, ctx) {
     if (methodName === "defonce") {
       return transpileDefonce(node, argsNode, blockNode, ctx);
     }
-    if (methodName === "with_fx" || methodName === "with_synth" || methodName === "with_bpm" || methodName === "with_transpose" || methodName === "with_arg_bpm_scaling" || methodName === "with_synth_defaults" || methodName === "with_sample_defaults" || methodName === "with_random_seed" || methodName === "with_octave" || methodName === "with_density") {
+    if (methodName === "with_fx" || methodName === "with_synth" || methodName === "with_bpm" || methodName === "with_transpose" || methodName === "with_arg_bpm_scaling" || methodName === "with_synth_defaults" || methodName === "with_sample_defaults" || methodName === "with_random_seed" || methodName === "with_octave" || methodName === "with_density" || methodName === "with_arg_checks" || methodName === "with_debug" || methodName === "with_timing_guarantees" || methodName === "with_merged_synth_defaults" || methodName === "with_merged_sample_defaults") {
       return transpileWithBlock(methodName, argsNode, blockNode, ctx);
     }
     if (methodName === "in_thread") {
@@ -29969,6 +30299,7 @@ var SonicPiEngine = class {
         () => topLevelBuilder.current_sample_defaults(),
         () => topLevelBuilder.current_arg_checks(),
         () => topLevelBuilder.current_debug(),
+        () => topLevelBuilder.current_timing_guarantees(),
         // Tier B PR #2 — block-form tuplets (#233). Forwards to topLevelBuilder
         // so steps land on the top-level program. Inside live_loops the
         // transpiler emits `__b.tuplets(...)` directly via BUILDER_METHODS.
@@ -30062,7 +30393,153 @@ var SonicPiEngine = class {
             throw new Error("load_example requires a host editor \u2014 no loadExampleHandler registered on the engine.");
           }
           this.loadExampleHandler(example);
-        }
+        },
+        // Tier C PR #1 — state wrappers (#251). Imperative forms forward to
+        // topLevelBuilder so top-level toggles persist into per-task __b state
+        // when live_loops are scheduled. Block forms wrap a build callback the
+        // sandbox-emitted IIFE supplies, mirroring with_synth_defaults.
+        (enabled) => {
+          topLevelBuilder.use_arg_checks(enabled);
+        },
+        (enabled) => {
+          topLevelBuilder.use_timing_guarantees(enabled);
+        },
+        (opts) => {
+          topLevelBuilder.use_merged_synth_defaults(opts);
+        },
+        (opts) => {
+          topLevelBuilder.use_merged_sample_defaults(opts);
+        },
+        (enabled, fn) => {
+          topLevelBuilder.with_arg_checks(enabled, fn);
+        },
+        (enabled, fn) => {
+          topLevelBuilder.with_debug(enabled, fn);
+        },
+        (enabled, fn) => {
+          topLevelBuilder.with_timing_guarantees(enabled, fn);
+        },
+        (opts, fn) => {
+          topLevelBuilder.with_merged_synth_defaults(opts, fn);
+        },
+        (opts, fn) => {
+          topLevelBuilder.with_merged_sample_defaults(opts, fn);
+        },
+        // Tier C PR #2 — sample/buffer registry (#253). Top-level host stubs.
+        // sample_paths returns the bundled+custom names (browser equivalent of
+        // Desktop SP's filesystem paths). Optional `filter` substring match
+        // matches the upstream sound.rb behavior loosely. Without `filter`,
+        // returns every name we know about.
+        (filter2) => {
+          const all = sample_names();
+          const loaded = this.bridge?.getLoadedSampleNames() ?? [];
+          const merged = [...all];
+          for (const name2 of loaded) if (!merged.includes(name2)) merged.push(name2);
+          if (typeof filter2 === "string" && filter2.length > 0) {
+            return merged.filter((n) => n.includes(filter2));
+          }
+          return merged;
+        },
+        // sample_buffer(name) — returns a buffer-info dictionary. Unlike Desktop
+        // SP's Buffer object, recording into the buffer is out of scope for
+        // this PR; we expose name + duration so user code that asks for
+        // sample_buffer(:foo).duration works.
+        (name2) => {
+          if (typeof name2 !== "string") {
+            throw new TypeError(`sample_buffer expects a name (string or symbol), got ${typeof name2}`);
+          }
+          const dur = this.bridge?.getSampleDuration(name2);
+          return { name: name2, duration: dur ?? 0 };
+        },
+        // sample_free(name) — drop a single sample from the loaded cache.
+        // Returns true if it was loaded, false otherwise. The bufNum slot is
+        // not recycled (would require reference counting); the cost is one
+        // integer of waste per freed sample.
+        (name2) => {
+          if (typeof name2 !== "string") return false;
+          return this.bridge?.freeSample(name2) ?? false;
+        },
+        // sample_free_all — drop every sample from the loaded cache. Returns
+        // the count freed. Useful before benchmarks or for memory pressure.
+        () => {
+          return this.bridge?.freeAllSamples() ?? 0;
+        },
+        // load_samples(*names) — preload a list of samples so the first
+        // sample :name call is instant (no first-load CDN fetch latency).
+        // Accepts varargs so `load_samples :bd_haus, :sn_dub` works; the
+        // transpiler unpacks symbols into individual string args.
+        (...names) => {
+          if (!this.bridge) return;
+          const flat = names.flat();
+          for (const n of flat) {
+            if (typeof n === "string") {
+              void this.bridge.preloadSample(n).catch(() => {
+              });
+            }
+          }
+        },
+        // buffer(name, duration?) — browser stub. Desktop SP allocates a
+        // recording buffer; we don't have user-buffer recording yet, so the
+        // call returns a buffer-info shape that mirrors sample_buffer. This
+        // unblocks code that calls .duration on the result without erroring.
+        (name2, duration) => {
+          if (typeof name2 !== "string") {
+            throw new TypeError(`buffer expects a name (string or symbol), got ${typeof name2}`);
+          }
+          const known = this.bridge?.getSampleDuration(name2);
+          return { name: name2, duration: known ?? duration ?? 8 };
+        },
+        // Tier C PR #3 — set_mixer_control! / reset_mixer! (#255). Deferred
+        // ProgramBuilder steps. Top-level forms forward to topLevelBuilder so
+        // a bare `set_mixer_control! lpf: 30; sleep 4; reset_mixer!` sequences
+        // against playback (mirrors set_volume / recording lifecycle).
+        (opts) => {
+          topLevelBuilder.set_mixer_control(opts);
+        },
+        (...args2) => {
+          topLevelBuilder.reset_mixer(...args2);
+        },
+        // Tier C PR #3 — scsynth_info / status (#255). Pure host-queries from
+        // the bridge. Both return a flat info dict; in tests with no bridge
+        // they return safe placeholder shapes so user code that reads .field
+        // doesn't crash.
+        () => this.bridge?.getScsynthInfo() ?? {
+          sample_rate: 44100,
+          sample_dur: 1 / 44100,
+          radians_per_sample: 2 * Math.PI / 44100,
+          control_rate: 44100 / 64,
+          control_dur: 64 / 44100,
+          subsample_offset: 0,
+          num_output_busses: 16,
+          num_input_busses: 16,
+          num_audio_busses: 1024,
+          num_control_busses: 4096,
+          num_buffers: 4096
+        },
+        () => this.bridge?.getStatus() ?? {
+          ugens: 0,
+          synths: 0,
+          groups: 0,
+          sdefs: 0,
+          avg_cpu: 0,
+          peak_cpu: 0,
+          nom_samp_rate: 44100,
+          act_samp_rate: 44100,
+          audio_busses: 1024,
+          control_busses: 4096
+        },
+        // Tier C PR #3 — vt / bt / rt (#255). Pure BPM math + virtual-time
+        // alias. At top level use_bpm only updates `defaultBpm` (it does not
+        // call topLevelBuilder.use_bpm), and `current_time` reads
+        // scheduler.audioTime (line 1051) — so we mirror those sources here.
+        // Inside live_loops the transpiler routes through __b via
+        // BUILDER_METHODS, where per-task _currentBpm and _audioTime are correct.
+        () => scheduler.audioTime,
+        // vt: thread's local virtual run time
+        (t) => t * 60 / defaultBpm,
+        // bt: beats → seconds at current bpm
+        (t) => t * defaultBpm / 60
+        // rt: seconds → beats (bypasses bpm scaling)
       ];
       const codeWarnings = validateCode(transpiledCode);
       for (const warning of codeWarnings) {

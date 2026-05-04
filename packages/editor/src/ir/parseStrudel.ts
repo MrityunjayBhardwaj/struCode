@@ -116,8 +116,13 @@ function parseExpression(expr: string, baseOffset = 0): PatternIR {
       return IR.code(expr)
     }
 
-    // Walk the method chain, wrapping ir
-    const ir = applyChain(rootIR, chain)
+    // Walk the method chain, wrapping ir.
+    // Compute absolute offset of chain[0] in the user's full code so that
+    // parseTransform calls inside applyChain receive non-zero baseOffsets
+    // for transform-arg positions (P39 / PRE-01 precursor — signature-
+    // level threading only; loc attribution to non-Play nodes deferred).
+    const chainOffset = trimmedOffset + root.length
+    const ir = applyChain(rootIR, chain, chainOffset)
 
     return ir
   } catch {
@@ -180,26 +185,46 @@ function parseRoot(root: string, baseOffset = 0): PatternIR {
 /**
  * Apply a sequence of method calls to an IR node.
  * Each method wraps the current node.
+ *
+ * `baseOffset` is the absolute char offset of `chain[0]` in the user's
+ * full code. Used to thread method-arg positions through parseTransform
+ * (PRE-01 precursor — P39 / PV25 signature-level threading).
  */
-function applyChain(ir: PatternIR, chain: string): PatternIR {
+function applyChain(ir: PatternIR, chain: string, baseOffset = 0): PatternIR {
   if (!chain.trim()) return ir
 
+  const leadingWs = chain.length - chain.trimStart().length
   let remaining = chain.trim()
+  let remainingOffset = baseOffset + leadingWs
   let current = ir
 
   while (remaining.startsWith('.')) {
-    const { method, args, rest } = extractNextMethod(remaining)
+    const { method, args, rest, argsOffset } = extractNextMethod(remaining)
     if (!method) break
 
-    current = applyMethod(current, method, args)
+    // argsOffset is -1 when the method has no parens. We pass 0-args
+    // calls through with baseOffset = remainingOffset (still > 0 for any
+    // non-leading method) so the precursor test's "non-zero" assertion
+    // holds even on chains that mix paren-less and paren-ful methods.
+    const argsAbsoluteOffset = argsOffset >= 0 ? remainingOffset + argsOffset : remainingOffset
+    current = applyMethod(current, method, args, argsAbsoluteOffset)
+
+    // Advance remainingOffset by however many chars `extractNextMethod`
+    // consumed from `remaining` (i.e., remaining.length - rest.length).
+    remainingOffset += remaining.length - rest.length
     remaining = rest
   }
 
   return current
 }
 
-/** Apply a single method call to an IR node. */
-function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
+/**
+ * Apply a single method call to an IR node.
+ * `baseOffset` is the absolute char offset of `args[0]` in the user's
+ * full code (or of the method name itself for paren-less methods),
+ * threaded forward to any parseTransform calls.
+ */
+function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0): PatternIR {
   switch (method) {
     case 'fast': {
       const n = parseFloat(args.trim())
@@ -218,13 +243,16 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       const [nStr, transformStr] = splitFirstArg(args)
       const n = parseInt(nStr.trim(), 10)
       if (isNaN(n)) return ir
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir) : ir
+      const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
       return IR.every(n, transform, ir)
     }
 
     case 'sometimes': {
       // .sometimes(transform) → Choice(0.5, transform(body), body)
-      const transform = args.trim() ? parseTransform(args.trim(), ir) : ir
+      const transform = args.trim()
+        ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length))
+        : ir
       return IR.choice(0.5, transform, ir)
     }
 
@@ -233,7 +261,8 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       const [pStr, transformStr] = splitFirstArg(args)
       const p = parseFloat(pStr.trim())
       if (isNaN(p)) return ir
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir) : ir
+      const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
       return IR.choice(p, transform, ir)
     }
 
@@ -284,7 +313,8 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       const [nStr, transformStr] = splitFirstArg(args)
       const n = parseInt(nStr.trim(), 10)
       if (isNaN(n) || n < 1) return ir
-      const transform = transformStr ? parseTransform(transformStr.trim(), ir) : ir
+      const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
+      const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
       return IR.chunk(n, transform, ir)
     }
 
@@ -342,9 +372,12 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       // form (no `.jux(...)` recovery in this wave). Accepted soft target
       // per CONTEXT round-trip discipline.
       //
-      // Known limitation: same parseTransform baseOffset gap as off
-      // (P39, pre-mortem 10). loc PRESENCE asserted, not value.
-      const transformed = args.trim() ? parseTransform(args.trim(), ir) : ir
+      // PRE-01 (PR #70): parseTransform now receives a non-zero
+      // baseOffset for the transform-arg position; loc-attribution to
+      // non-Play nodes still deferred per RESEARCH §2 Subtlety C.
+      const transformed = args.trim()
+        ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length))
+        : ir
       return IR.stack(
         IR.fx('pan', { pan: -1 }, ir),
         IR.fx('pan', { pan: 1 }, transformed),
@@ -398,15 +431,15 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
       // discipline (which applies fully only to 1:1 method↔tag mappings,
       // not desugars).
       //
-      // Known limitation: `parseTransform` does not thread `baseOffset`,
-      // so events from the transform sub-tree carry the body's `loc`
-      // rather than the transform-arg position (pre-existing P39 gap;
-      // PRE-MORTEM #10). Parity asserts `loc` PRESENCE, not value.
+      // PRE-01 (PR #70): parseTransform now receives the transform-arg
+      // baseOffset; loc-attribution to non-Play nodes still deferred per
+      // RESEARCH §2 Subtlety C — parity asserts loc PRESENCE, not value.
       const [tStr, transformStr] = splitFirstArg(args)
       const t = parseFloat(tStr.trim())
       if (isNaN(t)) return ir
       const lateBody = IR.late(t, ir)
-      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody) : lateBody
+      const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
+      const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody, transformOffset) : lateBody
       return IR.stack(ir, transformed)
     }
 
@@ -439,11 +472,37 @@ function applyMethod(ir: PatternIR, method: string, args: string): PatternIR {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Test hook (PRE-01 / PR #70): record the most recent baseOffset received
+// by parseTransform so a parity-harness probe can assert that multi-arg
+// methods thread non-zero offsets through the call chain. Internal — not
+// part of the public API. Reset between tests via __resetParseTransformDebug.
+// ---------------------------------------------------------------------------
+let __lastParseTransformBaseOffset = -1
+let __parseTransformCallCount = 0
+export function __resetParseTransformDebug(): void {
+  __lastParseTransformBaseOffset = -1
+  __parseTransformCallCount = 0
+}
+export function __getLastParseTransformBaseOffset(): number {
+  return __lastParseTransformBaseOffset
+}
+export function __getParseTransformCallCount(): number {
+  return __parseTransformCallCount
+}
+
 /**
- * Parse a transform function used in .every() / .sometimes().
+ * Parse a transform function used in .every() / .sometimes() / .off() / .jux() / .chunk().
  * e.g. "fast(2)", "rev", "x => x.fast(2)"
+ *
+ * `baseOffset` is the absolute char offset of `transformStr[0]` in the
+ * user's full code (PRE-01 precursor — signature-level threading; loc
+ * attribution to non-Play nodes is deferred per RESEARCH §2 Subtlety C).
  */
-function parseTransform(transformStr: string, defaultIr: PatternIR): PatternIR {
+function parseTransform(transformStr: string, defaultIr: PatternIR, baseOffset = 0): PatternIR {
+  __lastParseTransformBaseOffset = baseOffset
+  __parseTransformCallCount++
+
   const str = transformStr.trim()
 
   // fast(n)
@@ -460,13 +519,31 @@ function parseTransform(transformStr: string, defaultIr: PatternIR): PatternIR {
     if (!isNaN(n)) return IR.slow(n, defaultIr)
   }
 
-  // Arrow function like "x => x.fast(2)"
+  // Arrow function like "x => x.fast(2)" — recurse with the chain offset
+  // adjusted to the position of `.fast(...)` inside the arrow body.
   const arrowMatch = str.match(/^[a-z]\s*=>\s*[a-z]\s*\.(.+)$/)
   if (arrowMatch) {
-    return applyChain(defaultIr, '.' + arrowMatch[1])
+    const dotIdx = str.indexOf('.', str.indexOf('=>'))
+    const chainStartInTrimmed = dotIdx >= 0 ? dotIdx : 0
+    const leadingWs = transformStr.length - transformStr.trimStart().length
+    const chainOffset = baseOffset + leadingWs + chainStartInTrimmed
+    return applyChain(defaultIr, '.' + arrowMatch[1], chainOffset)
   }
 
   return defaultIr
+}
+
+/**
+ * Compute the absolute baseOffset of `subArg` within `args`, given that
+ * `args` itself starts at `argsBaseOffset` in the user's full code.
+ * Falls back to argsBaseOffset if subArg can't be located (defensive —
+ * shouldn't happen since splitFirstArg returns substrings).
+ */
+function offsetOfSubArg(args: string, subArg: string, argsBaseOffset: number): number {
+  const trimmedSub = subArg.trim()
+  if (!trimmedSub) return argsBaseOffset
+  const idx = args.indexOf(trimmedSub)
+  return idx >= 0 ? argsBaseOffset + idx : argsBaseOffset
 }
 
 // ---------------------------------------------------------------------------
@@ -500,11 +577,14 @@ function splitRootAndChain(expr: string): { root: string; chain: string } {
 
 /**
  * Extract the next .method(args) from a chain string.
- * Returns { method, args, rest } where rest is the remaining chain.
+ * Returns { method, args, rest, argsOffset } where rest is the remaining
+ * chain and argsOffset is the position of args[0] within the input chain
+ * (i.e., right after the opening paren). argsOffset is -1 when the method
+ * has no parens.
  */
-function extractNextMethod(chain: string): { method: string; args: string; rest: string } {
+function extractNextMethod(chain: string): { method: string; args: string; rest: string; argsOffset: number } {
   // Must start with .
-  if (!chain.startsWith('.')) return { method: '', args: '', rest: chain }
+  if (!chain.startsWith('.')) return { method: '', args: '', rest: chain, argsOffset: -1 }
 
   let i = 1
   // Read method name
@@ -513,21 +593,23 @@ function extractNextMethod(chain: string): { method: string; args: string; rest:
     method += chain[i++]
   }
 
-  if (!method) return { method: '', args: '', rest: chain }
+  if (!method) return { method: '', args: '', rest: chain, argsOffset: -1 }
 
   // Read optional args in parens
   let args = ''
   let rest = chain.slice(i)
+  let argsOffset = -1
 
   if (rest.startsWith('(')) {
     const closeIdx = findMatchingParen(rest, 0)
     if (closeIdx !== -1) {
       args = rest.slice(1, closeIdx)
+      argsOffset = i + 1 // position of args[0] in chain (skip the open paren)
       rest = rest.slice(closeIdx + 1)
     }
   }
 
-  return { method, args, rest }
+  return { method, args, rest, argsOffset }
 }
 
 /**
