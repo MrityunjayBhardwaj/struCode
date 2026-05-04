@@ -62,6 +62,7 @@ import {
   type IREvent,
   type PatternIR,
   type CollectContext,
+  type SourceLocation,
 } from '../../ir'
 // PRE-01 (PR #70 / issue #70) — internal test hooks that record whether
 // applyChain → applyMethod → parseTransform threaded a non-zero baseOffset
@@ -233,6 +234,40 @@ export function diffEvents(
     // PV24 — every IREvent must carry loc on our side.
     expect(act[i].loc).toBeDefined()
   }
+}
+
+// --------------------------------------------------------------------------
+// 19-05 / #74 D-11 — containment-match assertion helper.
+//
+// Verifies that the event's `loc` array (Play.loc — preserved unchanged by
+// D-01) contains at least one source range fully within the bounds of
+// `subExpr` as it appears in `code`. The `some()` is necessary because
+// Play.loc is `SourceLocation[]` — mini-notation `!N` repetition can
+// produce multiple ranges per Play node (RESEARCH §10 #5; not implemented
+// today but the helper is forward-compat).
+//
+// Throws via expect() with a hint naming the event + sub-expression so a
+// failure message points directly at the offending case.
+// --------------------------------------------------------------------------
+function assertEventLocWithin(
+  event: IREvent,
+  code: string,
+  subExpr: string,
+  hint?: string,
+): void {
+  expect(
+    event.loc,
+    hint ?? `event.loc missing for note=${String(event.note)} begin=${event.begin}`,
+  ).toBeDefined()
+  const subStart = code.indexOf(subExpr)
+  expect(subStart, `subExpr ${JSON.stringify(subExpr)} not found in code`).toBeGreaterThanOrEqual(0)
+  const subEnd = subStart + subExpr.length
+  const ok = event.loc!.some((l) => l.start >= subStart && l.end <= subEnd)
+  expect(
+    ok,
+    hint ??
+      `no event.loc range falls within ${JSON.stringify(subExpr)} [${subStart},${subEnd})`,
+  ).toBe(true)
 }
 
 // --------------------------------------------------------------------------
@@ -1088,5 +1123,301 @@ describe('PRE-01 — parseTransform baseOffset threading', () => {
     const b = __getLastParseTransformBaseOffset()
     expect(a).toBeGreaterThan(0)
     expect(b).toBeGreaterThan(a)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 19-05 / #74 — assertEventLocWithin smoke test.
+//
+// Sanity-check that the helper correctly accepts a known-good case (event
+// loc lies inside its source sub-expression). Per-method exhaustive
+// containment assertions land in the next describe block.
+// ---------------------------------------------------------------------------
+describe('19-05 — assertEventLocWithin helper', () => {
+  it('accepts a known-good case: note("c d e f").late(0.125) — events inside "c d e f"', () => {
+    const code = 'note("c d e f").late(0.125)'
+    const subExpr = '"c d e f"'
+    const ours = collectCycles(parseStrudel(code), 0, 1)
+    expect(ours.length).toBeGreaterThan(0)
+    for (const e of ours) assertEventLocWithin(e, code, subExpr)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 19-05 / #74 — per-method `loc` containment (D-04 + D-11).
+//
+// PV24 strengthening: "every IREvent carries the loc of the source
+// expression that produced it." Per D-01, transforms do NOT override
+// event.loc — events keep Play.loc, which points back at the body's
+// source range. These tests assert that for each multi-arg / transform-
+// bearing method, every emitted event's loc falls within the body sub-
+// expression's source range.
+//
+// Random-behavior methods (sometimes/sometimesBy/shuffle/scramble/
+// degrade/degradeBy) are queried over multiple cycles to broaden
+// coverage; the assertion shape (containment) is identical regardless
+// of which subset of body events surfaces in any given cycle.
+// ---------------------------------------------------------------------------
+describe('19-05 — per-method loc containment (D-04 + D-11)', () => {
+  it('every — events from body carry loc within "c d e f"', () => {
+    const code = 'note("c d e f").every(2, x => x.fast(2))'
+    const subExpr = '"c d e f"'
+    // Probe both cycle 0 (every(2) returns body) and cycle 1 (every(2)
+    // applies the transform). Both cases must keep event.loc inside
+    // the body's source per D-01.
+    for (let c = 0; c < 4; c++) {
+      const evs = collect(parseStrudel(code), { cycle: c } as CollectContext)
+      expect(evs.length).toBeGreaterThan(0)
+      evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `every cycle=${c} note=${e.note}@${e.begin}`))
+    }
+  })
+
+  it('sometimes — events from then/else_ branches carry loc within "c d"', () => {
+    const code = 'note("c d").sometimes(x => x.fast(2))'
+    const subExpr = '"c d"'
+    for (let c = 0; c < 8; c++) {
+      const evs = collect(parseStrudel(code), { cycle: c } as CollectContext)
+      evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `sometimes cycle=${c} note=${e.note}@${e.begin}`))
+    }
+  })
+
+  it('sometimesBy — events from then/else_ branches carry loc within "c d"', () => {
+    const code = 'note("c d").sometimesBy(0.5, x => x.fast(2))'
+    const subExpr = '"c d"'
+    for (let c = 0; c < 8; c++) {
+      const evs = collect(parseStrudel(code), { cycle: c } as CollectContext)
+      evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `sometimesBy cycle=${c} note=${e.note}@${e.begin}`))
+    }
+  })
+
+  it('chunk — events from body carry loc within "c d e f"', () => {
+    const code = 'note("c d e f").chunk(4, x => x.fast(2))'
+    const subExpr = '"c d e f"'
+    for (let c = 0; c < 4; c++) {
+      const evs = collect(parseStrudel(code), { cycle: c } as CollectContext)
+      expect(evs.length).toBeGreaterThan(0)
+      evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `chunk cycle=${c} note=${e.note}@${e.begin}`))
+    }
+  })
+
+  it('off — Stack(body, transform(Late(t, body))) — every event has loc within "c d"', () => {
+    const code = 'note("c d").off(0.125, x => x.gain(0.5))'
+    const subExpr = '"c d"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBeGreaterThan(0)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `off note=${e.note}@${e.begin}`))
+  })
+
+  it('jux — left + right pan tracks both carry loc within "c d"', () => {
+    const code = 'note("c d").jux(rev)'
+    const subExpr = '"c d"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBe(4) // 2 events × 2 pan tracks
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `jux pan=${e.params?.pan} note=${e.note}@${e.begin}`))
+  })
+
+  it('layer — Stack(transform(body)) — events carry loc within "c d"', () => {
+    const code = 'note("c d").layer(x => x.fast(2))'
+    const subExpr = '"c d"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBeGreaterThan(0)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `layer note=${e.note}@${e.begin}`))
+  })
+
+  it('late — events shifted by t but loc still within "c d e f"', () => {
+    const code = 'note("c d e f").late(0.125)'
+    const subExpr = '"c d e f"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBe(4)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `late note=${e.note}@${e.begin}`))
+  })
+
+  it('degrade — surviving events carry loc within "bd hh sd cp ride lt mt ht"', () => {
+    // Use the same 8-sound input the existing degrade parity tests use; our
+    // seededRand is deterministic, and a 4-element body collapses to 0
+    // surviving events under 50% retention (probe-confirmed). The 8-sound
+    // body matches the harness's existing degrade fixture (line 463).
+    const code = 's("bd hh sd cp ride lt mt ht").degrade()'
+    const subExpr = '"bd hh sd cp ride lt mt ht"'
+    let totalEvents = 0
+    for (let c = 0; c < 8; c++) {
+      const evs = collect(parseStrudel(code), { cycle: c } as CollectContext)
+      totalEvents += evs.length
+      evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `degrade cycle=${c} note=${e.note}@${e.begin}`))
+    }
+    expect(totalEvents).toBeGreaterThan(0) // at least one cycle must surface events
+  })
+
+  it('degradeBy — surviving events carry loc within "bd hh sd cp ride lt mt ht"', () => {
+    const code = 's("bd hh sd cp ride lt mt ht").degradeBy(0.3)'
+    const subExpr = '"bd hh sd cp ride lt mt ht"'
+    let totalEvents = 0
+    for (let c = 0; c < 8; c++) {
+      const evs = collect(parseStrudel(code), { cycle: c } as CollectContext)
+      totalEvents += evs.length
+      evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `degradeBy cycle=${c} note=${e.note}@${e.begin}`))
+    }
+    expect(totalEvents).toBeGreaterThan(0)
+  })
+
+  it('chop — N copies of the body event each carry loc within "bd"', () => {
+    const code = 's("bd").chop(4)'
+    const subExpr = '"bd"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBe(4)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `chop note=${e.note}@${e.begin}`))
+  })
+
+  it('pick — selected lookup events carry loc within `["c","e"]`', () => {
+    const code = 'mini("<0 1>").pick(["c","e"]).note()'
+    const subExpr = '["c","e"]'
+    // Pick maps the selector index into the lookup; events come from the
+    // chosen lookup item's Play, whose loc lies inside the lookup array.
+    let totalEvents = 0
+    for (let c = 0; c < 4; c++) {
+      const evs = collect(parseStrudel(code), { cycle: c } as CollectContext)
+      totalEvents += evs.length
+      evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `pick cycle=${c} note=${e.note}@${e.begin}`))
+    }
+    expect(totalEvents).toBeGreaterThan(0)
+  })
+
+  it('struct — gated events carry loc within "c d e f"', () => {
+    const code = 'note("c d e f").struct("x ~ x ~")'
+    const subExpr = '"c d e f"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBeGreaterThan(0)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `struct note=${e.note}@${e.begin}`))
+  })
+
+  it('swing — re-timed events carry loc within "c d e f"', () => {
+    const code = 'note("c d e f").swing(4)'
+    const subExpr = '"c d e f"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBe(4)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `swing note=${e.note}@${e.begin}`))
+  })
+
+  it('shuffle — permuted events carry loc within "c d e f"', () => {
+    const code = 'note("c d e f").shuffle(4)'
+    const subExpr = '"c d e f"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBe(4)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `shuffle note=${e.note}@${e.begin}`))
+  })
+
+  it('scramble — randomized events carry loc within "c d e f"', () => {
+    const code = 'note("c d e f").scramble(4)'
+    const subExpr = '"c d e f"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBe(4)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `scramble note=${e.note}@${e.begin}`))
+  })
+
+  it('ply — N×events per body slot, each event carries loc within "c d"', () => {
+    const code = 'note("c d").ply(2)'
+    const subExpr = '"c d"'
+    const evs = collect(parseStrudel(code), { cycle: 0 } as CollectContext)
+    expect(evs.length).toBe(4) // 2 body events × ply(2)
+    evs.forEach((e) => assertEventLocWithin(e, code, subExpr, `ply note=${e.note}@${e.begin}`))
+  })
+
+  // -------------------------------------------------------------------------
+  // PLAN §5 #12 catcher — the load-bearing arithmetic gotcha.
+  //
+  // applyChain pre-computes `consumed = remaining.length - rest.length`
+  // BEFORE calling applyMethod, so each tag in a method chain receives
+  // its own callSiteRange covering exactly its `.method(args)` substring
+  // (including the leading `.`). Off-by-one on the `.` would silently
+  // shift every tag's loc by 1 char; this 3-method chain test asserts
+  // exact byte-equality against `code.indexOf('.method(...)')` on every
+  // link.
+  //
+  // Empirically determined: loc.start INCLUDES the leading `.`. For
+  // `.fast(2)` at indexOf=7 the constructed Fast.loc is {start: 7, end:
+  // 15} (length 8 = `.fast(2)`).
+  // -------------------------------------------------------------------------
+  it('3-method chain — each link carries its own .method(args) callSiteRange (PLAN §5 #12)', () => {
+    const code = 's("bd").fast(2).late(0.125).gain(0.5)'
+    const ir = parseStrudel(code) as {
+      tag: 'FX'
+      userMethod?: string
+      loc?: SourceLocation[]
+      body: { tag: 'Late'; userMethod?: string; loc?: SourceLocation[]; body: { tag: 'Fast'; userMethod?: string; loc?: SourceLocation[]; body: unknown } }
+    }
+    expect(ir.tag).toBe('FX')
+    expect(ir.userMethod).toBe('gain')
+    const gainStart = code.indexOf('.gain(0.5)')
+    expect(ir.loc).toEqual([{ start: gainStart, end: gainStart + '.gain(0.5)'.length }])
+
+    expect(ir.body.tag).toBe('Late')
+    expect(ir.body.userMethod).toBe('late')
+    const lateStart = code.indexOf('.late(0.125)')
+    expect(ir.body.loc).toEqual([{ start: lateStart, end: lateStart + '.late(0.125)'.length }])
+
+    expect(ir.body.body.tag).toBe('Fast')
+    expect(ir.body.body.userMethod).toBe('fast')
+    const fastStart = code.indexOf('.fast(2)')
+    expect(ir.body.body.loc).toEqual([{ start: fastStart, end: fastStart + '.fast(2)'.length }])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 19-05 / #74 — `userMethod` round-trip on representative tags (D-08).
+//
+// D-08 exact-token taxonomy: `userMethod` is the literal method name the
+// user typed. `'degradeBy'` ≠ `'degrade'`; Stack-from-layer carries
+// `'layer'` while Stack-from-jux carries `'jux'` — same Stack tag, distinct
+// metadata. These tests verify the parser preserves the exact-token via
+// direct AST inspection (no toStrudel involvement per D-13). PV28 keep-
+// alive — these are the field's only test consumers in this PR until
+// 19-06's Inspector projection consumes it (#76).
+// ---------------------------------------------------------------------------
+describe('19-05 — userMethod round-trip on representative tags (D-08)', () => {
+  it('Late: parseStrudel(`note("c").late(0.125)`) carries userMethod="late"', () => {
+    const ir = parseStrudel('note("c").late(0.125)') as PatternIR & { userMethod?: string }
+    expect(ir.tag).toBe('Late')
+    expect(ir.userMethod).toBe('late')
+  })
+
+  it('Pick: parseStrudel(`mini("<0 1>").pick(["c","e"]).note()`) — Pick tag carries userMethod="pick"', () => {
+    // .note() at the end is a no-arg method (returns ir unchanged in our
+    // parser) so the root walks: Pick wrapping mini's Cycle selector.
+    const ir = parseStrudel('mini("<0 1>").pick(["c","e"]).note()') as PatternIR & { userMethod?: string }
+    expect(ir.tag).toBe('Pick')
+    expect(ir.userMethod).toBe('pick')
+  })
+
+  it('Struct: parseStrudel(`note("c").struct("x ~ x")`) carries userMethod="struct"', () => {
+    const ir = parseStrudel('note("c").struct("x ~ x")') as PatternIR & { userMethod?: string }
+    expect(ir.tag).toBe('Struct')
+    expect(ir.userMethod).toBe('struct')
+  })
+
+  it('Stack-from-layer: parseStrudel(`note("c").layer(x => x.add("0,2"))`) — Stack carries userMethod="layer"', () => {
+    const ir = parseStrudel('note("c").layer(x => x.add("0,2"))') as PatternIR & { userMethod?: string }
+    expect(ir.tag).toBe('Stack')
+    expect(ir.userMethod).toBe('layer')
+  })
+
+  it('Stack-from-jux: parseStrudel(`note("c").jux(rev)`) — Stack carries userMethod="jux"', () => {
+    const ir = parseStrudel('note("c").jux(rev)') as PatternIR & { userMethod?: string }
+    expect(ir.tag).toBe('Stack')
+    expect(ir.userMethod).toBe('jux')
+  })
+
+  // Bonus: D-08 exact-token sentinel — Degrade tag from `.degradeBy(amount)`
+  // carries `userMethod === 'degradeBy'`, NOT `'degrade'`. The canonical
+  // tag (Degrade) is shared with `.degrade()`; only userMethod distinguishes
+  // them. This is the round-trip property 19-06's projection depends on.
+  it('Degrade-from-degradeBy: userMethod="degradeBy" (NOT "degrade") — D-08 exact-token', () => {
+    const ir = parseStrudel('note("c").degradeBy(0.3)') as PatternIR & { userMethod?: string }
+    expect(ir.tag).toBe('Degrade')
+    expect(ir.userMethod).toBe('degradeBy')
+
+    // Confirm the canonical .degrade() path stays distinct.
+    const ir2 = parseStrudel('note("c").degrade()') as PatternIR & { userMethod?: string }
+    expect(ir2.tag).toBe('Degrade')
+    expect(ir2.userMethod).toBe('degrade')
   })
 })

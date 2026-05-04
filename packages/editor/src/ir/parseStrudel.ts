@@ -15,7 +15,36 @@
  */
 
 import { IR, type PatternIR } from './PatternIR'
+import type { SourceLocation } from './IREvent'
 import { parseMini } from './parseMini'
+
+/**
+ * Build the optional `meta` payload for a non-Play smart constructor or
+ * literal-construction site (19-05 / #74).
+ *
+ * - `method` is the user-typed method name (exact token, D-08 — e.g.
+ *   `'degradeBy'` ≠ `'degrade'`, `'jux'` ≠ `'layer'`). Sites that pass
+ *   the live `method` variable from `applyMethod` automatically satisfy
+ *   D-08; desugar / root sites that hard-code a method string must match
+ *   the user's vocabulary.
+ * - `callSiteRange` is the absolute source range of the method-call
+ *   substring (e.g., `.fast(2)`'s start..end in the user's full code).
+ *
+ * Returns the shape every smart constructor / literal-construction site
+ * accepts. Loc is single-element here — multi-element only arises in
+ * mini-notation `!N` repetition (not implemented today). RESEARCH §10 #12
+ * for the load-bearing arithmetic gotcha (consumed = remaining - rest).
+ */
+function tagMeta(
+  method: string,
+  callSiteRange: [number, number],
+): { loc: SourceLocation[]; userMethod: string } {
+  const [start, end] = callSiteRange
+  return {
+    loc: [{ start, end }],
+    userMethod: method,
+  }
+}
 
 /** Parse a Strudel code string. Always returns a tree (Code node for unsupported). */
 export function parseStrudel(code: string): PatternIR {
@@ -183,7 +212,23 @@ function parseRoot(root: string, baseOffset = 0): PatternIR {
       const tracks = args.map(a => parseExpression(a.trim()))
       if (tracks.length === 0) return IR.pure()
       if (tracks.length === 1) return tracks[0]
-      return IR.stack(...tracks)
+      // 19-05 / #74: root-level `stack(...)` outer Stack carries the call-
+      // site range + userMethod: 'stack' (D-08 exact-token — distinct from
+      // `'layer'` at T-04 even though both produce Stack tags). Literal
+      // construction — IR.stack is rest-spread (RESEARCH §11 Q1).
+      // The whole `stack(...)` substring spans from `trimmed[0]` (whose
+      // absolute position is `baseOffset + leadingWs`) through the closing
+      // paren matched by extractParenContent.
+      const trimmedAbs = baseOffset + leadingWs
+      const openIdx = trimmed.indexOf('(')
+      const closeIdx = openIdx >= 0 ? findMatchingParen(trimmed, openIdx) : -1
+      const fullMatchLen = closeIdx >= 0 ? closeIdx + 1 : trimmed.length
+      return {
+        tag: 'Stack' as const,
+        tracks,
+        loc: [{ start: trimmedAbs, end: trimmedAbs + fullMatchLen }],
+        userMethod: 'stack',
+      }
     }
   }
 
@@ -215,16 +260,29 @@ function applyChain(ir: PatternIR, chain: string, baseOffset = 0): PatternIR {
     const { method, args, rest, argsOffset } = extractNextMethod(remaining)
     if (!method) break
 
+    // Pre-compute the call-site range BEFORE applyMethod runs (19-05 / #74).
+    //   remainingOffset = position of leading '.' in user's full code.
+    //   consumed        = the substring length applyMethod is about to handle
+    //                     (RESEARCH §10 #12: must compute from
+    //                     remaining.length - rest.length BEFORE the
+    //                     advance below; off-by-one on the leading '.' is
+    //                     the silent trap).
+    const consumed = remaining.length - rest.length
+    const callSiteRange: [number, number] = [
+      remainingOffset,
+      remainingOffset + consumed,
+    ]
+
     // argsOffset is -1 when the method has no parens. We pass 0-args
     // calls through with baseOffset = remainingOffset (still > 0 for any
     // non-leading method) so the precursor test's "non-zero" assertion
     // holds even on chains that mix paren-less and paren-ful methods.
     const argsAbsoluteOffset = argsOffset >= 0 ? remainingOffset + argsOffset : remainingOffset
-    current = applyMethod(current, method, args, argsAbsoluteOffset)
+    current = applyMethod(current, method, args, argsAbsoluteOffset, callSiteRange)
 
-    // Advance remainingOffset by however many chars `extractNextMethod`
-    // consumed from `remaining` (i.e., remaining.length - rest.length).
-    remainingOffset += remaining.length - rest.length
+    // Advance remainingOffset by the consumed length (same arithmetic as
+    // before — just split across the call to make callSiteRange available).
+    remainingOffset += consumed
     remaining = rest
   }
 
@@ -236,18 +294,29 @@ function applyChain(ir: PatternIR, chain: string, baseOffset = 0): PatternIR {
  * `baseOffset` is the absolute char offset of `args[0]` in the user's
  * full code (or of the method name itself for paren-less methods),
  * threaded forward to any parseTransform calls.
+ * `callSiteRange` is the absolute source range of the whole method-call
+ * substring (e.g., `.fast(2)` start..end) — passed to `tagMeta` for
+ * `loc` + `userMethod` population on the constructed non-Play tag
+ * (19-05 / #74). Default `[0, 0]` preserves backward-compat for any
+ * potential non-applyChain caller (none exist today).
  */
-function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0): PatternIR {
+function applyMethod(
+  ir: PatternIR,
+  method: string,
+  args: string,
+  baseOffset = 0,
+  callSiteRange: [number, number] = [0, 0],
+): PatternIR {
   switch (method) {
     case 'fast': {
       const n = parseFloat(args.trim())
-      if (!isNaN(n)) return IR.fast(n, ir)
+      if (!isNaN(n)) return IR.fast(n, ir, tagMeta(method, callSiteRange))
       return ir
     }
 
     case 'slow': {
       const n = parseFloat(args.trim())
-      if (!isNaN(n)) return IR.slow(n, ir)
+      if (!isNaN(n)) return IR.slow(n, ir, tagMeta(method, callSiteRange))
       return ir
     }
 
@@ -258,7 +327,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       if (isNaN(n)) return ir
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
-      return IR.every(n, transform, ir)
+      return IR.every(n, transform, ir, tagMeta(method, callSiteRange))
     }
 
     case 'sometimes': {
@@ -266,7 +335,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       const transform = args.trim()
         ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length))
         : ir
-      return IR.choice(0.5, transform, ir)
+      return IR.choice(0.5, transform, ir, tagMeta(method, callSiteRange))
     }
 
     case 'sometimesBy': {
@@ -276,13 +345,13 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       if (isNaN(p)) return ir
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
-      return IR.choice(p, transform, ir)
+      return IR.choice(p, transform, ir, tagMeta(method, callSiteRange))
     }
 
     case 'mask': {
       // .mask("gate") → When
       const gateMatch = args.trim().match(/^"([^"]*)"$/)
-      if (gateMatch) return IR.when(gateMatch[1], ir)
+      if (gateMatch) return IR.when(gateMatch[1], ir, tagMeta(method, callSiteRange))
       return ir
     }
 
@@ -314,18 +383,29 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
         const transformOffset = offsetOfSubArg(args, trimmed, baseOffset)
         tracks.push(parseTransform(trimmed, ir, transformOffset))
       }
-      return IR.stack(...tracks)
+      // 19-05 / #74: outer Stack carries .layer(...)'s call-site range +
+      // userMethod: 'layer' (D-09 desugar metadata). Literal construction —
+      // IR.stack is rest-spread and cannot accept a trailing meta? param
+      // (RESEARCH §2 / §11 Q1). Inner transformed funcs inherit metadata
+      // through W5's parseTransform (recursive applyChain).
+      const [layerStart, layerEnd] = callSiteRange
+      return {
+        tag: 'Stack' as const,
+        tracks,
+        loc: [{ start: layerStart, end: layerEnd }],
+        userMethod: method, // 'layer' — D-08 exact-token from the switch label
+      }
     }
 
     case 'gain': {
       const val = parseFloat(args.trim())
-      if (!isNaN(val)) return IR.fx('gain', { gain: val }, ir)
+      if (!isNaN(val)) return IR.fx('gain', { gain: val }, ir, tagMeta(method, callSiteRange))
       return ir
     }
 
     case 'pan': {
       const val = parseFloat(args.trim())
-      if (!isNaN(val)) return IR.fx('pan', { pan: val }, ir)
+      if (!isNaN(val)) return IR.fx('pan', { pan: val }, ir, tagMeta(method, callSiteRange))
       return ir
     }
 
@@ -359,14 +439,14 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       if (isNaN(n) || n < 1) return ir
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
-      return IR.chunk(n, transform, ir)
+      return IR.chunk(n, transform, ir, tagMeta(method, callSiteRange))
     }
 
     case 'degrade': {
       // Tier 4 (Phase 19-03 Task 07). `.degrade()` shorthand for
       // `.degradeBy(0.5)` (signal.mjs:720). Our Degrade.p is the
       // retention probability; 50% drop ⇒ 50% retain ⇒ p = 0.5.
-      return IR.degrade(0.5, ir)
+      return IR.degrade(0.5, ir, tagMeta(method, callSiteRange))
     }
 
     case 'degradeBy': {
@@ -382,7 +462,10 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       // degradeBy(0.8) that distinguishes p=0.2 from the wrong p=0.8.
       const amount = parseFloat(args.trim())
       if (isNaN(amount)) return ir
-      return IR.degrade(1 - amount, ir)
+      // D-08 exact-token: userMethod is `'degradeBy'`, NOT `'degrade'`. The
+      // tag is Degrade (canonical) but `method` here is the user's literal
+      // `'degradeBy'` from the switch — pass it through, don't substitute.
+      return IR.degrade(1 - amount, ir, tagMeta(method, callSiteRange))
     }
 
     case 'late': {
@@ -393,7 +476,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       // limitation `.fast()` has today).
       const t = parseFloat(args.trim())
       if (isNaN(t)) return ir
-      return IR.late(t, ir)
+      return IR.late(t, ir, tagMeta(method, callSiteRange))
     }
 
     case 'jux': {
@@ -422,10 +505,21 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       const transformed = args.trim()
         ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length))
         : ir
-      return IR.stack(
-        IR.fx('pan', { pan: -1 }, ir),
-        IR.fx('pan', { pan: 1 }, transformed),
-      )
+      // 19-05 / #74: outer Stack carries .jux(...)'s call-site range +
+      // userMethod: 'jux' (D-09). Inner FX(pan, ±1) nodes are SYNTHETIC —
+      // no metadata (setting loc would mislead click-to-source into thinking
+      // the user typed `.pan(...)`; RESEARCH §7). The `transformed` body
+      // keeps its own Play.loc and inherited tag-level locs from the inner
+      // applyChain recursion.
+      const leftPan = IR.fx('pan', { pan: -1 }, ir)
+      const rightPan = IR.fx('pan', { pan: 1 }, transformed)
+      const [juxStart, juxEnd] = callSiteRange
+      return {
+        tag: 'Stack' as const,
+        tracks: [leftPan, rightPan],
+        loc: [{ start: juxStart, end: juxEnd }],
+        userMethod: method, // 'jux'
+      }
     }
 
     case 'ply': {
@@ -450,7 +544,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       const n = Number(trimmed)
       if (!Number.isInteger(n) || n < 1) return ir
       if (n === 1) return ir
-      return IR.ply(n, ir)
+      return IR.ply(n, ir, tagMeta(method, callSiteRange))
     }
 
     case 'off': {
@@ -481,10 +575,28 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       const [tStr, transformStr] = splitFirstArg(args)
       const t = parseFloat(tStr.trim())
       if (isNaN(t)) return ir
-      const lateBody = IR.late(t, ir)
+      // 19-05 / #74 D-09: inner Late carries tStr's range (the `0.125` arg
+      // position). userMethod intentionally omitted — Late from .off() is a
+      // synthetic intermediate, not directly authored. Reuse the existing
+      // offsetOfSubArg helper (lines below) — same P39-aware whitespace
+      // handling already used for transformOffset.
+      const tStartAbs = offsetOfSubArg(args, tStr.trim(), baseOffset)
+      const tEndAbs = tStartAbs + tStr.trim().length
+      const lateBody = IR.late(t, ir, {
+        loc: [{ start: tStartAbs, end: tEndAbs }],
+        // userMethod intentionally undefined — synthetic intermediate (D-09).
+      })
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
       const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody, transformOffset) : lateBody
-      return IR.stack(ir, transformed)
+      // Outer Stack carries .off(...)'s call-site range + userMethod: 'off'.
+      // Literal construction — rest-spread escape hatch (RESEARCH §11 Q1).
+      const [offStart, offEnd] = callSiteRange
+      return {
+        tag: 'Stack' as const,
+        tracks: [ir, transformed],
+        loc: [{ start: offStart, end: offEnd }],
+        userMethod: method, // 'off'
+      }
     }
 
     case 'room':
@@ -502,7 +614,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
     case 'lpf':
     case 'hpf': {
       const val = parseFloat(args.trim())
-      if (!isNaN(val)) return IR.fx(method, { [method]: val }, ir)
+      if (!isNaN(val)) return IR.fx(method, { [method]: val }, ir, tagMeta(method, callSiteRange))
       return ir
     }
 
@@ -535,7 +647,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
         const elemOffset = offsetOfSubArg(arrayBody, e.trim(), arrayBodyOffset)
         return parseArrayLiteralElement(e, 'note', elemOffset)
       })
-      return IR.pick(ir, lookup)
+      return IR.pick(ir, lookup, tagMeta(method, callSiteRange))
     }
 
     case 'struct': {
@@ -549,7 +661,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       // mask is a quoted mini-notation string; we carry it raw on the IR
       // (matches When.gate precedent — sub-IR form deferred per RESEARCH §8.2).
       const gateMatch = args.trim().match(/^"([^"]*)"$/)
-      if (gateMatch) return IR.struct(gateMatch[1], ir)
+      if (gateMatch) return IR.struct(gateMatch[1], ir, tagMeta(method, callSiteRange))
       return ir
     }
 
@@ -566,7 +678,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       // migration cheap. RESEARCH §1.3.
       const n = parseInt(args.trim(), 10)
       if (isNaN(n) || n < 1) return ir
-      return IR.swing(n, ir)
+      return IR.swing(n, ir, tagMeta(method, callSiteRange))
     }
 
     case 'shuffle': {
@@ -579,7 +691,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       // in T-05. Parity test in T-07. RESEARCH §1.5; PK11 step 5.
       const n = parseInt(args.trim(), 10)
       if (isNaN(n) || n < 1) return ir
-      return IR.shuffle(n, ir)
+      return IR.shuffle(n, ir, tagMeta(method, callSiteRange))
     }
 
     case 'scramble': {
@@ -592,7 +704,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       // test in T-07. RESEARCH §1.6; PK11 step 5.
       const n = parseInt(args.trim(), 10)
       if (isNaN(n) || n < 1) return ir
-      return IR.scramble(n, ir)
+      return IR.scramble(n, ir, tagMeta(method, callSiteRange))
     }
 
     case 'chop': {
@@ -607,7 +719,7 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       // §1.7; PK11 step 5.
       const n = parseInt(args.trim(), 10)
       if (isNaN(n) || n < 1) return ir
-      return IR.chop(n, ir)
+      return IR.chop(n, ir, tagMeta(method, callSiteRange))
     }
 
     case 'p':
@@ -653,18 +765,24 @@ function parseTransform(transformStr: string, defaultIr: PatternIR, baseOffset =
 
   const str = transformStr.trim()
 
+  // 19-05 / #74 D-10: callSiteRange covers the whole bare-form expression
+  // (`fast(2)` / `slow(2)`). For arrow paths, the recursive applyChain
+  // computes per-method callSiteRange — this outer range is unused there.
+  const trimmedStart = baseOffset + (transformStr.length - transformStr.trimStart().length)
+  const callSiteRange: [number, number] = [trimmedStart, trimmedStart + str.length]
+
   // fast(n)
   const fastMatch = str.match(/^fast\s*\(\s*([0-9.]+)\s*\)$/)
   if (fastMatch) {
     const n = parseFloat(fastMatch[1])
-    if (!isNaN(n)) return IR.fast(n, defaultIr)
+    if (!isNaN(n)) return IR.fast(n, defaultIr, tagMeta('fast', callSiteRange))
   }
 
   // slow(n)
   const slowMatch = str.match(/^slow\s*\(\s*([0-9.]+)\s*\)$/)
   if (slowMatch) {
     const n = parseFloat(slowMatch[1])
-    if (!isNaN(n)) return IR.slow(n, defaultIr)
+    if (!isNaN(n)) return IR.slow(n, defaultIr, tagMeta('slow', callSiteRange))
   }
 
   // Arrow function like "x => x.fast(2)" — recurse with the chain offset
