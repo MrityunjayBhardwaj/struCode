@@ -634,6 +634,403 @@ describe('parity harness', () => {
     const c = parseStrudel('s("bd hh sd cp").ply(1)')
     expect(c.tag).not.toBe('Ply')
   })
+
+  // ------------------------------------------------------------------
+  // Phase 19-04 Task T-01 — `.layer(...funcs)` parity.
+  //
+  // Ground truth: pattern.mjs:796-798 — layer literally desugars to
+  //   stack(...funcs.map(f => f(this)))
+  // The original body is NOT included (contrast superimpose at
+  // pattern.mjs:810-812 which does via this.stack(...)).
+  //
+  // Our `case 'layer':` mirrors the desugar: split args, parseTransform
+  // each, return Stack(...transformed).
+  //
+  // Input: s("bd hh sd cp").layer(x => x.gain(0.5), x => x.gain(0.7))
+  //   body events @ {0, 0.25, 0.5, 0.75}: bd, hh, sd, cp
+  //   first func wraps each in gain(0.5); second wraps each in gain(0.7).
+  //   Stack of two parallel tracks → 8 events per cycle, four at gain=0.5
+  //   and four at gain=0.7.
+  //
+  // Choice of two `gain(...)` transforms (not `fast(2)`, and avoiding
+  // `pan(...)` which would surface the [-1,1] vs [0,1] convention
+  // divergence already documented at the .pan() boundary in PatternIR.ts:23):
+  // gain is scalar, in the same convention on both sides, and exercises
+  // the parallel-track desugar path. Also serves as the phase composition
+  // test (PLAN pre-mortem #11) — desugar producing a Stack exercises
+  // both the layer-arm and the existing Stack walker.
+  //
+  // Diff: count + (begin, s, gain) tuple multiset (Set since the four
+  // (begin,s) pairs appear at two distinct gain values, both pairs are
+  // distinct keys). PV24 loc presence.
+  // ------------------------------------------------------------------
+  it('layer parity: s("bd hh sd cp").layer(x => x.gain(0.5), x => x.gain(0.7)) — count, (begin,s,gain) match Strudel', async () => {
+    const code = 's("bd hh sd cp").layer(x => x.gain(0.5), x => x.gain(0.7))'
+    const rawExpected = (await strudelEventsFromCode(code, 1)).map(normalizeStrudelPan)
+    // NOTE: dedupeByWholeBegin keys on (begin, s, note, pan) which would
+    // collapse the two gain-distinct layer tracks (both share (begin, s,
+    // note, pan)). For this s("bd hh sd cp") body there are no
+    // boundary-crossing events in [0, 1), so dedupe is unnecessary —
+    // skip it and dedupe with a gain-aware key inline. Same pattern as
+    // jux which includes pan in its key for parallel-track distinction.
+    const expected = withOnsetInWindow(rawExpected, 0, 1)
+    const ours = collectCycles(parseStrudel(code), 0, 1)
+    // 4 body events × 2 layer tracks = 8.
+    expect(ours.length).toBe(8)
+    expect(expected.length).toBe(8)
+    // (begin, s, gain) tuple set — parallel-track count and per-track
+    // gain assignment are load-bearing on diff. Each (begin, s) pair
+    // appears twice with distinct gain values, so the keys remain
+    // distinct under set semantics.
+    const tuple = (e: IREvent): string =>
+      `${e.begin.toFixed(9)}|${e.s ?? ''}|${e.gain ?? 1}`
+    expect(new Set(ours.map(tuple))).toEqual(new Set(expected.map(tuple)))
+    // Both gain values must be present, four events each.
+    const oursGains = ours.map(e => e.gain)
+    expect(oursGains.filter(g => g === 0.5).length).toBe(4)
+    expect(oursGains.filter(g => g === 0.7).length).toBe(4)
+    // PV24 — loc presence on every event.
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  it('parseStrudel routes .layer(f1, f2) to Stack(...) (desugar — pattern.mjs:796-798)', () => {
+    const ir = parseStrudel('s("bd hh sd cp").layer(x => x.gain(0.5), x => x.gain(0.7))')
+    expect(ir.tag).toBe('Stack')
+    if (ir.tag === 'Stack') {
+      expect(ir.tracks.length).toBe(2)
+      // Each track is the body wrapped in an FX node (gain, gain).
+      expect(ir.tracks[0].tag).toBe('FX')
+      expect(ir.tracks[1].tag).toBe('FX')
+    }
+  })
+
+  // ------------------------------------------------------------------
+  // Phase 19-04 Task T-02 — `.pick(lookup)` parity.
+  //
+  // Ground truth: pick.mjs:44-54 — pick(lookup) is
+  //   pat.fmap(i => lookup[clamp(round(i), 0, len-1)]).innerJoin()
+  // For each event of the receiver (selector), look up lookup[i] and
+  // play that pattern at the selector event's time slot.
+  //
+  // Our IR's Pick { selector, lookup[] } collect arm walks the selector
+  // for each cycle, then for each selector event walks the chosen
+  // sub-IR within a sub-context covering the selector event's slot.
+  //
+  // Input: note(mini("<0 1 2 3>").pick(["c","e","g","b"])) — the Strudel
+  // form that works in our test env (String.prototype.pick is not
+  // registered server-side; the docstring's bare-string-pick desugars
+  // to mini(string).pick(...) via Strudel's transpiler in production).
+  // Selector cycles through 0,1,2,3 over 4 cycles; pick selects "c", "e",
+  // "g", "b" respectively.
+  //
+  // Diff: count + per-cycle (begin, note) tuple equality. PV24 loc
+  // presence (selector loc propagates onto picked sub-events when the
+  // sub-event lacks its own).
+  // ------------------------------------------------------------------
+  it('pick parity: mini("<0 1 2 3>").pick(["c","e","g","b"]).note() — count and (begin, note) per cycle match Strudel', async () => {
+    // Wrap the pipeline in `.note()` so Strudel hangs the picked value
+    // off `event.value.note` — that's what normalizeStrudelHap reads.
+    // Without `.note()`, Strudel events carry the raw string in
+    // `event.value` and our normalizer maps it to `note: null`.
+    //
+    // On our side, `.note()` is unhandled by applyMethod and falls
+    // through (default: return ir), so the IR is unchanged from the
+    // bare `mini(...).pick([...])` form. The picked sub-IR is
+    // IR.play("c") (etc.), which already carries `note: "c"`. Both
+    // sides produce note="c","e","g","b" per cycle.
+    //
+    // String.prototype.pick is not registered server-side in our test
+    // env, so the docstring's `"<0 1 2 3>".pick([...])` form is unusable
+    // in the Strudel reference path. `mini("<0 1 2 3>")` is the
+    // canonical equivalent (Strudel's transpiler rewrites string-pick
+    // to mini-pick at parse time in production).
+    const code = 'mini("<0 1 2 3>").pick(["c","e","g","b"]).note()'
+    const rawExpected = (await strudelEventsFromCode(code, 4)).map(normalizeStrudelPan)
+    // Without dedupe — these aren't boundary-clipped events.
+    const expected = withOnsetInWindow(rawExpected, 0, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    // 4 cycles, one event per cycle (selector value picks one sub-pattern;
+    // each sub-pattern is a single Play).
+    expect(ours.length).toBe(4)
+    expect(ours.length).toBe(expected.length)
+    // Per-cycle ordering: cycle 0 → "c", cycle 1 → "e", cycle 2 → "g", cycle 3 → "b".
+    const sortedOurs = [...ours].sort((a, b) => a.begin - b.begin)
+    const sortedExp = [...expected].sort((a, b) => a.begin - b.begin)
+    expect(sortedOurs.map(e => e.note)).toEqual(['c', 'e', 'g', 'b'])
+    expect(sortedExp.map(e => e.note)).toEqual(sortedOurs.map(e => e.note))
+    // Per-event begin matches.
+    for (let i = 0; i < sortedOurs.length; i++) {
+      expect(Math.abs(sortedOurs[i].begin - sortedExp[i].begin)).toBeLessThan(1e-9)
+    }
+    // PV24 — loc presence on every event (selector loc propagates onto
+    // the picked sub-event when the sub-event's own loc is not set).
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  it('parseStrudel routes .pick([...]) to Pick tag', () => {
+    const ir = parseStrudel('mini("<0 1 2 3>").pick(["c","e","g","b"])')
+    expect(ir.tag).toBe('Pick')
+    if (ir.tag === 'Pick') {
+      expect(ir.lookup.length).toBe(4)
+      expect(ir.selector.tag).toBe('Cycle')
+    }
+  })
+
+  // ------------------------------------------------------------------
+  // Phase 19-04 Task T-03 — `.struct(mask)` parity.
+  //
+  // Ground truth: pattern.mjs:1161-1163 — struct(mask) = this.keepif.out(mask).
+  // _opOut is "structure from mask, values from this" — re-times this
+  // pattern's value-stream to mask onsets. Distinct from `.mask("…")`
+  // (When tag) which only gates events. RESEARCH §1.2.
+  //
+  // Input: note("c d e f").struct("x ~ x ~ x ~ ~ x") — body is 4 notes
+  // at slots 0, 1/4, 2/4, 3/4 inside [0, 1). Mask has 8 slots at 1/8 each
+  // with truthy at i ∈ {0, 2, 4, 7}. Each truthy slot samples body events
+  // whose cycle-position falls in [i/8, (i+1)/8) and re-emits at i/8.
+  //   slot 0 [0, 1/8)   → captures c at 0   → emit at 0
+  //   slot 2 [2/8, 3/8) → captures d at 1/4 → emit at 2/8
+  //   slot 4 [4/8, 5/8) → captures e at 2/4 → emit at 4/8
+  //   slot 7 [7/8, 8/8) → captures f at 3/4? — 3/4 = 6/8, NOT in [7/8, 1).
+  //                         → no body event in slot 7 → emit nothing
+  // Expected: 3 events at begins {0, 1/4, 1/2} with notes {c, d, e}.
+  //
+  // Diff: count + per-event (begin, note) tuple equality. PV24 loc
+  // presence on every event.
+  // ------------------------------------------------------------------
+  it('struct parity: note("c d e f").struct("x ~ x ~ x ~ ~ x") — count and (begin, note) match Strudel', async () => {
+    const code = 'note("c d e f").struct("x ~ x ~ x ~ ~ x")'
+    const rawExpected = (await strudelEventsFromCode(code, 1)).map(normalizeStrudelPan)
+    const expected = dedupeByWholeBegin(withOnsetInWindow(rawExpected, 0, 1))
+    const ours = collectCycles(parseStrudel(code), 0, 1)
+    // Both sides should yield the same count.
+    expect(ours.length).toBe(expected.length)
+    // Per-event diff on begin and note. PV24 loc presence asserted by helper.
+    diffEvents(expected, ours, ['begin', 'note'])
+  })
+
+  it('parseStrudel routes .struct("…") to Struct tag', () => {
+    const ir = parseStrudel('note("c d e").struct("x ~ x")')
+    expect(ir.tag).toBe('Struct')
+    if (ir.tag === 'Struct') {
+      expect(ir.mask).toBe('x ~ x')
+      expect(ir.body.tag).toBe('Seq')
+    }
+  })
+
+  // ------------------------------------------------------------------
+  // Phase 19-04 Task T-04 — `.swing(n)` documented divergence (narrow
+  // tag per D-03 — Inside primitive deferred).
+  //
+  // Ground truth: pattern.mjs:2193 — swing(n) = pat.swingBy(1/3, n) =
+  // pat.inside(n, late(seq(0, 1/6))). RESEARCH §1.3.
+  //
+  // Our narrow `Swing { n; body }` tag (D-03) models swing directly via
+  // slot-index lateness: odd-numbered slots (of n slots in [0, 1)) shift
+  // by 1/(6n). For `note("a b c d e f g h").swing(4)`, this produces 8
+  // events with notes a/b at slot 0 (no shift), c/d at slot 1 (+1/24),
+  // e/f at slot 2 (no shift), g/h at slot 3 (+1/24).
+  //
+  // Strudel's actual `inside(4, late(seq(0, 1/6)))` composition produces
+  // 12 events for the same input, because the slow→late→fast composition
+  // causes events at slot transitions to surface from both halves of the
+  // slow query (notes a/c/e/g each appear twice). This is a STRUCTURAL
+  // divergence from the Inside semantics, not a microsecond timing slop.
+  // RESEARCH §1.3 anticipated this: "MEDIUM on the exact event timings
+  // — the inside-late-seq composition is subtle and parity will catch
+  // divergence."
+  //
+  // PER D-03: do NOT graduate to introducing Inside in this phase. The
+  // narrow tag is the explicit decision; the divergence is the cost
+  // (bounded — collect arm rewrites ~10 lines once Inside lands). We
+  // assert the divergence as a CONTRACT here (ours = 8, theirs = 12)
+  // rather than silently weakening the parity assertion. When Inside
+  // lands and Swing rewrites, this test flips to a tight parity check.
+  //
+  // PV24 loc presence asserted on every event our pipeline emits.
+  // ------------------------------------------------------------------
+  it('swing parity: documented narrow-tag divergence vs Strudel inside (D-03)', async () => {
+    const code = 'note("a b c d e f g h").swing(4)'
+    const rawExpected = (await strudelEventsFromCode(code, 1)).map(normalizeStrudelPan)
+    const expected = dedupeByWholeBegin(withOnsetInWindow(rawExpected, 0, 1))
+    const ours = collectCycles(parseStrudel(code), 0, 1)
+    // Our narrow Swing produces exactly 8 events (one per body Play).
+    expect(ours.length).toBe(8)
+    // Strudel's inside composition produces 12 (notes a/c/e/g each appear
+    // twice — slot-transition leakage from the slow→late→fast composition).
+    // This test asserts the divergence as a contract; flips to tight parity
+    // when Inside lands and Swing rewrites (D-03).
+    expect(expected.length).toBe(12)
+    expect(ours.length).not.toBe(expected.length)
+    // Verify our 8-event lateness pattern is internally correct: notes at
+    // slot 0 (a, b) and slot 2 (e, f) are at their original positions;
+    // notes at slot 1 (c, d) and slot 3 (g, h) are shifted by 1/24.
+    const sortedOurs = [...ours].sort((a, b) => a.begin - b.begin)
+    expect(sortedOurs[0].begin).toBeCloseTo(0, 9)
+    expect(sortedOurs[1].begin).toBeCloseTo(1 / 8, 9)
+    expect(sortedOurs[2].begin).toBeCloseTo(2 / 8 + 1 / 24, 9)
+    expect(sortedOurs[3].begin).toBeCloseTo(3 / 8 + 1 / 24, 9)
+    expect(sortedOurs[4].begin).toBeCloseTo(4 / 8, 9)
+    expect(sortedOurs[5].begin).toBeCloseTo(5 / 8, 9)
+    expect(sortedOurs[6].begin).toBeCloseTo(6 / 8 + 1 / 24, 9)
+    expect(sortedOurs[7].begin).toBeCloseTo(7 / 8 + 1 / 24, 9)
+    // PV24 — loc presence on every event our pipeline emits.
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  it('parseStrudel routes .swing(n) to Swing tag', () => {
+    const ir = parseStrudel('note("a b c d e f g h").swing(4)')
+    expect(ir.tag).toBe('Swing')
+    if (ir.tag === 'Swing') {
+      expect(ir.n).toBe(4)
+    }
+  })
+
+  // ------------------------------------------------------------------
+  // Phase 19-04 Task T-07 — `.shuffle(n)` / `.scramble(n)` RNG parity.
+  //
+  // Ground truth:
+  //   - signal.mjs:392-394 — shuffle(n, pat) = _rearrangeWith(randrun(n), n, pat)
+  //   - signal.mjs:405-407 — scramble(n, pat) = _rearrangeWith(_irand(n)._segment(n), n, pat)
+  //   - signal.mjs:365-376 — randrun(n): rands = getRandsAtTime(t.floor()+0.5, n, seed)
+  //                          → sort indices by rand value → permutation
+  //   - signal.mjs:476     — _irand(n) = rand.fmap(x => trunc(x*n))
+  //   - pattern.mjs:2173-2175 — _segment(n) = struct(pure(true)._fast(n))
+  //                              → samples at slot begins (signal.mjs:18-21)
+  //
+  // Determinism is automatic at randSeed=0 (Strudel default; signal.mjs:262)
+  // because the legacy RNG is fully deterministic. We do NOT call withSeed
+  // — the default suffices, matching 19-03's Degrade pattern.
+  //
+  // Per-cycle randomness only surfaces over multiple cycles (single-cycle
+  // tests would silently pass even with a misaligned sampler). We run 4
+  // cycles per RESEARCH §4. P42 covers both the symmetric (Shuffle —
+  // permutation-without-replacement) and asymmetric (Scramble — independent
+  // samples-with-replacement) retention probes.
+  //
+  // Key alignment of our seededRandsAtTime helper (collect.ts) with
+  // Strudel's __timeToRandsPrime (signal.mjs:246-256): for n>1, ONE
+  // time-seed is derived via __timeToIntSeed, then __xorwise chains the
+  // seed n times to produce the n rands. NOT n independent calls at
+  // offset times — that would re-seed the chain n times and diverge.
+  //
+  // Cycle-aware dedupe: across 4 cycles, each event's whole.begin is
+  // unique within (s, note, pan) because begin includes the cycle index
+  // (e.g. cycle 1 events at 1.0, 1.25, …). Within a cycle, shuffle plays
+  // each note exactly once (no collisions); scramble may pick the same
+  // source slot twice but at DIFFERENT destination slots → distinct
+  // begins. So dedupeByWholeBegin (key = begin|s|note|pan) is safe — no
+  // legitimate per-cycle replays get collapsed.
+  // ------------------------------------------------------------------
+  it('shuffle parity: note("c d e f").shuffle(4) over 4 cycles — exact (begin, note) set match', async () => {
+    const code = 'note("c d e f").shuffle(4)'
+    const rawExpected = (await strudelEventsFromCode(code, 4)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    // 4 notes × 4 cycles = 16 (permutation: each cycle plays all 4 once).
+    expect(ours.length).toBe(16)
+    expect(ours.length).toBe(expected.length)
+    // Exact (begin, note) tuple set — RNG sample-point alignment with
+    // Strudel's randrun. If this fails: the seededRandsAtTime helper
+    // diverged from __timeToRandsPrime (RESEARCH §4 / collect.ts).
+    const tuple = (e: IREvent): string =>
+      `${e.begin.toFixed(9)}|${e.note ?? ''}`
+    expect(new Set(ours.map(tuple))).toEqual(new Set(expected.map(tuple)))
+    // PV24 — loc presence on every event our pipeline emits.
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  it('shuffle preserves the permutation property over 4 cycles (each source note played exactly once per cycle)', () => {
+    // Internal property test: Shuffle is permutation-without-replacement,
+    // so every cycle plays every body note exactly once. This catches
+    // accidental collapse to scramble semantics or selector duplication.
+    const code = 'note("c d e f").shuffle(4)'
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    expect(ours.length).toBe(16)
+    for (let c = 0; c < 4; c++) {
+      const cycleEvents = ours.filter((e) => e.begin >= c && e.begin < c + 1)
+      expect(cycleEvents.length).toBe(4)
+      const notes = cycleEvents.map((e) => String(e.note)).sort()
+      expect(notes).toEqual(['c', 'd', 'e', 'f'])
+    }
+  })
+
+  it('scramble parity: note("c d e f").scramble(4) over 4 cycles — exact (begin, note) set match', async () => {
+    const code = 'note("c d e f").scramble(4)'
+    const rawExpected = (await strudelEventsFromCode(code, 4)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    // Scramble: per-slot independent samples → up to 16 events but some
+    // slots may collide on source while others are unused → events count
+    // ≤ 16. Don't hard-code; let the parity assertion verify match with
+    // Strudel.
+    expect(ours.length).toBe(expected.length)
+    const tuple = (e: IREvent): string =>
+      `${e.begin.toFixed(9)}|${e.note ?? ''}`
+    expect(new Set(ours.map(tuple))).toEqual(new Set(expected.map(tuple)))
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
+
+  it('parseStrudel routes .shuffle(n) and .scramble(n) to Shuffle/Scramble tags', () => {
+    const sh = parseStrudel('note("c d e f").shuffle(4)')
+    expect(sh.tag).toBe('Shuffle')
+    if (sh.tag === 'Shuffle') expect(sh.n).toBe(4)
+    const sc = parseStrudel('note("c d e f").scramble(4)')
+    expect(sc.tag).toBe('Scramble')
+    if (sc.tag === 'Scramble') expect(sc.n).toBe(4)
+  })
+
+  // ------------------------------------------------------------------
+  // Phase 19-04 Task T-08 — `.chop(n)` parity (pattern-level only).
+  //
+  // Ground truth (pattern.mjs:3291-3306):
+  //   chop(n, pat) = pat.squeezeBind(o => sequence(slice_objects.map(s => merge(o, s))))
+  //   slice_objects[i] = { begin: i/n, end: (i+1)/n }
+  //   merge(a, b) = if (a.begin && a.end) {
+  //     d = a.end - a.begin; b = { begin: a.begin + b.begin*d, end: a.begin + b.end*d }
+  //   }; return Object.assign({}, a, b)
+  //
+  // Per source event, n sub-events are emitted whose time spans carve
+  // up the source span AND whose `begin`/`end` PARAMS carve up the
+  // source's existing begin/end (default [0, 1) when absent).
+  //
+  // D-04 known limitation (PV29 axis-1): this asserts pattern-level event
+  // count + params.begin/end set equality. Strudel's audio engine ALSO
+  // slices the rendered sample buffer at playback using the begin/end
+  // controls — that audio-buffer rendering side is axis 5, deferred to
+  // phase 22. If real audio diverges in playback, that is the documented
+  // D-04 limitation, NOT a parity failure.
+  //
+  // Dedupe is safe here: the n sub-events have DIFFERENT `begin` values
+  // (e.begin + i*dt/n), so dedupeByWholeBegin's (begin|s|note|pan) key
+  // does not collide. params.begin/end are NOT in the dedupe key, but
+  // because the time-`begin` already differs, the events are preserved.
+  // ------------------------------------------------------------------
+  it('chop parity: s("bd").chop(4) — pattern-level event count + params.begin/end set match', async () => {
+    const code = 's("bd").chop(4)'
+    const rawExpected = (await strudelEventsFromCode(code, 1)).map(normalizeStrudelPan)
+    const expected = withOnsetInWindow(dedupeByWholeBegin(rawExpected), 0, 1)
+    const ours = collectCycles(parseStrudel(code), 0, 1)
+    // 1 source event × 4 chops = 4 sub-events.
+    expect(ours.length).toBe(4)
+    expect(ours.length).toBe(expected.length)
+    // Per-event params.begin/end set equality — the heart of the chop
+    // parity claim. If this fails: re-read the merge function at
+    // pattern.mjs:3294-3300; the (b0 + (i/n)*d) calc may need adjustment.
+    const beTuple = (e: IREvent): string => {
+      const b = e.params?.begin
+      const en = e.params?.end
+      return `${typeof b === 'number' ? b.toFixed(9) : b}|${typeof en === 'number' ? en.toFixed(9) : en}`
+    }
+    expect(new Set(ours.map(beTuple))).toEqual(new Set(expected.map(beTuple)))
+    // Time-`begin` set match (the sub-event onsets divide the source
+    // event's time span). Strudel's `whole` for each sub-event is the
+    // sub-slot, so its whole.begin matches our newBegin.
+    const timeTuple = (e: IREvent): string => `${e.begin.toFixed(9)}|${e.s ?? ''}`
+    expect(new Set(ours.map(timeTuple))).toEqual(new Set(expected.map(timeTuple)))
+    // PV24 — loc presence on every event our pipeline emits.
+    for (const e of ours) expect(e.loc).toBeDefined()
+  })
 })
 
 // ---------------------------------------------------------------------------

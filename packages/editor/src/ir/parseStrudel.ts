@@ -159,6 +159,19 @@ function parseRoot(root: string, baseOffset = 0): PatternIR {
     return parseMini(sMatch[1], true, innerOffset)
   }
 
+  // mini("...") — raw mini-notation pattern producing values (not notes/samples).
+  // Added for Phase 19-04 T-02 (Pick) — the only Strudel form that produces a
+  // numeric-index Pattern usable as a pick selector in our test environment
+  // (String.prototype.pick is not registered server-side; note("<0 1 2>")
+  // converts numeric strings to MIDI notes which pick can't index by).
+  // RESEARCH §1.4 (pre-mortem #10).
+  const miniMatch = trimmed.match(/^mini\s*\(\s*"([^"]*)"\s*\)/)
+  if (miniMatch) {
+    const quoteIdx = miniMatch[0].indexOf('"')
+    const innerOffset = baseOffset + leadingWs + quoteIdx + 1
+    return parseMini(miniMatch[1], false, innerOffset)
+  }
+
   // stack(a, b, c) — parallel composition. Argument offsets are
   // dropped here for v0 — when a future consumer needs loc through
   // stack(), splitArgs would need to return slice positions too.
@@ -271,6 +284,37 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       const gateMatch = args.trim().match(/^"([^"]*)"$/)
       if (gateMatch) return IR.when(gateMatch[1], ir)
       return ir
+    }
+
+    case 'layer': {
+      // Tier 4 (Phase 19-04 Task T-01). `.layer(...funcs)` desugars per
+      // pattern.mjs:796-798 — `stack(...funcs.map(f => f(this)))`. Each
+      // func is applied to the body; the original body is NOT included
+      // (contrast superimpose at pattern.mjs:810-812 which does include
+      // the original via this.stack(...)).
+      //
+      // We split the comma-separated arg list with the existing splitArgs
+      // helper (respects nested parens / strings), parse each func string
+      // with parseTransform threading the absolute baseOffset of that
+      // func within the user's code, then construct Stack(...transformed).
+      //
+      // Round-trip: toStrudel currently emits the structural stack(...)
+      // form for v1 — the layer-shape recogniser is a follow-up for the
+      // bidirectional editing pass (#8). Same soft-target stance taken
+      // for jux/off in 19-03. RESEARCH §1.1; CONTEXT round-trip discipline.
+      const argList = splitArgs(args)
+      if (argList.length === 0) return ir
+      const tracks: PatternIR[] = []
+      for (const funcStr of argList) {
+        const trimmed = funcStr.trim()
+        if (!trimmed) {
+          tracks.push(ir)
+          continue
+        }
+        const transformOffset = offsetOfSubArg(args, trimmed, baseOffset)
+        tracks.push(parseTransform(trimmed, ir, transformOffset))
+      }
+      return IR.stack(...tracks)
     }
 
     case 'gain': {
@@ -462,6 +506,110 @@ function applyMethod(ir: PatternIR, method: string, args: string, baseOffset = 0
       return ir
     }
 
+    case 'pick': {
+      // Tier 4 (Phase 19-04 Task T-02). `.pick(lookup)` per pick.mjs:44-54:
+      //   pat.fmap(i => lookup[clamp(round(i), 0, len-1)]).innerJoin()
+      // For each event of the receiver (`ir`, the selector pattern), the
+      // value (cast to int + clamp) selects a sub-pattern from the lookup
+      // array; that sub-pattern plays at the selector event's time slot.
+      //
+      // First IR shape that takes a list of sub-patterns as data (not a
+      // transform function) — Pick is the prototype for the family
+      // (inhabit, pickF, pickmod, pickRestart, pickReset, pickOut).
+      // RESEARCH §1.4.
+      //
+      // v1 limitation: array-form lookup only; object/named-key form
+      // (Strudel's `pick({a: ..., b: ...})`) deferred to a follow-up.
+      const inner = args.trim()
+      if (!(inner.startsWith('[') && inner.endsWith(']'))) return ir
+      const arrayBody = inner.slice(1, -1)
+      const elements = splitArgs(arrayBody)
+      if (elements.length === 0) return ir
+      // Compute the absolute baseOffset of the array body within the
+      // user's full code (skip the opening '[' inside args).
+      const arrayBodyOffsetInArgs = args.indexOf('[') + 1
+      const arrayBodyOffset = arrayBodyOffsetInArgs >= 1
+        ? baseOffset + arrayBodyOffsetInArgs
+        : baseOffset
+      const lookup = elements.map(e => {
+        const elemOffset = offsetOfSubArg(arrayBody, e.trim(), arrayBodyOffset)
+        return parseArrayLiteralElement(e, 'note', elemOffset)
+      })
+      return IR.pick(ir, lookup)
+    }
+
+    case 'struct': {
+      // Tier 4 (Phase 19-04 Task T-03). `.struct(mask)` per pattern.mjs:1161:
+      //   struct(mask) = this.keepif.out(mask)
+      // _opOut is "structure from mask, values from this" — RE-TIMES this
+      // pattern's value-stream to mask onsets. Distinct from `.mask("…")`
+      // (When tag) which only GATES events through. RESEARCH §1.2; P43
+      // (documented spec ≠ source — keepif.out is the implementation truth).
+      //
+      // mask is a quoted mini-notation string; we carry it raw on the IR
+      // (matches When.gate precedent — sub-IR form deferred per RESEARCH §8.2).
+      const gateMatch = args.trim().match(/^"([^"]*)"$/)
+      if (gateMatch) return IR.struct(gateMatch[1], ir)
+      return ir
+    }
+
+    case 'swing': {
+      // Tier 4 (Phase 19-04 Task T-04). `.swing(n)` per pattern.mjs:2193:
+      //   swing(n, pat) = pat.swingBy(1/3, n)
+      //                 = pat.inside(n, late(seq(0, 1/6)))   (pattern.mjs:2184)
+      //
+      // Narrow tag per D-03 — we model swing directly via slot-index
+      // lateness in the collect arm, NOT through an Inside primitive
+      // (which would warrant its own phase with outside/zoom/compress
+      // siblings). When Inside lands, the Swing collect arm rewrites
+      // (~10 lines); the IR shape `{ n; body }` is locked to keep that
+      // migration cheap. RESEARCH §1.3.
+      const n = parseInt(args.trim(), 10)
+      if (isNaN(n) || n < 1) return ir
+      return IR.swing(n, ir)
+    }
+
+    case 'shuffle': {
+      // Tier 4 (Phase 19-04 Task T-06). `.shuffle(n)` per signal.mjs:
+      // 392-394:
+      //   shuffle(n, pat) = _rearrangeWith(randrun(n), n, pat)
+      // Slices pat into n parts, plays them in a random per-cycle
+      // PERMUTATION (each part exactly once). Forced tag per PV28 (named
+      // after the user-typed method); collect arm + shared helper landed
+      // in T-05. Parity test in T-07. RESEARCH §1.5; PK11 step 5.
+      const n = parseInt(args.trim(), 10)
+      if (isNaN(n) || n < 1) return ir
+      return IR.shuffle(n, ir)
+    }
+
+    case 'scramble': {
+      // Tier 4 (Phase 19-04 Task T-06). `.scramble(n)` per signal.mjs:
+      // 405-407:
+      //   scramble(n, pat) = _rearrangeWith(_irand(n)._segment(n), n, pat)
+      // Slices pat into n parts and INDEPENDENTLY samples each slot's
+      // source — parts may repeat or not appear at all per cycle. Forced
+      // tag per PV28; collect arm + shared helper landed in T-05. Parity
+      // test in T-07. RESEARCH §1.6; PK11 step 5.
+      const n = parseInt(args.trim(), 10)
+      if (isNaN(n) || n < 1) return ir
+      return IR.scramble(n, ir)
+    }
+
+    case 'chop': {
+      // Tier 4 (Phase 19-04 Task T-08). `.chop(n)` per pattern.mjs:
+      // 3291-3306:
+      //   chop(n, pat) = pat.squeezeBind(o => sequence(slice_objects.map(s => merge(o, s))))
+      // Per-event sample-range slicing: each source event becomes n
+      // sub-events whose time and `begin`/`end` controls carve up the
+      // original event. D-04: pattern-level only — audio buffer slicing
+      // is axis-5 work, deferred to phase 22. Forced tag per PV28
+      // (squeezeBind has no Fast equivalent; same trap as Ply). RESEARCH
+      // §1.7; PK11 step 5.
+      const n = parseInt(args.trim(), 10)
+      if (isNaN(n) || n < 1) return ir
+      return IR.chop(n, ir)
+    }
+
     case 'p':
       // .p("trackId") — track assignment, pass through
       return ir
@@ -531,6 +679,62 @@ function parseTransform(transformStr: string, defaultIr: PatternIR, baseOffset =
   }
 
   return defaultIr
+}
+
+/**
+ * Parse a single element of an array-literal arg (used by `.pick([...])`).
+ *
+ * Three shapes are recognised:
+ *   1. Bare quoted-string: `"g a"` or `'c'` — wrapped per receiver context
+ *      (defaults to `note(...)`). This handles the docstring shape from
+ *      pick.mjs:35-37 — `pick(["g a", "e f", ...])` — where bare strings
+ *      need to become miniNotation patterns. Per RESEARCH §1.4 / pre-mortem
+ *      #10: receiver-context detection is v1-limited to a fixed default.
+ *   2. Bare numeric literal: `0`, `1.5` — wrapped as `note(...)` so the
+ *      element produces a Play with that note value.
+ *   3. Already a full Strudel expression: `note("c")`, `s("bd")`,
+ *      `mini("...")` — parsed directly via parseExpression.
+ *
+ * `baseOffset` is the absolute char offset of `elem[0]` within the user's
+ * full code (PV25 — parser preserves offsets at every hop).
+ */
+function parseArrayLiteralElement(
+  elem: string,
+  receiverContext: 'note' | 's',
+  baseOffset = 0,
+): PatternIR {
+  const trimmed = elem.trim()
+  const leadingWs = elem.length - elem.trimStart().length
+  if (!trimmed) return IR.pure()
+
+  // Bare quoted-string: wrap in receiver context to give parseExpression
+  // a parseable shape. Adjust baseOffset to point at the wrapper's quote
+  // — internally parseRoot computes the inner mini's offset from the
+  // wrapper, but the user's code has just `"..."`, so the inner offset
+  // relative to the wrapper compensates by `(receiverContext.length + 1)`
+  // chars (e.g. `note(` = 5 chars). This keeps Play.loc on the actual
+  // user-source positions.
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    const wrapped = `${receiverContext}(${trimmed})`
+    // The wrapper adds `note(` (5 chars) before the quote. parseExpression
+    // → parseRoot parses `note("...")` and reads inner mini at offset
+    // `quoteIdx + 1`. quoteIdx within the wrapper is `receiverContext.length + 1`.
+    // To compensate, pass a baseOffset that's behind by `receiverContext.length + 1`
+    // chars so the absolute innerOffset lands at the user's actual quote+1.
+    const wrapperPrefix = receiverContext.length + 1
+    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix)
+  }
+
+  // Bare numeric literal: wrap in note(...) so it parses as a Play.
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    const wrapped = `${receiverContext}("${trimmed}")`
+    const wrapperPrefix = receiverContext.length + 1 + 1  // note( + opening quote
+    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix)
+  }
+
+  // Full expression — parse as-is.
+  return parseExpression(trimmed, baseOffset + leadingWs)
 }
 
 /**

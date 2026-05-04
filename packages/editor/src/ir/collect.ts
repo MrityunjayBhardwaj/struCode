@@ -52,6 +52,44 @@ function seededRand(t: number, seed: number): number {
   return Math.abs(intSeedToRand(timeToIntSeed(t + seed)))
 }
 
+/**
+ * `getRandsAtTime(t, n, seed)` mirror — returns `n` deterministic rands
+ * derived from a SINGLE time-seed via the xorwise chain. Matches Strudel's
+ * `__timeToRandsPrime` (signal.mjs:246-256) verbatim:
+ *   seed₀ = __timeToIntSeed(t + seed)
+ *   result[i] = __intSeedToRand(seedᵢ)
+ *   seedᵢ₊₁ = __xorwise(seedᵢ)
+ *
+ * Used by `Shuffle` (signal.mjs:368) — `randrun(n)` calls
+ * `getRandsAtTime(t.floor().add(0.5), n, randSeed)`, producing n
+ * CHAINED rands from one time-seed. This is NOT n independent
+ * `seededRand(t+i/n, ...)` calls — those would re-seed the xorwise
+ * chain n times. Confirmed against `__timeToRandsPrime` source: when
+ * n>1, the seed is xorwised between samples, not re-derived from t.
+ *
+ * Note `intSeedToRand` is signed (`s % 2**29`) and `seededRand` takes
+ * its absolute value; here we follow the same convention so the result
+ * matches `__timeToRandsPrime` returning raw values, then absolute
+ * value via the consumer (`randrun` later sorts by magnitude — sort key
+ * uses raw values; for shuffle's permutation extraction the sign drops
+ * out because sort is stable on pairs).
+ *
+ * BUT: `randrun` does NOT take Math.abs before sorting (signal.mjs:371).
+ * It sorts by raw `(a[0] > b[0]) - (a[0] < b[0])`. Mirror that exactly.
+ */
+function seededRandsAtTime(t: number, n: number, seed: number): number[] {
+  if (n === 1) {
+    return [Math.abs(intSeedToRand(timeToIntSeed(t + seed)))]
+  }
+  let s = timeToIntSeed(t + seed)
+  const out: number[] = []
+  for (let i = 0; i < n; i++) {
+    out.push(intSeedToRand(s))
+    s = xorwise(s)
+  }
+  return out
+}
+
 export interface CollectContext {
   /** Query window start (cycles) */
   begin: number
@@ -123,6 +161,58 @@ function makeEvent(ctx: CollectContext, note: string | number, params: Record<st
     color: (merged.color as string | null) ?? null,
     params: merged,
   }
+}
+
+/**
+ * Shared slice-and-place for `Shuffle` and `Scramble` (D-02 — two distinct
+ * tags per PV28; one implementation since the arms are ~95% identical).
+ *
+ * Strudel's `_rearrangeWith(ipat, n, pat)` (signal.mjs:378-381):
+ *   pats = [pat.zoom(i/n, (i+1)/n) for i in 0..n]
+ *   ipat.fmap(i => pats[i].repeatCycles(n)._fast(n)).innerJoin()
+ *
+ * For each destination slot `d` in [0, n), the index pattern selects a
+ * source slot `s = selector[d]`. We slice body events whose cycle-position
+ * falls in `[s/n, (s+1)/n)` and re-emit them at destination slot `d`,
+ * preserving the within-slot offset:
+ *   newBegin = ctx.cycle + d/n + (sourcePos - s/n)
+ *
+ * `selector` is a length-n array of source slot indices; the caller
+ * (Shuffle / Scramble arms) computes it per-cycle from RNG.
+ *
+ * `loc` flows through unchanged (PV24 — every IREvent retains its loc).
+ */
+function _collectRearrange(
+  selector: number[],
+  n: number,
+  body: PatternIR,
+  ctx: CollectContext,
+): IREvent[] {
+  const bodyEvents = walk(body, ctx)
+  const out: IREvent[] = []
+  for (let d = 0; d < n; d++) {
+    const sourceIdx = ((selector[d] % n) + n) % n
+    const srcStart = sourceIdx / n
+    const srcEnd = (sourceIdx + 1) / n
+    const dstStart = d / n
+    for (const e of bodyEvents) {
+      const cyclePos = e.begin - ctx.cycle
+      // Begin-membership in source slot — matches Strudel's zoom which
+      // includes events whose onset is in [s/n, (s+1)/n).
+      if (cyclePos >= srcStart - 1e-9 && cyclePos < srcEnd - 1e-9) {
+        const offsetWithinSrc = cyclePos - srcStart
+        const newBegin = ctx.cycle + dstStart + offsetWithinSrc
+        const dur = e.end - e.begin
+        out.push({
+          ...e,
+          begin: newBegin,
+          end: newBegin + dur,
+          endClipped: newBegin + dur,
+        })
+      }
+    }
+  }
+  return out
 }
 
 /**
@@ -401,6 +491,147 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       })
     }
 
+    case 'Pick': {
+      // Strudel's `pick(lookup)` (pick.mjs:44-54) is
+      //   pat.fmap(i => lookup[clamp(round(i), 0, len-1)]).innerJoin()
+      // i.e. for each event of `selector`, look up the sub-pattern at
+      // index = clamp(round(value)) and play that pattern at the
+      // selector event's time slot. innerJoin queries the inner pattern
+      // over the outer event's whole window.
+      //
+      // Algorithm: walk the selector with the current ctx. For each
+      // selector event, derive its value-as-index, fetch lookup[idx],
+      // and walk it with a sub-context restricted to the selector
+      // event's [begin, end) slot. The sub-IR walks at its own cycle 0
+      // — matches innerJoin semantics (each outer event resets the
+      // inner pattern's cycle origin).
+      //
+      // v1 limitation (PLAN pre-mortem #2): array-form lookup only;
+      // selector must produce numeric values. Object/named-key form
+      // and non-numeric selectors are deferred to a follow-up.
+      // RESEARCH §1.4.
+      if (ir.lookup.length === 0) return []
+      const selectorEvents = walk(ir.selector, ctx)
+      const out: IREvent[] = []
+      for (const sel of selectorEvents) {
+        const rawIdx = typeof sel.note === 'number'
+          ? sel.note
+          : Number(sel.note ?? 0)
+        const idx = Math.max(0, Math.min(ir.lookup.length - 1, Math.round(rawIdx)))
+        const subIR = ir.lookup[idx]
+        const subDuration = sel.end - sel.begin
+        const subCtx: CollectContext = {
+          ...ctx,
+          time: sel.begin,
+          cycle: 0,
+          duration: subDuration,
+          begin: sel.begin,
+          end: sel.end,
+          // Inherit accumulated speed/params; the sub-pattern walks at
+          // its own cycle 0 within the selector event's slot.
+        }
+        const subEvents = walk(subIR, subCtx)
+        // Propagate the selector event's loc onto sub-events when the
+        // sub-event lacks its own loc (PV24 — every IREvent must carry
+        // loc; the selector's loc is the closest source range).
+        for (const e of subEvents) {
+          if (!e.loc && sel.loc) e.loc = sel.loc
+          out.push(e)
+        }
+      }
+      return out
+    }
+
+    case 'Struct': {
+      // Strudel's `struct(mask)` (pattern.mjs:1161-1163):
+      //   struct(mask, pat) = pat.keepif.out(mask)
+      // _opOut is `this.fmap(keepif).appRight(reify(mask))` (pattern.mjs:748).
+      // appRight (pattern.mjs:218-237) queries the mask, then for each mask
+      // hap queries `this` over the MASK HAP'S SPAN, producing one output
+      // hap per (mask hap, intersecting body hap). The output's `whole` and
+      // `part` come from the mask (structure from right), the value comes
+      // from `this`. Net effect: re-times body's value-stream to mask onsets,
+      // and a body event spanning multiple mask slots can produce multiple
+      // output events (one per intersecting mask onset). RESEARCH §1.2; P43
+      // (the Strudel docstring's "draws values from pat" understates the
+      // intersection-based query — it's not "begin in slot" but
+      // "body span intersects slot span").
+      //
+      // Distinct from When/`.mask("…")` (keepif.in / structure from `this`)
+      // which only GATES body events through unchanged.
+      //
+      // Algorithm: split mask into slots, walk body once with current ctx.
+      // For each truthy slot at index i with span [i/N, (i+1)/N), find body
+      // events whose cycle-window INTERSECTS the slot span (not just begin
+      // inside). Re-emit each at the mask onset with slot-width duration.
+      // `loc` flows through unchanged (PV24). Cycle-counter aware via
+      // ctx.cycle (no parallel state — re-uses the field threaded through
+      // Every/Cycle/Chunk).
+      const slots = ir.mask.trim().split(/\s+/)
+      const total = slots.length
+      if (total === 0) return []
+      const bodyEvents = walk(ir.body, ctx)
+      const slotWidth = 1 / total
+      const out: IREvent[] = []
+      for (let i = 0; i < total; i++) {
+        const slot = slots[i]
+        if (slot === '~' || slot === '0' || slot === '') continue
+        const onsetTime = ctx.cycle + i / total
+        const slotLo = ctx.cycle + i / total
+        const slotHi = ctx.cycle + (i + 1) / total
+        for (const e of bodyEvents) {
+          // Span-intersection: event covers [e.begin, e.end). Intersects
+          // slot when e.begin < slotHi AND e.end > slotLo.
+          if (e.begin < slotHi - 1e-9 && e.end > slotLo + 1e-9) {
+            out.push({
+              ...e,
+              begin: onsetTime,
+              end: onsetTime + slotWidth,
+              endClipped: onsetTime + slotWidth,
+            })
+          }
+        }
+      }
+      return out
+    }
+
+    case 'Swing': {
+      // Strudel's `swing(n)` (pattern.mjs:2193) = `pat.swingBy(1/3, n)`
+      // = `pat.inside(n, late(seq(0, 1/6)))` (pattern.mjs:2184).
+      // `inside(n, f)` (pattern.mjs:1971-1973) is `f(pat._slow(n))._fast(n)`,
+      // which net-effect on the active cycle delays events in odd-numbered
+      // slots (of n total slots in [0, 1)) by `1/(6n)` cycles. RESEARCH §1.3.
+      //
+      // Narrow tag per D-03 — the faithful desugar would require an
+      // `Inside` primitive (the Strudel author's idiomatic "do this at a
+      // larger time-scale, then shrink back"), but Inside has its own
+      // family (outside/zoom/compress) and warrants its own phase. We
+      // model `Swing` directly via slot-index lateness, accepting that
+      // when `Inside` lands later, this collect arm rewrites (~10 lines).
+      // The shape `{ n; body }` is locked — no extra fields — to keep
+      // the future migration cheap (Pre-mortem #6).
+      //
+      // Per PV28 we do NOT desugar via Fast (Fast scales speed, doesn't
+      // re-play body — same trap that promoted Ply to a forced tag).
+      // Instead we apply lateness directly to body events.
+      const events = walk(ir.body, ctx)
+      if (ir.n < 1) return events
+      const swingAmount = 1 / (6 * ir.n)
+      return events.map((e) => {
+        const cyclePos = e.begin - ctx.cycle
+        const slotIdx = Math.floor(cyclePos * ir.n)
+        if (slotIdx % 2 === 1) {
+          return {
+            ...e,
+            begin: e.begin + swingAmount,
+            end: e.end + swingAmount,
+            endClipped: (e.endClipped ?? e.end) + swingAmount,
+          }
+        }
+        return e
+      })
+    }
+
     case 'Ply': {
       // Strudel's `ply(factor)` (pattern.mjs:1905-1911):
       //   ply(factor, pat) = pat.fmap(x => pure(x)._fast(factor)).squeezeJoin()
@@ -434,6 +665,109 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
             begin: newBegin,
             end: newEnd,
             endClipped: newEnd,
+          })
+        }
+      }
+      return out
+    }
+
+    case 'Shuffle': {
+      // Strudel's `shuffle(n)` (signal.mjs:392-394):
+      //   shuffle(n, pat) = _rearrangeWith(randrun(n), n, pat)
+      // `randrun(n)` (signal.mjs:365-376) produces a per-cycle PERMUTATION
+      // of [0..n-1]:
+      //   nums = [0..n-1] sorted by getRandsAtTime(t.floor().add(0.5), n, seed)
+      //   at slot i, return nums[i]
+      //
+      // Critical: `getRandsAtTime(t, n, seed)` for n>1 derives ONE time-seed
+      // from t and then chains xorwise to produce the n rands — NOT n
+      // independent calls at offset times. Mirror this with
+      // `seededRandsAtTime(ctx.cycle + 0.5, n, RAND_SEED)` so that for
+      // randSeed=0 the permutation matches Strudel event-for-event.
+      //
+      // Strudel's sort comparator uses raw values (signal.mjs:371) —
+      // `(a[0] > b[0]) - (a[0] < b[0])` — so we sort raw, not absolute.
+      //
+      // PV28: re-time direct via _collectRearrange, NOT through Fast.
+      if (ir.n < 1) return walk(ir.body, ctx)
+      const rands = seededRandsAtTime(ctx.cycle + 0.5, ir.n, RAND_SEED)
+      const perm = rands
+        .map((r, i) => [r, i] as const)
+        .sort((a, b) => (a[0] > b[0] ? 1 : a[0] < b[0] ? -1 : 0))
+        .map((x) => x[1])
+      return _collectRearrange(perm, ir.n, ir.body, ctx)
+    }
+
+    case 'Scramble': {
+      // Strudel's `scramble(n)` (signal.mjs:405-407):
+      //   scramble(n, pat) = _rearrangeWith(_irand(n)._segment(n), n, pat)
+      // `_irand(n)` = `rand.fmap(x => Math.trunc(x * n))` (signal.mjs:476).
+      // `_segment(n) = struct(pure(true)._fast(n))` (pattern.mjs:2173-2175)
+      // re-times the continuous `_irand(n)` signal to slot onsets at i/n.
+      // For each slot the signal evaluates at the slot's begin time —
+      // `signal((t, ctrl) => …)` queries with `state.span.begin`
+      // (signal.mjs:18-21) — i.e. `cycle + slot/n`. Independent samples
+      // per slot (with replacement); slices may repeat or not appear.
+      //
+      // PV28: re-time direct via _collectRearrange, NOT through Fast.
+      if (ir.n < 1) return walk(ir.body, ctx)
+      const selector: number[] = []
+      for (let slot = 0; slot < ir.n; slot++) {
+        const r = seededRand(ctx.cycle + slot / ir.n, RAND_SEED)
+        selector.push(Math.trunc(r * ir.n))
+      }
+      return _collectRearrange(selector, ir.n, ir.body, ctx)
+    }
+
+    case 'Chop': {
+      // Strudel's `chop(n)` (pattern.mjs:3291-3306):
+      //   chop(n, pat) = pat.squeezeBind(o => sequence(slice_objects.map(s => merge(o, s))))
+      //   slice_objects[i] = { begin: i/n, end: (i+1)/n }
+      //   merge(a, b) = if (a.begin && a.end) {
+      //     d = a.end - a.begin
+      //     b = { begin: a.begin + b.begin*d, end: a.begin + b.end*d }
+      //   }; return Object.assign({}, a, b)
+      //
+      // Per-event semantics: each source event becomes n sub-events whose
+      // time spans carve up the source event's [begin, end) window, AND
+      // whose `begin`/`end` PARAMS (sample-buffer addresses) carve up the
+      // source event's existing `begin`/`end` controls (default [0, 1) when
+      // the source has none). The merge composes nested chops correctly —
+      // e.g. Chop(2, Chop(2, body)) yields slot 0: (0, 0.25), slot 1:
+      // (0.25, 0.5), etc. on the OUTER level when each sub-slot is itself
+      // chopped in two. RESEARCH §1.7.
+      //
+      // D-04 limitation (PV29 axis-1): this is the IR-level / pattern-level
+      // model. Strudel's audio engine ALSO slices the rendered sample buffer
+      // at playback using these begin/end controls — that audio-buffer side
+      // is axis-5 work in phase 22. Pattern-level event counts and per-event
+      // begin/end values match Strudel exactly; runtime audio output will
+      // diverge until phase 22 closes the buffer-slicing side.
+      //
+      // PV28: direct emission per source event, NOT a desugar through Fast.
+      // Fast scales speed; it does not re-play the body. The same trap that
+      // promoted Ply to a forced tag.
+      if (ir.n <= 1) return walk(ir.body, ctx)
+      const baseEvents = walk(ir.body, ctx)
+      const out: IREvent[] = []
+      for (const e of baseEvents) {
+        const dur = e.end - e.begin
+        const slotLen = dur / ir.n
+        // Source event's existing begin/end controls (sample-range
+        // addresses). Default to the full buffer [0, 1) when absent.
+        const b0 = (e.params?.begin as number | undefined) ?? 0
+        const e0 = (e.params?.end as number | undefined) ?? 1
+        const d = e0 - b0
+        for (let i = 0; i < ir.n; i++) {
+          const subBegin = b0 + (i / ir.n) * d
+          const subEnd = b0 + ((i + 1) / ir.n) * d
+          const newBegin = e.begin + i * slotLen
+          out.push({
+            ...e,
+            begin: newBegin,
+            end: newBegin + slotLen,
+            endClipped: newBegin + slotLen,
+            params: { ...e.params, begin: subBegin, end: subEnd },
           })
         }
       }

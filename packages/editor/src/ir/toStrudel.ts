@@ -44,6 +44,16 @@ function gen(ir: PatternIR): string {
     }
 
     case 'Stack': {
+      // TODO(layer round-trip — Phase 19-04 T-01): if all tracks are
+      // non-trivial transforms applied to the same body skeleton, this
+      // is a `.layer(...)` shape. Recogniser ordering must be:
+      //   jux-shape   FIRST  (most specific — 2 tracks, both FX(pan, ±1))
+      //   off-shape   SECOND (2 tracks, second is Late wrapping body)
+      //   layer-shape THIRD  (general N-track, each track is f(body))
+      //   plain stack LAST   (heterogeneous tracks)
+      // v1 emits the structural stack(...) form — matches the soft target
+      // for jux/off from 19-03. Belongs with the bidirectional-editing
+      // follow-up (#8). RESEARCH §1.1 §B4.
       if (ir.tracks.length === 0) return '""'
       const parts = ir.tracks.map(gen)
       return `stack(\n  ${parts.join(',\n  ')}\n)`
@@ -180,6 +190,48 @@ function gen(ir: PatternIR): string {
       // Tier 4 — `ply(n)` (pattern.mjs:1905-1911). 1:1 method↔tag mapping,
       // so the round-trip is direct: emit `.ply(n)` over the body.
       return `${gen(ir.body)}.ply(${ir.n})`
+    }
+
+    case 'Pick': {
+      // Tier 4 (Phase 19-04 T-02) — `pick(lookup)` (pick.mjs:44-54).
+      // 1:1 method↔tag mapping, so the round-trip is direct: emit
+      // `.pick([...])` with each lookup entry's gen output.
+      const sel = gen(ir.selector)
+      const elems = ir.lookup.map(p => gen(p))
+      return `${sel}.pick([${elems.join(', ')}])`
+    }
+
+    case 'Struct': {
+      // Tier 4 (Phase 19-04 T-03) — `struct(mask)` (pattern.mjs:1161-1163).
+      // 1:1 method↔tag mapping with mask carried as a raw string (matches
+      // When.gate precedent). Direct round-trip.
+      return `${gen(ir.body)}.struct("${ir.mask}")`
+    }
+
+    case 'Swing': {
+      // Tier 4 (Phase 19-04 T-04) — `swing(n)` (pattern.mjs:2193). Narrow
+      // tag per D-03 (no Inside primitive yet). Direct 1:1 method↔tag
+      // mapping for round-trip.
+      return `${gen(ir.body)}.swing(${ir.n})`
+    }
+
+    case 'Shuffle': {
+      // Tier 4 (Phase 19-04 T-05) — `shuffle(n)` (signal.mjs:392-394).
+      // 1:1 method↔tag mapping; direct round-trip.
+      return `${gen(ir.body)}.shuffle(${ir.n})`
+    }
+
+    case 'Scramble': {
+      // Tier 4 (Phase 19-04 T-05) — `scramble(n)` (signal.mjs:405-407).
+      // 1:1 method↔tag mapping; direct round-trip.
+      return `${gen(ir.body)}.scramble(${ir.n})`
+    }
+
+    case 'Chop': {
+      // Tier 4 (Phase 19-04 T-08) — `chop(n)` (pattern.mjs:3291-3306).
+      // 1:1 method↔tag mapping; direct round-trip. Per D-04 the IR side
+      // is pattern-level only; round-trip preserves the user's source.
+      return `${gen(ir.body)}.chop(${ir.n})`
     }
   }
 }

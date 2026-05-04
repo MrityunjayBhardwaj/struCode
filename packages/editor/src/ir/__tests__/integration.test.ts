@@ -581,6 +581,387 @@ describe('parseStrudel', () => {
     expect(tree.tag).toBe('Seq')
   })
 
+  // Phase 19-04 T-02 — Pick tag shape tests.
+  it('parses .pick([…]) into Pick(selector, lookup) (Tier 4)', () => {
+    // Ground truth: pick.mjs:44-54. First IR shape carrying a list of
+    // sub-patterns as data. Receiver becomes selector; array-literal
+    // arg becomes lookup[].
+    const tree = parseStrudel('mini("<0 1 2 3>").pick(["c","e","g","b"])')
+    expect(tree.tag).toBe('Pick')
+    if (tree.tag === 'Pick') {
+      expect(tree.lookup.length).toBe(4)
+      // Selector is the parsed mini-notation (Cycle of Plays).
+      expect(tree.selector.tag).toBe('Cycle')
+      // Each lookup element is a Play — bare strings get wrapped in
+      // note(...) by parseArrayLiteralElement (default receiver context
+      // = 'note' in v1).
+      for (const elem of tree.lookup) {
+        expect(['Play', 'Seq']).toContain(elem.tag)
+      }
+    }
+  })
+
+  it('IR.pick smart constructor produces well-formed Pick node', () => {
+    const sel = IR.cycle(IR.play(0), IR.play(1))
+    const lookup = [IR.play('c'), IR.play('e')]
+    const node = IR.pick(sel, lookup)
+    expect(node.tag).toBe('Pick')
+    if (node.tag === 'Pick') {
+      expect(node.selector).toBe(sel)
+      expect(node.lookup).toEqual(lookup)
+    }
+  })
+
+  it('collect(Pick) yields one event per selector event, picking from lookup by clamped int index', () => {
+    // Selector with numeric notes 0 and 1 alternating; lookup has two
+    // single-note Plays. Each cycle the selector selects the matching
+    // lookup entry — collect should walk the inner Play and emit its
+    // event at the selector event's slot.
+    const sel = IR.cycle(IR.play(0), IR.play(1))
+    const lookup = [IR.play('c'), IR.play('e')]
+    const node = IR.pick(sel, lookup)
+    // Two cycles: cycle 0 picks lookup[0]=c, cycle 1 picks lookup[1]=e.
+    const cyc0 = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    const cyc1 = collect(node, { cycle: 1, time: 1, begin: 1, end: 2, duration: 1 })
+    expect(cyc0.length).toBe(1)
+    expect(cyc1.length).toBe(1)
+    expect(cyc0[0].note).toBe('c')
+    expect(cyc1[0].note).toBe('e')
+  })
+
+  it('toStrudel(Pick) round-trips to .pick([…])', () => {
+    const sel = IR.cycle(IR.play(0), IR.play(1))
+    const lookup = [IR.play('c'), IR.play('e')]
+    const node = IR.pick(sel, lookup)
+    const code = toStrudel(node)
+    expect(code).toContain('.pick([')
+    expect(code).toContain(', ')  // separator between elements
+  })
+
+  it('parseArrayLiteralElement wraps bare quoted strings in note() (v1 receiver default)', () => {
+    // The docstring shape `pick(["g a", ...])` requires bare-string
+    // wrapping per RESEARCH §1.4 / pre-mortem #10. Verify the wrapped
+    // result is a parseable Play / Seq, not a Code fallback.
+    const tree = parseStrudel('mini("<0 1>").pick(["c", "e"])')
+    expect(tree.tag).toBe('Pick')
+    if (tree.tag === 'Pick') {
+      // Each lookup element should be a Play with the bare string as note.
+      expect(tree.lookup[0].tag).toBe('Play')
+      expect(tree.lookup[1].tag).toBe('Play')
+      if (tree.lookup[0].tag === 'Play') expect(tree.lookup[0].note).toBe('c')
+      if (tree.lookup[1].tag === 'Play') expect(tree.lookup[1].note).toBe('e')
+    }
+  })
+
+  // Phase 19-04 T-03 — Struct tag shape tests.
+  it('parses .struct("…") into Struct(mask, body) (Tier 4)', () => {
+    // Ground truth: pattern.mjs:1161 — struct(mask) = this.keepif.out(mask).
+    // Re-times body's value-stream to mask onsets; distinct from When/.mask
+    // (which only gates). RESEARCH §1.2.
+    const tree = parseStrudel('note("c d e").struct("x ~ x")')
+    expect(tree.tag).toBe('Struct')
+    if (tree.tag === 'Struct') {
+      expect(tree.mask).toBe('x ~ x')
+      expect(tree.body.tag).toBe('Seq')
+    }
+  })
+
+  it('IR.struct smart constructor produces well-formed Struct node', () => {
+    const body = IR.play('c4')
+    const node = IR.struct('x ~ x ~', body)
+    expect(node.tag).toBe('Struct')
+    if (node.tag === 'Struct') {
+      expect(node.mask).toBe('x ~ x ~')
+      expect(node.body).toBe(body)
+    }
+  })
+
+  it('collect(Struct) re-times body events to mask onsets', () => {
+    // Body is a single Play spanning [0, 1) (default duration 1 cycle).
+    // Mask "x ~ x ~" has 4 slots; truthy at i=0 and i=2. Each slot is 1/4
+    // wide. The body event INTERSECTS every slot, so each truthy slot
+    // re-emits a copy. Net: 2 events at begins {0, 0.5} each with width 0.25.
+    // (Mirrors Strudel's appRight semantics — pattern.mjs:218-237.)
+    const node = IR.struct('x ~ x ~', IR.play('c4'))
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(2)
+    const sorted = [...events].sort((a, b) => a.begin - b.begin)
+    expect(sorted[0].begin).toBeCloseTo(0, 9)
+    expect(sorted[0].end).toBeCloseTo(0.25, 9)
+    expect(sorted[0].note).toBe('c4')
+    expect(sorted[1].begin).toBeCloseTo(0.5, 9)
+    expect(sorted[1].note).toBe('c4')
+  })
+
+  it('collect(Struct) samples body across slots when body has multiple events', () => {
+    // Body is Seq("c","d","e","f") — events at begin 0, 1/4, 2/4, 3/4 each
+    // with end at the next slot. Mask "x ~ x ~" has truthy at i=0, i=2.
+    // Slot 0 [0, 1/4) captures the c event → re-emit at 0.
+    // Slot 2 [2/4, 3/4) captures the e event → re-emit at 2/4.
+    const body = IR.seq(IR.play('c'), IR.play('d'), IR.play('e'), IR.play('f'))
+    const node = IR.struct('x ~ x ~', body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(2)
+    const sorted = [...events].sort((a, b) => a.begin - b.begin)
+    expect(sorted[0].note).toBe('c')
+    expect(sorted[0].begin).toBeCloseTo(0, 9)
+    expect(sorted[1].note).toBe('e')
+    expect(sorted[1].begin).toBeCloseTo(0.5, 9)
+  })
+
+  it('toStrudel(Struct) round-trips to .struct("…")', () => {
+    const node = IR.struct('x ~ x ~', IR.play('c4'))
+    const code = toStrudel(node)
+    expect(code).toContain('.struct("x ~ x ~")')
+  })
+
+  // Phase 19-04 T-04 — Swing tag shape tests (D-03 narrow shape).
+  it('parses .swing(n) into Swing(n, body) (Tier 4, narrow per D-03)', () => {
+    // Ground truth: pattern.mjs:2193 — swing(n) = pat.swingBy(1/3, n) =
+    // pat.inside(n, late(seq(0, 1/6))). Modeled directly without an
+    // Inside primitive (deferred). RESEARCH §1.3.
+    const tree = parseStrudel('s("hh*8").swing(4)')
+    expect(tree.tag).toBe('Swing')
+    if (tree.tag === 'Swing') {
+      expect(tree.n).toBe(4)
+    }
+  })
+
+  it('IR.swing smart constructor produces well-formed Swing node with NO additional fields (Pre-mortem #6)', () => {
+    // Locked shape: { tag, n, body } only — keeps migration cheap when an
+    // Inside primitive lands later.
+    const body = IR.play('c4')
+    const node = IR.swing(4, body)
+    expect(node.tag).toBe('Swing')
+    if (node.tag === 'Swing') {
+      expect(node.n).toBe(4)
+      expect(node.body).toBe(body)
+      // No additional fields — guards Pre-mortem #6 (Inside-someday churn).
+      expect(Object.keys(node).sort()).toEqual(['body', 'n', 'tag'])
+    }
+  })
+
+  it('collect(Swing) shifts odd-slot events by 1/(6n) within the cycle', () => {
+    // Body = 8 plays as a Seq, so events land at begins {0, 1/8, 2/8, ...,
+    // 7/8} each spanning 1/8. With n=4, slot width = 1/4, so events fall
+    // into slots: {0,0,1,1,2,2,3,3}. Odd-slot events (slot 1 and 3) shift
+    // by 1/24. Even-slot events stay put.
+    const body = IR.seq(
+      IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'),
+      IR.play('e'), IR.play('f'), IR.play('g'), IR.play('h'),
+    )
+    const node = IR.swing(4, body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(8)
+    const sorted = [...events].sort((a, b) => a.begin - b.begin)
+    // Slot 0 (events 0, 1) — no shift. Slot 1 (events 2, 3) — +1/24.
+    expect(sorted[0].begin).toBeCloseTo(0, 9)        // a, slot 0
+    expect(sorted[1].begin).toBeCloseTo(1 / 8, 9)    // b, slot 0
+    expect(sorted[2].begin).toBeCloseTo(2 / 8 + 1 / 24, 9)  // c, slot 1 +shift
+    expect(sorted[3].begin).toBeCloseTo(3 / 8 + 1 / 24, 9)  // d, slot 1 +shift
+    expect(sorted[4].begin).toBeCloseTo(4 / 8, 9)    // e, slot 2
+    expect(sorted[5].begin).toBeCloseTo(5 / 8, 9)    // f, slot 2
+    expect(sorted[6].begin).toBeCloseTo(6 / 8 + 1 / 24, 9)  // g, slot 3 +shift
+    expect(sorted[7].begin).toBeCloseTo(7 / 8 + 1 / 24, 9)  // h, slot 3 +shift
+  })
+
+  it('toStrudel(Swing) round-trips to .swing(n)', () => {
+    const node = IR.swing(4, IR.play('c4'))
+    const code = toStrudel(node)
+    expect(code).toContain('.swing(4)')
+  })
+
+  // Phase 19-04 T-05 — Shuffle + Scramble shape tests.
+  it('IR.shuffle smart constructor produces well-formed Shuffle node', () => {
+    const body = IR.play('c4')
+    const node = IR.shuffle(4, body)
+    expect(node.tag).toBe('Shuffle')
+    if (node.tag === 'Shuffle') {
+      expect(node.n).toBe(4)
+      expect(node.body).toBe(body)
+      expect(Object.keys(node).sort()).toEqual(['body', 'n', 'tag'])
+    }
+  })
+
+  it('IR.scramble smart constructor produces well-formed Scramble node', () => {
+    const body = IR.play('c4')
+    const node = IR.scramble(4, body)
+    expect(node.tag).toBe('Scramble')
+    if (node.tag === 'Scramble') {
+      expect(node.n).toBe(4)
+      expect(node.body).toBe(body)
+      expect(Object.keys(node).sort()).toEqual(['body', 'n', 'tag'])
+    }
+  })
+
+  it('collect(Shuffle) produces a per-cycle PERMUTATION (each slot used exactly once)', () => {
+    // Body = 4 notes at slots {0, 1/4, 2/4, 3/4}. Shuffle reorders the slot
+    // contents per cycle. The permutation property: across one cycle, the
+    // set of source-slot indices used is exactly {0,1,2,3}.
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.shuffle(4, body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(4)
+    // Each note appears exactly once (permutation, not independent samples).
+    const notes = events.map((e) => e.note).sort()
+    expect(notes).toEqual(['a', 'b', 'c', 'd'])
+    // Destination begins are exactly the slot grid {0, 1/4, 1/2, 3/4}.
+    const begins = events.map((e) => +e.begin.toFixed(9)).sort((a, b) => a - b)
+    expect(begins).toEqual([0, 0.25, 0.5, 0.75])
+  })
+
+  it('collect(Shuffle) is deterministic — same cycle yields same permutation', () => {
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.shuffle(4, body)
+    const a = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    const b = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(a.map((e) => e.note)).toEqual(b.map((e) => e.note))
+  })
+
+  it('collect(Shuffle) propagates loc through _collectRearrange (PV24)', () => {
+    const body = IR.seq(
+      IR.play('a', 0.25, {}, [{ start: 5, end: 6 }]),
+      IR.play('b', 0.25, {}, [{ start: 7, end: 8 }]),
+      IR.play('c', 0.25, {}, [{ start: 9, end: 10 }]),
+      IR.play('d', 0.25, {}, [{ start: 11, end: 12 }]),
+    )
+    const node = IR.shuffle(4, body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    for (const e of events) expect(e.loc).toBeDefined()
+  })
+
+  it('collect(Scramble) selector entries are each in [0, n) with replacement allowed', () => {
+    // 4 slots, n=4. Each destination slot independently samples a source
+    // index in [0, 4). Entries may repeat or be omitted (with replacement).
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.scramble(4, body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    // Count is 0..n depending on whether some source slots were never picked.
+    // The permutation property does NOT hold (with replacement). So we don't
+    // assert event count = 4. Each event MUST come from a body note in {a,b,c,d}.
+    for (const e of events) {
+      expect(['a', 'b', 'c', 'd']).toContain(String(e.note))
+    }
+  })
+
+  it('collect(Scramble) is deterministic — same cycle yields same selection', () => {
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.scramble(4, body)
+    const a = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    const b = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(a.length).toBe(b.length)
+    expect(a.map((e) => `${e.begin}|${e.note}`)).toEqual(
+      b.map((e) => `${e.begin}|${e.note}`),
+    )
+  })
+
+  it('collect(Shuffle) cycles 0 and 1 produce different permutations (per-cycle randomness)', () => {
+    // A weak property — different cycles MAY occasionally yield the same
+    // permutation by chance. With seed=0 and small n=4, however, the legacy
+    // RNG produces distinct permutations across consecutive cycles.
+    const body = IR.seq(IR.play('a'), IR.play('b'), IR.play('c'), IR.play('d'))
+    const node = IR.shuffle(4, body)
+    const c0 = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    const c1 = collect(node, { cycle: 1, time: 1, begin: 1, end: 2, duration: 1 })
+    const seq0 = c0.sort((a, b) => a.begin - b.begin).map((e) => e.note).join(',')
+    const seq1 = c1.sort((a, b) => a.begin - b.begin).map((e) => e.note).join(',')
+    // Per-cycle permutation differs cycle-to-cycle for at least one cycle pair.
+    // If this ever fires false, document the seed alignment.
+    expect(seq0).not.toEqual(seq1)
+  })
+
+  it('toStrudel(Shuffle) round-trips to .shuffle(n)', () => {
+    const node = IR.shuffle(4, IR.play('c4'))
+    expect(toStrudel(node)).toContain('.shuffle(4)')
+  })
+
+  it('toStrudel(Scramble) round-trips to .scramble(n)', () => {
+    const node = IR.scramble(4, IR.play('c4'))
+    expect(toStrudel(node)).toContain('.scramble(4)')
+  })
+
+  // Phase 19-04 T-08 — Chop shape tests (pattern-level only per D-04).
+  it('IR.chop smart constructor produces well-formed Chop node', () => {
+    const body = IR.play('bd', 0.25, { s: 'bd' })
+    const node = IR.chop(4, body)
+    expect(node.tag).toBe('Chop')
+    if (node.tag === 'Chop') {
+      expect(node.n).toBe(4)
+      expect(node.body).toBe(body)
+      expect(Object.keys(node).sort()).toEqual(['body', 'n', 'tag'])
+    }
+  })
+
+  it('collect(Chop) emits n sub-events per source event with progressive begin/end controls', () => {
+    // s("bd").chop(4): one source event @ [0, 1) with no existing begin/end
+    // → 4 sub-events at begins [0, 0.25, 0.5, 0.75] with params.begin/end
+    // ∈ {(0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1)}.
+    const node = IR.chop(4, IR.play('bd', 1, { s: 'bd' }))
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(4)
+    const begins = events.map((e) => +e.begin.toFixed(9)).sort((a, b) => a - b)
+    expect(begins).toEqual([0, 0.25, 0.5, 0.75])
+    const params = events
+      .map((e) => [
+        +(e.params?.begin as number).toFixed(9),
+        +(e.params?.end as number).toFixed(9),
+      ])
+      .sort((a, b) => a[0] - b[0])
+    expect(params).toEqual([
+      [0, 0.25],
+      [0.25, 0.5],
+      [0.5, 0.75],
+      [0.75, 1],
+    ])
+  })
+
+  it('collect(Chop) composes nested begin/end via the merge function (Chop(2, Chop(2, body)))', () => {
+    // Inner Chop(2) on a single bd event yields 2 sub-events with params
+    // (0, 0.5) and (0.5, 1). The outer Chop(2) then takes EACH of those
+    // and slices its [b0, e0) range into 2 sub-ranges. Per merge:
+    //   inner slot 0: b0=0,   e0=0.5 → outer slots: (0, 0.25),  (0.25, 0.5)
+    //   inner slot 1: b0=0.5, e0=1   → outer slots: (0.5, 0.75),(0.75, 1)
+    // Net: 4 events with begin/end identical to a flat Chop(4). The
+    // merge function is what makes nested chop compose correctly.
+    const body = IR.play('bd', 1, { s: 'bd' })
+    const node = IR.chop(2, IR.chop(2, body))
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(4)
+    const params = events
+      .map((e) => [
+        +(e.params?.begin as number).toFixed(9),
+        +(e.params?.end as number).toFixed(9),
+      ])
+      .sort((a, b) => a[0] - b[0])
+    expect(params).toEqual([
+      [0, 0.25],
+      [0.25, 0.5],
+      [0.5, 0.75],
+      [0.75, 1],
+    ])
+  })
+
+  it('collect(Chop) propagates loc to every sub-event (PV24)', () => {
+    const body = IR.play('bd', 1, { s: 'bd' }, [{ start: 2, end: 4 }])
+    const node = IR.chop(4, body)
+    const events = collect(node, { cycle: 0, time: 0, begin: 0, end: 1, duration: 1 })
+    expect(events.length).toBe(4)
+    for (const e of events) expect(e.loc).toBeDefined()
+  })
+
+  it('toStrudel(Chop) round-trips to .chop(n)', () => {
+    const node = IR.chop(4, IR.play('bd', 1, { s: 'bd' }))
+    expect(toStrudel(node)).toContain('.chop(4)')
+  })
+
+  it('parseStrudel routes .chop(n) to Chop tag', () => {
+    const ir = parseStrudel('s("bd").chop(4)')
+    expect(ir.tag).toBe('Chop')
+    if (ir.tag === 'Chop') {
+      expect(ir.n).toBe(4)
+    }
+  })
+
   describe('source-range tracking', () => {
     it('single-line note("c4 e4") — Play.loc points at exact char ranges', () => {
       // 0123456789012345

@@ -2940,6 +2940,12 @@ var IR = {
   degrade: (p, body2) => ({ tag: "Degrade", p, body: body2 }),
   chunk: (n, transform, body2) => ({ tag: "Chunk", n, transform, body: body2 }),
   ply: (n, body2) => ({ tag: "Ply", n, body: body2 }),
+  pick: (selector, lookup) => ({ tag: "Pick", selector, lookup }),
+  struct: (mask, body2) => ({ tag: "Struct", mask, body: body2 }),
+  swing: (n, body2) => ({ tag: "Swing", n, body: body2 }),
+  shuffle: (n, body2) => ({ tag: "Shuffle", n, body: body2 }),
+  scramble: (n, body2) => ({ tag: "Scramble", n, body: body2 }),
+  chop: (n, body2) => ({ tag: "Chop", n, body: body2 }),
   loop: (body2) => ({ tag: "Loop", body: body2 }),
   code: (code) => ({ tag: "Code", code, lang: "strudel" })
 };
@@ -2960,6 +2966,18 @@ function intSeedToRand(s) {
 }
 function seededRand(t, seed) {
   return Math.abs(intSeedToRand(timeToIntSeed(t + seed)));
+}
+function seededRandsAtTime(t, n, seed) {
+  if (n === 1) {
+    return [Math.abs(intSeedToRand(timeToIntSeed(t + seed)))];
+  }
+  let s = timeToIntSeed(t + seed);
+  const out2 = [];
+  for (let i2 = 0; i2 < n; i2++) {
+    out2.push(intSeedToRand(s));
+    s = xorwise(s);
+  }
+  return out2;
 }
 var DEFAULT_CONTEXT = {
   begin: 0,
@@ -3006,6 +3024,31 @@ function makeEvent(ctx, note2, params) {
     color: merged.color ?? null,
     params: merged
   };
+}
+function _collectRearrange(selector, n, body2, ctx) {
+  const bodyEvents = walk(body2, ctx);
+  const out2 = [];
+  for (let d = 0; d < n; d++) {
+    const sourceIdx = (selector[d] % n + n) % n;
+    const srcStart = sourceIdx / n;
+    const srcEnd = (sourceIdx + 1) / n;
+    const dstStart = d / n;
+    for (const e of bodyEvents) {
+      const cyclePos = e.begin - ctx.cycle;
+      if (cyclePos >= srcStart - 1e-9 && cyclePos < srcEnd - 1e-9) {
+        const offsetWithinSrc = cyclePos - srcStart;
+        const newBegin = ctx.cycle + dstStart + offsetWithinSrc;
+        const dur = e.end - e.begin;
+        out2.push({
+          ...e,
+          begin: newBegin,
+          end: newBegin + dur,
+          endClipped: newBegin + dur
+        });
+      }
+    }
+  }
+  return out2;
 }
 function collect(ir, partialCtx) {
   const ctx = { ...DEFAULT_CONTEXT, ...partialCtx };
@@ -3158,6 +3201,77 @@ function walk(ir, ctx) {
         return e;
       });
     }
+    case "Pick": {
+      if (ir.lookup.length === 0) return [];
+      const selectorEvents = walk(ir.selector, ctx);
+      const out2 = [];
+      for (const sel of selectorEvents) {
+        const rawIdx = typeof sel.note === "number" ? sel.note : Number(sel.note ?? 0);
+        const idx = Math.max(0, Math.min(ir.lookup.length - 1, Math.round(rawIdx)));
+        const subIR = ir.lookup[idx];
+        const subDuration = sel.end - sel.begin;
+        const subCtx = {
+          ...ctx,
+          time: sel.begin,
+          cycle: 0,
+          duration: subDuration,
+          begin: sel.begin,
+          end: sel.end
+          // Inherit accumulated speed/params; the sub-pattern walks at
+          // its own cycle 0 within the selector event's slot.
+        };
+        const subEvents = walk(subIR, subCtx);
+        for (const e of subEvents) {
+          if (!e.loc && sel.loc) e.loc = sel.loc;
+          out2.push(e);
+        }
+      }
+      return out2;
+    }
+    case "Struct": {
+      const slots = ir.mask.trim().split(/\s+/);
+      const total = slots.length;
+      if (total === 0) return [];
+      const bodyEvents = walk(ir.body, ctx);
+      const slotWidth = 1 / total;
+      const out2 = [];
+      for (let i2 = 0; i2 < total; i2++) {
+        const slot = slots[i2];
+        if (slot === "~" || slot === "0" || slot === "") continue;
+        const onsetTime = ctx.cycle + i2 / total;
+        const slotLo = ctx.cycle + i2 / total;
+        const slotHi = ctx.cycle + (i2 + 1) / total;
+        for (const e of bodyEvents) {
+          if (e.begin < slotHi - 1e-9 && e.end > slotLo + 1e-9) {
+            out2.push({
+              ...e,
+              begin: onsetTime,
+              end: onsetTime + slotWidth,
+              endClipped: onsetTime + slotWidth
+            });
+          }
+        }
+      }
+      return out2;
+    }
+    case "Swing": {
+      const events = walk(ir.body, ctx);
+      if (ir.n < 1) return events;
+      const swingAmount = 1 / (6 * ir.n);
+      return events.map((e) => {
+        const cyclePos = e.begin - ctx.cycle;
+        const slotIdx = Math.floor(cyclePos * ir.n);
+        if (slotIdx % 2 === 1) {
+          return {
+            ...e,
+            begin: e.begin + swingAmount,
+            end: e.end + swingAmount,
+            endClipped: (e.endClipped ?? e.end) + swingAmount
+          };
+        }
+        return e;
+      });
+    }
     case "Ply": {
       const baseEvents = walk(ir.body, ctx);
       if (ir.n <= 1) return baseEvents;
@@ -3172,6 +3286,46 @@ function walk(ir, ctx) {
             begin: newBegin,
             end: newEnd,
             endClipped: newEnd
+          });
+        }
+      }
+      return out2;
+    }
+    case "Shuffle": {
+      if (ir.n < 1) return walk(ir.body, ctx);
+      const rands = seededRandsAtTime(ctx.cycle + 0.5, ir.n, RAND_SEED);
+      const perm = rands.map((r, i2) => [r, i2]).sort((a, b) => a[0] > b[0] ? 1 : a[0] < b[0] ? -1 : 0).map((x) => x[1]);
+      return _collectRearrange(perm, ir.n, ir.body, ctx);
+    }
+    case "Scramble": {
+      if (ir.n < 1) return walk(ir.body, ctx);
+      const selector = [];
+      for (let slot = 0; slot < ir.n; slot++) {
+        const r = seededRand(ctx.cycle + slot / ir.n, RAND_SEED);
+        selector.push(Math.trunc(r * ir.n));
+      }
+      return _collectRearrange(selector, ir.n, ir.body, ctx);
+    }
+    case "Chop": {
+      if (ir.n <= 1) return walk(ir.body, ctx);
+      const baseEvents = walk(ir.body, ctx);
+      const out2 = [];
+      for (const e of baseEvents) {
+        const dur = e.end - e.begin;
+        const slotLen = dur / ir.n;
+        const b0 = e.params?.begin ?? 0;
+        const e0 = e.params?.end ?? 1;
+        const d = e0 - b0;
+        for (let i2 = 0; i2 < ir.n; i2++) {
+          const subBegin = b0 + i2 / ir.n * d;
+          const subEnd = b0 + (i2 + 1) / ir.n * d;
+          const newBegin = e.begin + i2 * slotLen;
+          out2.push({
+            ...e,
+            begin: newBegin,
+            end: newBegin + slotLen,
+            endClipped: newBegin + slotLen,
+            params: { ...e.params, begin: subBegin, end: subEnd }
           });
         }
       }
@@ -3292,6 +3446,26 @@ function gen(ir) {
     }
     case "Ply": {
       return `${gen(ir.body)}.ply(${ir.n})`;
+    }
+    case "Pick": {
+      const sel = gen(ir.selector);
+      const elems = ir.lookup.map((p) => gen(p));
+      return `${sel}.pick([${elems.join(", ")}])`;
+    }
+    case "Struct": {
+      return `${gen(ir.body)}.struct("${ir.mask}")`;
+    }
+    case "Swing": {
+      return `${gen(ir.body)}.swing(${ir.n})`;
+    }
+    case "Shuffle": {
+      return `${gen(ir.body)}.shuffle(${ir.n})`;
+    }
+    case "Scramble": {
+      return `${gen(ir.body)}.scramble(${ir.n})`;
+    }
+    case "Chop": {
+      return `${gen(ir.body)}.chop(${ir.n})`;
     }
   }
 }
@@ -3916,6 +4090,12 @@ function parseRoot(root, baseOffset = 0) {
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1;
     return parseMini(sMatch[1], true, innerOffset);
   }
+  const miniMatch = trimmed.match(/^mini\s*\(\s*"([^"]*)"\s*\)/);
+  if (miniMatch) {
+    const quoteIdx = miniMatch[0].indexOf('"');
+    const innerOffset = baseOffset + leadingWs + quoteIdx + 1;
+    return parseMini(miniMatch[1], false, innerOffset);
+  }
   const stackMatch = trimmed.match(/^stack\s*\(/);
   if (stackMatch) {
     const inner = extractParenContent(trimmed, "stack(");
@@ -3981,6 +4161,21 @@ function applyMethod(ir, method, args2, baseOffset = 0) {
       const gateMatch = args2.trim().match(/^"([^"]*)"$/);
       if (gateMatch) return IR.when(gateMatch[1], ir);
       return ir;
+    }
+    case "layer": {
+      const argList = splitArgs(args2);
+      if (argList.length === 0) return ir;
+      const tracks = [];
+      for (const funcStr of argList) {
+        const trimmed = funcStr.trim();
+        if (!trimmed) {
+          tracks.push(ir);
+          continue;
+        }
+        const transformOffset = offsetOfSubArg(args2, trimmed, baseOffset);
+        tracks.push(parseTransform(trimmed, ir, transformOffset));
+      }
+      return IR.stack(...tracks);
     }
     case "gain": {
       const val = parseFloat(args2.trim());
@@ -4054,6 +4249,45 @@ function applyMethod(ir, method, args2, baseOffset = 0) {
       if (!isNaN(val)) return IR.fx(method, { [method]: val }, ir);
       return ir;
     }
+    case "pick": {
+      const inner = args2.trim();
+      if (!(inner.startsWith("[") && inner.endsWith("]"))) return ir;
+      const arrayBody = inner.slice(1, -1);
+      const elements = splitArgs(arrayBody);
+      if (elements.length === 0) return ir;
+      const arrayBodyOffsetInArgs = args2.indexOf("[") + 1;
+      const arrayBodyOffset = arrayBodyOffsetInArgs >= 1 ? baseOffset + arrayBodyOffsetInArgs : baseOffset;
+      const lookup = elements.map((e) => {
+        const elemOffset = offsetOfSubArg(arrayBody, e.trim(), arrayBodyOffset);
+        return parseArrayLiteralElement(e, "note", elemOffset);
+      });
+      return IR.pick(ir, lookup);
+    }
+    case "struct": {
+      const gateMatch = args2.trim().match(/^"([^"]*)"$/);
+      if (gateMatch) return IR.struct(gateMatch[1], ir);
+      return ir;
+    }
+    case "swing": {
+      const n = parseInt(args2.trim(), 10);
+      if (isNaN(n) || n < 1) return ir;
+      return IR.swing(n, ir);
+    }
+    case "shuffle": {
+      const n = parseInt(args2.trim(), 10);
+      if (isNaN(n) || n < 1) return ir;
+      return IR.shuffle(n, ir);
+    }
+    case "scramble": {
+      const n = parseInt(args2.trim(), 10);
+      if (isNaN(n) || n < 1) return ir;
+      return IR.scramble(n, ir);
+    }
+    case "chop": {
+      const n = parseInt(args2.trim(), 10);
+      if (isNaN(n) || n < 1) return ir;
+      return IR.chop(n, ir);
+    }
     case "p":
       return ir;
     default:
@@ -4081,6 +4315,22 @@ function parseTransform(transformStr, defaultIr, baseOffset = 0) {
     return applyChain(defaultIr, "." + arrowMatch[1], chainOffset);
   }
   return defaultIr;
+}
+function parseArrayLiteralElement(elem, receiverContext, baseOffset = 0) {
+  const trimmed = elem.trim();
+  const leadingWs = elem.length - elem.trimStart().length;
+  if (!trimmed) return IR.pure();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"') || trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    const wrapped = `${receiverContext}(${trimmed})`;
+    const wrapperPrefix = receiverContext.length + 1;
+    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix);
+  }
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    const wrapped = `${receiverContext}("${trimmed}")`;
+    const wrapperPrefix = receiverContext.length + 1 + 1;
+    return parseExpression(wrapped, baseOffset + leadingWs - wrapperPrefix);
+  }
+  return parseExpression(trimmed, baseOffset + leadingWs);
 }
 function offsetOfSubArg(args2, subArg, argsBaseOffset) {
   const trimmedSub = subArg.trim();
@@ -29914,7 +30164,19 @@ var SonicPiEngine = class {
           });
           scheduler.fireCue(name2, name2);
         };
-        if (isReEvaluate) {
+        if (this.buildNestingDepth > 0 && isReEvaluate) {
+          const existing = scheduler.getTask(name2);
+          if (existing && existing.running) {
+            scheduler.hotSwap(name2, asyncFn);
+            existing.bpm = defaultBpm;
+            existing.currentSynth = defaultSynth;
+            existing.outBus = loopBus;
+          } else {
+            scheduler.registerLoop(name2, asyncFn, { bpm: defaultBpm, synth: defaultSynth });
+            const task = scheduler.getTask(name2);
+            if (task) task.outBus = loopBus;
+          }
+        } else if (isReEvaluate) {
           pendingLoops.set(name2, asyncFn);
           pendingDefaults.set(name2, { bpm: defaultBpm, synth: defaultSynth });
         } else {
