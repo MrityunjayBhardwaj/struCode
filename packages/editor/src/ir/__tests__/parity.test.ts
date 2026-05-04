@@ -63,6 +63,16 @@ import {
   type PatternIR,
   type CollectContext,
 } from '../../ir'
+// PRE-01 (PR #70 / issue #70) — internal test hooks that record whether
+// applyChain → applyMethod → parseTransform threaded a non-zero baseOffset
+// for multi-arg methods. Imported directly from parseStrudel.ts (not the
+// barrel) since these are debug-only and intentionally absent from the
+// public API.
+import {
+  __resetParseTransformDebug,
+  __getLastParseTransformBaseOffset,
+  __getParseTransformCallCount,
+} from '../parseStrudel'
 // normalizeStrudelHap lives in engine/, imported directly to keep the
 // parity test surface lean. PK10 barrel discipline is enforced by tasks
 // that introduce *new* exports (e.g., `collectCycles` in Task 19-03-08).
@@ -623,5 +633,63 @@ describe('parity harness', () => {
     // .ply(1) is a no-op identity — no Ply wrapper either.
     const c = parseStrudel('s("bd hh sd cp").ply(1)')
     expect(c.tag).not.toBe('Ply')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PRE-01 (PR #70) — precursor: parseTransform baseOffset threading
+//
+// Scope per RESEARCH §2 YELLOW verdict: this asserts that the four call
+// sites (applyChain → applyMethod → extractNextMethod → parseTransform)
+// thread a non-zero baseOffset to parseTransform for multi-arg method
+// inputs. It does NOT assert that transform-arg events carry the arg's
+// loc value — that requires a broader IR shape change (only Play carries
+// loc today; RESEARCH §2 Subtlety C). Filed as follow-up.
+//
+// Catalogue: P39 (parser offset preservation), PV25 (parser preserves
+// offsets at every hop).
+// ---------------------------------------------------------------------------
+describe('PRE-01 — parseTransform baseOffset threading', () => {
+  it('every() threads non-zero baseOffset for the transform arg', () => {
+    __resetParseTransformDebug()
+    // The transform-arg `x => x.fast(2)` starts well past offset 0.
+    parseStrudel('note("c d e f").every(4, x => x.fast(2))')
+    expect(__getParseTransformCallCount()).toBeGreaterThanOrEqual(1)
+    expect(__getLastParseTransformBaseOffset()).toBeGreaterThan(0)
+  })
+
+  it('off() threads non-zero baseOffset for the transform arg', () => {
+    __resetParseTransformDebug()
+    parseStrudel('note("c d e").off(0.125, x => x.fast(2))')
+    expect(__getParseTransformCallCount()).toBeGreaterThanOrEqual(1)
+    expect(__getLastParseTransformBaseOffset()).toBeGreaterThan(0)
+  })
+
+  it('jux() threads non-zero baseOffset for the transform arg', () => {
+    __resetParseTransformDebug()
+    parseStrudel('note("c d e").jux(rev)')
+    expect(__getParseTransformCallCount()).toBeGreaterThanOrEqual(1)
+    expect(__getLastParseTransformBaseOffset()).toBeGreaterThan(0)
+  })
+
+  it('chunk() threads non-zero baseOffset for the transform arg', () => {
+    __resetParseTransformDebug()
+    parseStrudel('note("c d e f").chunk(4, x => x.fast(2))')
+    expect(__getParseTransformCallCount()).toBeGreaterThanOrEqual(1)
+    expect(__getLastParseTransformBaseOffset()).toBeGreaterThan(0)
+  })
+
+  it('baseOffset roughly tracks the transform-arg position in source', () => {
+    // Two inputs that differ only in pre-method whitespace; the second
+    // should produce a strictly larger baseOffset, demonstrating that
+    // threading is position-sensitive (not just constant non-zero).
+    __resetParseTransformDebug()
+    parseStrudel('note("a").every(2, x => x.fast(2))')
+    const a = __getLastParseTransformBaseOffset()
+    __resetParseTransformDebug()
+    parseStrudel('note("a").every(2,                    x => x.fast(2))')
+    const b = __getLastParseTransformBaseOffset()
+    expect(a).toBeGreaterThan(0)
+    expect(b).toBeGreaterThan(a)
   })
 })
