@@ -367,7 +367,18 @@ function applyMethod(
         const transformOffset = offsetOfSubArg(args, trimmed, baseOffset)
         tracks.push(parseTransform(trimmed, ir, transformOffset))
       }
-      return IR.stack(...tracks)
+      // 19-05 / #74: outer Stack carries .layer(...)'s call-site range +
+      // userMethod: 'layer' (D-09 desugar metadata). Literal construction —
+      // IR.stack is rest-spread and cannot accept a trailing meta? param
+      // (RESEARCH §2 / §11 Q1). Inner transformed funcs inherit metadata
+      // through W5's parseTransform (recursive applyChain).
+      const [layerStart, layerEnd] = callSiteRange
+      return {
+        tag: 'Stack' as const,
+        tracks,
+        loc: [{ start: layerStart, end: layerEnd }],
+        userMethod: method, // 'layer' — D-08 exact-token from the switch label
+      }
     }
 
     case 'gain': {
@@ -478,10 +489,21 @@ function applyMethod(
       const transformed = args.trim()
         ? parseTransform(args.trim(), ir, baseOffset + (args.length - args.trimStart().length))
         : ir
-      return IR.stack(
-        IR.fx('pan', { pan: -1 }, ir),
-        IR.fx('pan', { pan: 1 }, transformed),
-      )
+      // 19-05 / #74: outer Stack carries .jux(...)'s call-site range +
+      // userMethod: 'jux' (D-09). Inner FX(pan, ±1) nodes are SYNTHETIC —
+      // no metadata (setting loc would mislead click-to-source into thinking
+      // the user typed `.pan(...)`; RESEARCH §7). The `transformed` body
+      // keeps its own Play.loc and inherited tag-level locs from the inner
+      // applyChain recursion.
+      const leftPan = IR.fx('pan', { pan: -1 }, ir)
+      const rightPan = IR.fx('pan', { pan: 1 }, transformed)
+      const [juxStart, juxEnd] = callSiteRange
+      return {
+        tag: 'Stack' as const,
+        tracks: [leftPan, rightPan],
+        loc: [{ start: juxStart, end: juxEnd }],
+        userMethod: method, // 'jux'
+      }
     }
 
     case 'ply': {
@@ -537,10 +559,28 @@ function applyMethod(
       const [tStr, transformStr] = splitFirstArg(args)
       const t = parseFloat(tStr.trim())
       if (isNaN(t)) return ir
-      const lateBody = IR.late(t, ir)
+      // 19-05 / #74 D-09: inner Late carries tStr's range (the `0.125` arg
+      // position). userMethod intentionally omitted — Late from .off() is a
+      // synthetic intermediate, not directly authored. Reuse the existing
+      // offsetOfSubArg helper (lines below) — same P39-aware whitespace
+      // handling already used for transformOffset.
+      const tStartAbs = offsetOfSubArg(args, tStr.trim(), baseOffset)
+      const tEndAbs = tStartAbs + tStr.trim().length
+      const lateBody = IR.late(t, ir, {
+        loc: [{ start: tStartAbs, end: tEndAbs }],
+        // userMethod intentionally undefined — synthetic intermediate (D-09).
+      })
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
       const transformed = transformStr ? parseTransform(transformStr.trim(), lateBody, transformOffset) : lateBody
-      return IR.stack(ir, transformed)
+      // Outer Stack carries .off(...)'s call-site range + userMethod: 'off'.
+      // Literal construction — rest-spread escape hatch (RESEARCH §11 Q1).
+      const [offStart, offEnd] = callSiteRange
+      return {
+        tag: 'Stack' as const,
+        tracks: [ir, transformed],
+        loc: [{ start: offStart, end: offEnd }],
+        userMethod: method, // 'off'
+      }
     }
 
     case 'room':
