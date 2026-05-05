@@ -20,6 +20,7 @@ import {
   getIRSnapshot,
   subscribeIRSnapshot,
   revealLineInFile,
+  setCaptureCapacity,
 } from "@stave/editor";
 import {
   LOCALSTORAGE_KEY,
@@ -31,6 +32,10 @@ import { IRInspectorTimeline } from "./IRInspectorTimeline";
 // Phase 19-08 PR-B — localStorage keys for the timeline UI.
 // Convention matches `stave:inspector.irMode` at irProjection.ts:37.
 const TIMELINE_COLLAPSED_KEY = "stave:inspector.timeline.collapsed";
+const TIMELINE_CAPACITY_KEY = "stave:inspector.timeline.capacity";
+const TIMELINE_CAPACITY_DEFAULT = 30;
+const TIMELINE_CAPACITY_MIN = 1;
+const TIMELINE_CAPACITY_MAX = 500;
 
 // ----- Color tokens by IR tag — keep close to the design system -----------
 
@@ -430,6 +435,33 @@ export function IRInspectorPanel(): React.ReactElement {
     }
   }, [timelineCollapsed]);
 
+  // Phase 19-08 PR-B T-13 — trace-length (capture buffer capacity). The
+  // user-configured value persists in localStorage (UI preference per
+  // RESEARCH §8 question #2); the buffer entries themselves remain
+  // in-memory per CONTEXT D-06.
+  const [traceLength, setTraceLength] = useState<number>(() => {
+    if (typeof window === "undefined") return TIMELINE_CAPACITY_DEFAULT;
+    try {
+      const v = window.localStorage.getItem(TIMELINE_CAPACITY_KEY);
+      const n = v == null ? TIMELINE_CAPACITY_DEFAULT : Number(v);
+      if (!Number.isFinite(n) || n < TIMELINE_CAPACITY_MIN) {
+        return TIMELINE_CAPACITY_DEFAULT;
+      }
+      return Math.min(Math.floor(n), TIMELINE_CAPACITY_MAX);
+    } catch {
+      return TIMELINE_CAPACITY_DEFAULT;
+    }
+  });
+  useEffect(() => {
+    setCaptureCapacity(traceLength);
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(TIMELINE_CAPACITY_KEY, String(traceLength));
+    } catch {
+      // Storage quota / private browsing — skip silently.
+    }
+  }, [traceLength]);
+
   // 19-06 (#76) — IR-mode toggle. Default false (projected mode); true
   // shows the raw IR shape for IR developers / power users. Persisted
   // via localStorage (RESEARCH §5.2 colon-prefix convention).
@@ -591,6 +623,45 @@ export function IRInspectorPanel(): React.ReactElement {
           <div style={{ fontSize: "0.8em", opacity: 0.6 }}>
             {displaySnapshot.runtime} · {displaySnapshot.events.length} events · {ageLabel}
           </div>
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: "0.75em",
+              opacity: 0.85,
+            }}
+            title="Capture buffer length (trace) — how many past evals to keep"
+          >
+            <span style={{ opacity: 0.7 }}>trace</span>
+            <input
+              type="number"
+              min={TIMELINE_CAPACITY_MIN}
+              max={TIMELINE_CAPACITY_MAX}
+              value={traceLength}
+              onChange={(e) => {
+                const raw = Number(e.target.value);
+                if (!Number.isFinite(raw)) return;
+                const clamped = Math.min(
+                  Math.max(Math.floor(raw), TIMELINE_CAPACITY_MIN),
+                  TIMELINE_CAPACITY_MAX,
+                );
+                setTraceLength(clamped);
+              }}
+              data-testid="ir-timeline-capacity-input"
+              aria-label="Timeline capacity"
+              style={{
+                width: "3.5rem",
+                padding: "1px 4px",
+                fontSize: "0.85em",
+                background: "transparent",
+                color: "inherit",
+                border:
+                  "1px solid var(--border-subtle, rgba(128,128,128,0.3))",
+                borderRadius: 3,
+              }}
+            />
+          </label>
           <button
             type="button"
             onClick={() => setIrMode((v) => !v)}
