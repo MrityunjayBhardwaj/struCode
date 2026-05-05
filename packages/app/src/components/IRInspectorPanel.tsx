@@ -16,6 +16,7 @@ import {
   type IRSnapshot,
   type IREvent,
   type PatternIR,
+  type SourceLocation,
   getIRSnapshot,
   subscribeIRSnapshot,
   revealLineInFile,
@@ -165,10 +166,20 @@ function IRNodeRow({
   node,
   depth,
   irMode,
+  highlightedLoc,
 }: {
   node: PatternIR;
   depth: number;
   irMode: boolean;
+  /**
+   * Phase 19-08 PR-B T-12 — when the user steps J/K through a pinned
+   * snapshot's events, the panel resolves `events[playheadIndex].loc[0]`
+   * and drills it down through this prop. A node whose own
+   * `loc[0].start` matches gets the .ir-node-highlight class.
+   * `null` means no highlight (live mode or synthetic event without loc
+   * — graceful fallback per PV24).
+   */
+  highlightedLoc?: SourceLocation | null;
 }): React.ReactElement | null {
   let label: string;
   let kids: readonly PatternIR[];
@@ -198,9 +209,21 @@ function IRNodeRow({
   const tagColor = TAG_COLOR[node.tag];
   const summary = summarize(node);
 
+  // Phase 19-08 PR-B T-12 — highlight when the J/K-driven event loc
+  // matches this node's primary loc start. PV24 fallback: missing loc
+  // on either side is a no-op (no crash; just no highlight).
+  const isHighlighted =
+    highlightedLoc != null &&
+    node.loc != null &&
+    node.loc.length > 0 &&
+    node.loc[0].start === highlightedLoc.start;
+  const highlightClass = isHighlighted ? "ir-node-highlight" : undefined;
+
   if (kids.length === 0) {
     return (
       <div
+        className={highlightClass}
+        data-ir-node-highlight={isHighlighted ? "true" : undefined}
         style={{
           display: "flex",
           gap: 6,
@@ -208,6 +231,13 @@ function IRNodeRow({
           paddingLeft: depth * 12,
           paddingTop: 2,
           paddingBottom: 2,
+          ...(isHighlighted
+            ? {
+                outline: "2px solid var(--accent, #4a9eff)",
+                background: "rgba(74, 158, 255, 0.12)",
+                borderRadius: 2,
+              }
+            : null),
         }}
       >
         <span
@@ -228,7 +258,21 @@ function IRNodeRow({
   }
 
   return (
-    <details open={depth < 2} style={{ paddingLeft: depth * 12 }}>
+    <details
+      open={depth < 2}
+      className={highlightClass}
+      data-ir-node-highlight={isHighlighted ? "true" : undefined}
+      style={{
+        paddingLeft: depth * 12,
+        ...(isHighlighted
+          ? {
+              outline: "2px solid var(--accent, #4a9eff)",
+              background: "rgba(74, 158, 255, 0.12)",
+              borderRadius: 2,
+            }
+          : null),
+      }}
+    >
       <summary style={{ cursor: "pointer", padding: "2px 0", listStyle: "none" }}>
         <span style={{ color: tagColor, fontWeight: 600, fontSize: "0.85em" }}>
           {label}
@@ -240,7 +284,13 @@ function IRNodeRow({
         )}
       </summary>
       {kids.map((c, i) => (
-        <IRNodeRow key={i} node={c} depth={depth + 1} irMode={irMode} />
+        <IRNodeRow
+          key={i}
+          node={c}
+          depth={depth + 1}
+          irMode={irMode}
+          highlightedLoc={highlightedLoc}
+        />
       ))}
     </details>
   );
@@ -454,6 +504,48 @@ export function IRInspectorPanel(): React.ReactElement {
     return () => node.removeEventListener("keydown", onKey);
   }, [pinnedSnapshot]);
 
+  // Phase 19-08 PR-B T-12 — J/K event step-through (only when pinned).
+  // Walks displaySnapshot.events[] (audible-time order, not tree order
+  // per CONTEXT D-03 + PV28). Vim-style J=forward, K=back. Scoped to
+  // panelRef so it does NOT collide with the tab strip's ←/→ at
+  // lines 472-480 (handled separately on the tablist's onKeyDown).
+  // PV18 dep array: explicit list of every value the closure reads
+  // — pinnedSnapshot, the event array length (used for clamping),
+  // and setPlayheadIndex. P29 stale-closure trap mitigated.
+  const eventCount = displaySnapshot?.events.length ?? 0;
+  useEffect(() => {
+    if (!pinnedSnapshot) return;
+    if (eventCount === 0) return;
+    const node = panelRef.current;
+    if (!node) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "j" && e.key !== "J" && e.key !== "k" && e.key !== "K") return;
+      // Don't fight typing in form fields.
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      e.preventDefault();
+      setPlayheadIndex((i) => {
+        if (e.key === "j" || e.key === "J") {
+          return Math.min(i + 1, eventCount - 1);
+        }
+        return Math.max(i - 1, 0);
+      });
+    };
+    node.addEventListener("keydown", onKey);
+    return () => node.removeEventListener("keydown", onKey);
+  }, [pinnedSnapshot, eventCount]);
+
+  // Phase 19-08 PR-B T-12 — derive the highlighted source location
+  // from the current playhead index. Null when not pinned, when the
+  // playhead is past the events array, or when the indexed event has
+  // no `loc` (synthetic event — PV24 fallback).
+  const highlightedLoc = useMemo<SourceLocation | null>(() => {
+    if (!pinnedSnapshot || !displaySnapshot) return null;
+    const evt = displaySnapshot.events[playheadIndex];
+    if (!evt || !evt.loc || evt.loc.length === 0) return null;
+    return evt.loc[0];
+  }, [pinnedSnapshot, displaySnapshot, playheadIndex]);
+
   if (!displaySnapshot) {
     return (
       <div
@@ -589,6 +681,7 @@ export function IRInspectorPanel(): React.ReactElement {
                 node={displaySnapshot.passes[selectedIndex].ir}
                 depth={0}
                 irMode={irMode}
+                highlightedLoc={highlightedLoc}
               />
             )}
           </div>
