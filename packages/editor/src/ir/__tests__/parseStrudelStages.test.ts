@@ -417,7 +417,7 @@ describe('parseStrudel stages — Tier-4 round-trip per method (T-09)', () => {
  */
 function collectLocEntries(
   node: PatternIR,
-  path = node.tag,
+  path: string = node.tag,
   acc: Array<{ path: string; tag: string; start: number; end: number }> = [],
 ): Array<{ path: string; tag: string; start: number; end: number }> {
   const rec = node as Record<string, unknown>
