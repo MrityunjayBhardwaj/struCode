@@ -147,6 +147,7 @@ import {
   removeGroup as layoutRemoveGroup,
 } from './groupLayout'
 import { findBuiltinExampleSource } from './builtinExampleSources'
+import { BottomPanel } from './bottomPanel/BottomPanel'
 
 /**
  * Exhaustiveness helper used inside the tab dispatch switch. If TypeScript
@@ -2313,54 +2314,88 @@ export const WorkspaceShell = forwardRef<WorkspaceShellHandle, WorkspaceShellPro
        * column only unmounts that column's subtree, not the whole
        * shell.
        */}
-      {totalGroupCount === 0 ? (
-        <div
-          data-testid="workspace-shell-empty"
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--foreground-muted)',
-            fontSize: 12,
-          }}
-        >
-          Drop a tab here
-        </div>
-      ) : layout.length === 1 && layout[0].length === 1 ? (
-        (() => {
-          const g = groups.get(layout[0][0])
-          return g ? renderGroup(g) : null
-        })()
-      ) : (
-        <SplitPane direction="horizontal">
-          {layout.map((column, colIdx) => {
-            if (column.length === 1) {
-              const g = groups.get(column[0])
+      {/*
+       * Groups-area container — Phase 20-01 PR-A (DA-01).
+       *
+       * The shell's existing groups/SplitPane logic is unchanged inside
+       * this wrapper. The wrapper exists so the BottomPanel sibling
+       * (added below) can claim its own auto-height while the groups
+       * area still consumes `flex: 1` of the remaining shell space.
+       *
+       * `minHeight: 0` is load-bearing — without it the inner SplitPane
+       * doesn't shrink when the BottomPanel grows, defeating the resize.
+       */}
+      <div
+        data-workspace-groups="container"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {totalGroupCount === 0 ? (
+          <div
+            data-testid="workspace-shell-empty"
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--foreground-muted)',
+              fontSize: 12,
+            }}
+          >
+            Drop a tab here
+          </div>
+        ) : layout.length === 1 && layout[0].length === 1 ? (
+          (() => {
+            const g = groups.get(layout[0][0])
+            return g ? renderGroup(g) : null
+          })()
+        ) : (
+          <SplitPane direction="horizontal">
+            {layout.map((column, colIdx) => {
+              if (column.length === 1) {
+                const g = groups.get(column[0])
+                return (
+                  <React.Fragment key={`col-${colIdx}-${column[0]}`}>
+                    {g ? renderGroup(g) : null}
+                  </React.Fragment>
+                )
+              }
               return (
-                <React.Fragment key={`col-${colIdx}-${column[0]}`}>
-                  {g ? renderGroup(g) : null}
-                </React.Fragment>
+                <SplitPane
+                  key={`col-${colIdx}-${column.join('+')}`}
+                  direction="vertical"
+                >
+                  {column.map((gid) => {
+                    const g = groups.get(gid)
+                    return (
+                      <React.Fragment key={gid}>
+                        {g ? renderGroup(g) : null}
+                      </React.Fragment>
+                    )
+                  })}
+                </SplitPane>
               )
-            }
-            return (
-              <SplitPane
-                key={`col-${colIdx}-${column.join('+')}`}
-                direction="vertical"
-              >
-                {column.map((gid) => {
-                  const g = groups.get(gid)
-                  return (
-                    <React.Fragment key={gid}>
-                      {g ? renderGroup(g) : null}
-                    </React.Fragment>
-                  )
-                })}
-              </SplitPane>
-            )
-          })}
-        </SplitPane>
-      )}
+            })}
+          </SplitPane>
+        )}
+      </div>
+
+      {/*
+       * Bottom drawer — Phase 20-01 PR-A (DA-01 / DA-04).
+       *
+       * Mounted as a sibling AFTER the groups container so the editor
+       * grid takes flex:1 and the drawer takes its auto-height
+       * contribution. Default closed -> ~29px header strip; user
+       * expands to expose the body. Tab content is contributed via the
+       * `bottomPanelRegistry` singleton; PR-A seeds a placeholder
+       * `Timeline` tab via `seedTabs.ts`. PR-B (MusicalTimeline) will
+       * replace by re-registering under the same id (idempotent).
+       */}
+      <BottomPanel />
 
       {/*
        * Guide line overlay — a shell-level element that previews where
