@@ -290,12 +290,25 @@ export function MusicalTimeline(
 
   // Slice γ — click-to-source: convert event.loc character offset to
   // a line number and reveal it in Monaco (mirrors IRInspectorPanel.tsx).
+  // Falls back to searching source code for the $: block matching trackId
+  // when loc is absent (live path events from IR.play() without parser).
   const handleNoteClick = React.useCallback(
     (evt: IREvent) => {
-      if (!evt.loc || evt.loc.length === 0 || !snapshot?.source) return
-      const offset = evt.loc[0].start
-      const line = countLines(snapshot.code, offset)
-      revealLineInFile(snapshot.source, line)
+      if (!snapshot?.source) return
+      let line: number | null = null
+      if (evt.loc && evt.loc.length > 0) {
+        line = countLines(snapshot.code, evt.loc[0].start)
+      } else if (evt.s) {
+        // Fallback: find the first `$:` line in code that contains the
+        // sample name as a match for this event's source.
+        const searchStr = evt.s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const regex = new RegExp(`^\\s*\\$:.*${searchStr}`, 'm')
+        const match = snapshot.code.match(regex)
+        if (match) {
+          line = countLines(snapshot.code, match.index)
+        }
+      }
+      if (line != null) revealLineInFile(snapshot.source, line)
     },
     [snapshot],
   )
