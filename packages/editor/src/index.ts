@@ -286,6 +286,30 @@ export {
   subscribeIRSnapshot,
 } from './engine/irInspector'
 
+// Phase 20-01 PR-A — bottom-drawer infrastructure.
+// PK10 propagation: the registry + component + types must be exported
+// from the top-level barrel so @stave/app and PR-B can import them.
+// `__resetBottomPanelRegistryForTest` is intentionally NOT exported —
+// test-internal; tests import from the module path directly. Verified
+// by grep on packages/editor/dist/index.cjs.
+export { BottomPanel } from './workspace/bottomPanel/BottomPanel'
+export type { BottomPanelTab } from './workspace/bottomPanel/bottomPanelRegistry'
+export {
+  registerBottomPanelTab,
+  unregisterBottomPanelTab,
+  listBottomPanelTabs,
+  getBottomPanelTab,
+  subscribeToBottomPanelTabs,
+} from './workspace/bottomPanel/bottomPanelRegistry'
+export {
+  BOTTOM_PANEL_HEIGHT_KEY,
+  BOTTOM_PANEL_OPEN_KEY,
+  BOTTOM_PANEL_ACTIVE_TAB_KEY,
+  BOTTOM_PANEL_HEIGHT_MIN,
+  BOTTOM_PANEL_HEIGHT_MAX,
+  BOTTOM_PANEL_HEIGHT_DEFAULT,
+} from './workspace/bottomPanel/persistence'
+
 // Phase 19-08 — IR Inspector streaming timeline capture buffer.
 // Fed by every publishIRSnapshot fan-out (PK9 step 8); consumed by the
 // app-side IRInspectorTimeline strip (PR-B). __resetCaptureForTest is
