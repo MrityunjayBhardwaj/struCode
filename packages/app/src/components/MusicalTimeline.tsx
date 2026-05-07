@@ -304,24 +304,26 @@ export function MusicalTimeline(
       if (evt.loc && evt.loc.length > 0 && evt.loc[0].start > 0) {
         line = countLines(snapshot.code, evt.loc[0].start)
       } else if (evt.s) {
-        // Fallback: find the line containing this sample name in source.
-        // First try matching $: blocks (multi-track form), then bare
-        // expressions (single-track or inline form like s("bd")).
+        // Fallback: find the $: block line whose body contains this
+        // sample name as a standalone word (\b word boundary).
         const searchStr = evt.s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const patterns = [
-          // $: block form with multiline body: $: stack(s("bd")...)
-          new RegExp(`^\\s*\\$:[\\s\\S]*?["'\`]${searchStr}["'\`]`, 'm'),
-          // Bare expression form: s("bd hh ..."), note("c4 ...")
-          new RegExp(`^\\s*${searchStr}\\s*\\(`, 'm'),
-          // Quoted string inline: "bd"
-          new RegExp(`["'\`]${searchStr}["'\`]`),
-        ]
-        for (const re of patterns) {
-          const match = snapshot.code.match(re)
-          if (match) {
-            line = countLines(snapshot.code, match.index)
+        // Match each $: block; for the first one that contains the
+        // sample as a word, count its line number.
+        const blockRe = /^[ \t]*\$:[^\n]*(?:\n(?!\s*\$:)[^\n]*)*/gm
+        let blockMatch: RegExpExecArray | null
+        while ((blockMatch = blockRe.exec(snapshot.code)) !== null) {
+          const body = blockMatch[0]
+          const sampleRe = new RegExp(`\\b${searchStr}\\b`)
+          if (sampleRe.test(body)) {
+            line = countLines(snapshot.code, blockMatch.index)
             break
           }
+        }
+        // If no $: block found, fall back to simple word search.
+        if (line == null) {
+          const simpleRe = new RegExp(`\\b${searchStr}\\b`)
+          const match = snapshot.code.match(simpleRe)
+          if (match) line = countLines(snapshot.code, match.index)
         }
       }
       if (line != null) revealLineInFile(snapshot.source, line)
