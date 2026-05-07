@@ -46,6 +46,50 @@ export function tagMeta(
   }
 }
 
+/**
+ * Phase 20-04 (PV37 / PK13 step 2 / D-01..D-03).
+ *
+ * Wrap a receiver pattern as an opaque Code-with-via node carrying the
+ * full source range of the .method(args) call site. Used by:
+ *   - applyMethod's default arm (any unrecognised method — DV-06)
+ *   - typed arms' parse-failure branches (D-03 — e.g. .fast("<2 3>"))
+ *
+ * The wrapper preserves the typed source for round-trip (toStrudel re-emits
+ * via.method/args verbatim per D-02) AND for collect (walks via.inner;
+ * threads loc per D-01 via withWrapperLoc, which lands in 20-03).
+ *
+ * `args` MUST be passed RAW (untrimmed) — D-02 byte-fidelity contract.
+ * `code: ''` is unused on the wrapper path (`toStrudel` branches on `via`).
+ *
+ * Known v1 limitation (Trap 5): argless unrecognised methods round-trip
+ * with empty parens — `note("c").nudge` becomes `note("c").nudge()`.
+ * Documented in PR description; fixtures avoid argless probes.
+ *
+ * @param inner Receiver IR (required — D-01 walks it).
+ * @param method Raw method name as the user typed it.
+ * @param args Raw arg string between parens (whitespace preserved).
+ * @param callSiteRange Absolute source range of the entire .method(args) substring.
+ */
+function wrapAsOpaque(
+  inner: PatternIR,
+  method: string,
+  args: string,
+  callSiteRange: [number, number],
+): PatternIR {
+  return {
+    tag: 'Code',
+    code: '',                                // unused on wrapper path; toStrudel branches on via
+    lang: 'strudel',
+    loc: [{ start: callSiteRange[0], end: callSiteRange[1] }],
+    via: { method, args, callSiteRange, inner },
+  }
+}
+
+/** Test-only re-export of the module-private wrapAsOpaque helper. Mirrors
+ *  the `__resetParseTransformDebug` convention below; not part of the
+ *  public API. Consumed by PatternIR.test.ts wave-α probes. */
+export const __test_wrapAsOpaque = wrapAsOpaque
+
 /** Parse a Strudel code string. Always returns a tree (Code node for unsupported). */
 export function parseStrudel(code: string): PatternIR {
   if (!code.trim()) return IR.pure()
@@ -311,20 +355,20 @@ function applyMethod(
     case 'fast': {
       const n = parseFloat(args.trim())
       if (!isNaN(n)) return IR.fast(n, ir, tagMeta(method, callSiteRange))
-      return ir
+      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
     }
 
     case 'slow': {
       const n = parseFloat(args.trim())
       if (!isNaN(n)) return IR.slow(n, ir, tagMeta(method, callSiteRange))
-      return ir
+      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
     }
 
     case 'every': {
       // .every(n, transform)
       const [nStr, transformStr] = splitFirstArg(args)
       const n = parseInt(nStr.trim(), 10)
-      if (isNaN(n)) return ir
+      if (isNaN(n)) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
       return IR.every(n, transform, ir, tagMeta(method, callSiteRange))
@@ -342,7 +386,7 @@ function applyMethod(
       // .sometimesBy(p, transform)
       const [pStr, transformStr] = splitFirstArg(args)
       const p = parseFloat(pStr.trim())
-      if (isNaN(p)) return ir
+      if (isNaN(p)) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
       return IR.choice(p, transform, ir, tagMeta(method, callSiteRange))
@@ -352,7 +396,7 @@ function applyMethod(
       // .mask("gate") → When
       const gateMatch = args.trim().match(/^"([^"]*)"$/)
       if (gateMatch) return IR.when(gateMatch[1], ir, tagMeta(method, callSiteRange))
-      return ir
+      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
     }
 
     case 'layer': {
@@ -372,7 +416,7 @@ function applyMethod(
       // bidirectional editing pass (#8). Same soft-target stance taken
       // for jux/off in 19-03. RESEARCH §1.1; CONTEXT round-trip discipline.
       const argList = splitArgs(args)
-      if (argList.length === 0) return ir
+      if (argList.length === 0) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       const tracks: PatternIR[] = []
       for (const funcStr of argList) {
         const trimmed = funcStr.trim()
@@ -400,13 +444,13 @@ function applyMethod(
     case 'gain': {
       const val = parseFloat(args.trim())
       if (!isNaN(val)) return IR.fx('gain', { gain: val }, ir, tagMeta(method, callSiteRange))
-      return ir
+      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
     }
 
     case 'pan': {
       const val = parseFloat(args.trim())
       if (!isNaN(val)) return IR.fx('pan', { pan: val }, ir, tagMeta(method, callSiteRange))
-      return ir
+      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
     }
 
     case 'chunk': {
@@ -436,7 +480,7 @@ function applyMethod(
       // precision is the existing limitation.
       const [nStr, transformStr] = splitFirstArg(args)
       const n = parseInt(nStr.trim(), 10)
-      if (isNaN(n) || n < 1) return ir
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       const transformOffset = transformStr ? offsetOfSubArg(args, transformStr, baseOffset) : baseOffset
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir
       return IR.chunk(n, transform, ir, tagMeta(method, callSiteRange))
@@ -461,7 +505,7 @@ function applyMethod(
       // degradeBy(1) (full drop) plus an asymmetric probe at
       // degradeBy(0.8) that distinguishes p=0.2 from the wrong p=0.8.
       const amount = parseFloat(args.trim())
-      if (isNaN(amount)) return ir
+      if (isNaN(amount)) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       // D-08 exact-token: userMethod is `'degradeBy'`, NOT `'degrade'`. The
       // tag is Degrade (canonical) but `method` here is the user's literal
       // `'degradeBy'` from the switch — pass it through, don't substitute.
@@ -475,7 +519,7 @@ function applyMethod(
       // fraction literals like `.late(1/8)` fall back to identity (same
       // limitation `.fast()` has today).
       const t = parseFloat(args.trim())
-      if (isNaN(t)) return ir
+      if (isNaN(t)) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       return IR.late(t, ir, tagMeta(method, callSiteRange))
     }
 
@@ -542,7 +586,12 @@ function applyMethod(
       // Code fallback in v1; revisit in 19-04 if needed."
       const trimmed = args.trim()
       const n = Number(trimmed)
-      if (!Number.isInteger(n) || n < 1) return ir
+      // Phase 20-04 T-05 (D-03 / P33 / PV37): wrap on parse failure.
+      if (!Number.isInteger(n) || n < 1) return wrapAsOpaque(ir, method, args, callSiteRange)
+      // Phase 20-04 T-05 Trap 2: ply(1) is a VALID no-op per CONTEXT D-02
+      // from 19-03 — leave UNCHANGED. Wrapping here would change the IR
+      // shape (Code-with-via{ inner: Play(c) } instead of bare Play(c))
+      // and break existing parity tests asserting `ply(1) === ir`.
       if (n === 1) return ir
       return IR.ply(n, ir, tagMeta(method, callSiteRange))
     }
@@ -574,7 +623,7 @@ function applyMethod(
       // RESEARCH §2 Subtlety C — parity asserts loc PRESENCE, not value.
       const [tStr, transformStr] = splitFirstArg(args)
       const t = parseFloat(tStr.trim())
-      if (isNaN(t)) return ir
+      if (isNaN(t)) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       // 19-05 / #74 D-09: inner Late carries tStr's range (the `0.125` arg
       // position). userMethod intentionally omitted — Late from .off() is a
       // synthetic intermediate, not directly authored. Reuse the existing
@@ -613,9 +662,11 @@ function applyMethod(
     case 'resonance':
     case 'lpf':
     case 'hpf': {
+      // FX group (14 arms collapse to one failure line — D-03 / P33 / PV37
+      // wrap covers all 14 in a single edit).
       const val = parseFloat(args.trim())
       if (!isNaN(val)) return IR.fx(method, { [method]: val }, ir, tagMeta(method, callSiteRange))
-      return ir
+      return wrapAsOpaque(ir, method, args, callSiteRange)
     }
 
     case 'pick': {
@@ -633,10 +684,10 @@ function applyMethod(
       // v1 limitation: array-form lookup only; object/named-key form
       // (Strudel's `pick({a: ..., b: ...})`) deferred to a follow-up.
       const inner = args.trim()
-      if (!(inner.startsWith('[') && inner.endsWith(']'))) return ir
+      if (!(inner.startsWith('[') && inner.endsWith(']'))) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       const arrayBody = inner.slice(1, -1)
       const elements = splitArgs(arrayBody)
-      if (elements.length === 0) return ir
+      if (elements.length === 0) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       // Compute the absolute baseOffset of the array body within the
       // user's full code (skip the opening '[' inside args).
       const arrayBodyOffsetInArgs = args.indexOf('[') + 1
@@ -662,7 +713,7 @@ function applyMethod(
       // (matches When.gate precedent — sub-IR form deferred per RESEARCH §8.2).
       const gateMatch = args.trim().match(/^"([^"]*)"$/)
       if (gateMatch) return IR.struct(gateMatch[1], ir, tagMeta(method, callSiteRange))
-      return ir
+      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
     }
 
     case 'swing': {
@@ -677,7 +728,7 @@ function applyMethod(
       // (~10 lines); the IR shape `{ n; body }` is locked to keep that
       // migration cheap. RESEARCH §1.3.
       const n = parseInt(args.trim(), 10)
-      if (isNaN(n) || n < 1) return ir
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       return IR.swing(n, ir, tagMeta(method, callSiteRange))
     }
 
@@ -690,7 +741,7 @@ function applyMethod(
       // after the user-typed method); collect arm + shared helper landed
       // in T-05. Parity test in T-07. RESEARCH §1.5; PK11 step 5.
       const n = parseInt(args.trim(), 10)
-      if (isNaN(n) || n < 1) return ir
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       return IR.shuffle(n, ir, tagMeta(method, callSiteRange))
     }
 
@@ -703,7 +754,7 @@ function applyMethod(
       // tag per PV28; collect arm + shared helper landed in T-05. Parity
       // test in T-07. RESEARCH §1.6; PK11 step 5.
       const n = parseInt(args.trim(), 10)
-      if (isNaN(n) || n < 1) return ir
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       return IR.scramble(n, ir, tagMeta(method, callSiteRange))
     }
 
@@ -718,17 +769,23 @@ function applyMethod(
       // (squeezeBind has no Fast equivalent; same trap as Ply). RESEARCH
       // §1.7; PK11 step 5.
       const n = parseInt(args.trim(), 10)
-      if (isNaN(n) || n < 1) return ir
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
       return IR.chop(n, ir, tagMeta(method, callSiteRange))
     }
 
     case 'p':
-      // .p("trackId") — track assignment, pass through
+      // .p("trackId") — track assignment, intentional pass-through.
+      // Phase 20-04 T-07 (Trap 3): consumed externally (not by our parser);
+      // wrapping would break track-assignment semantics. PV37 D-07 keeps
+      // this unwrapped — confirmed Chesterton fence (existence check).
       return ir
 
     default:
-      // Unsupported method — wrap in Code fallback with original ir preserved
-      return ir
+      // Phase 20-04 T-04 / DV-06 (D-03 / P33 / PV37): unrecognised method —
+      // wrap as opaque Code carrying the call site. PV37 wrap-never-drop;
+      // round-trip via toStrudel (D-02); collect walks via.inner via
+      // withWrapperLoc (20-03 wave ε / D-01).
+      return wrapAsOpaque(ir, method, args, callSiteRange)
   }
 }
 

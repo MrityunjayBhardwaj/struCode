@@ -79,7 +79,14 @@ export function projectedLabel(node: PatternIR): string | undefined {
     // Code: parser-failure escape hatch — render even when userMethod
     // undefined. RESEARCH NEW pre-mortem #8 — hiding swallows debugging
     // signal.
+    //
+    // Phase 20-04 T-12 / PV35 / PV32 (musician chrome). Wrapper case
+    // (via set): label-only "unmodelled" — DO NOT leak the method name
+    // (PV32 vocabulary regression). Developer chrome shows the full
+    // call site via summarize() in IRInspectorPanel.tsx; the audience
+    // split is the load-bearing PV35 mechanism.
     case 'Code':
+      if (node.via) return 'unmodelled'
       return 'Code'
     // Play: leaf, no userMethod field per PatternIR.ts:38.
     case 'Play':
@@ -192,8 +199,12 @@ export function projectedChildren(node: PatternIR): readonly PatternIR[] {
     case 'Pure':
     case 'Play':
     case 'Sleep':
-    case 'Code':
       return []
+    // Phase 20-04 T-12 / D-05 (musician tree expansion).
+    // Wrapper case: expose via.inner so the projected tree drills into
+    // the wrapped receiver. Parse-failure case (no via): leaf as before.
+    case 'Code':
+      return node.via ? [node.via.inner] : []
     default: {
       const _exhaustive: never = node
       return _exhaustive

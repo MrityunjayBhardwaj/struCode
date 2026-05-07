@@ -262,7 +262,12 @@ export function collect(ir: PatternIR, partialCtx?: Partial<CollectContext>): IR
   // eliminate the entire block. vitest runs with NODE_ENV='test' so the
   // warn fires alongside the contract test, giving two complementary
   // signals when a future arm ships without loc-propagation.
-  if (process.env.NODE_ENV !== 'production') {
+  //
+  // Phase 20-04: ambient process declaration so tsup's dts builder doesn't
+  // need @types/node (the editor package intentionally avoids that dep —
+  // runtime esbuild-substitution doesn't require it).
+  const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process
+  if (proc?.env?.NODE_ENV !== 'production') {
     for (const e of events) {
       if (!e.loc || e.loc.length === 0) {
         // eslint-disable-next-line no-console
@@ -278,9 +283,18 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     case 'Pure':
       return []
 
-    case 'Code':
+    case 'Code': {
+      // Phase 20-04 T-09 (D-01 / PV37 / PK13 step 3).
+      // Wrapper case: walk via.inner; thread our call-site range onto
+      // produced events as loc[N+] per D-01-from-20-03 (innermost first).
+      // Parse-failure case (no via): return [] as before — DV-08 unchanged.
+      if (ir.via) {
+        const innerEvents = walk(ir.via.inner, ctx)
+        return withWrapperLoc(innerEvents, ir.loc)
+      }
       // Opaque fallback — cannot be evaluated without Strudel runtime
       return []
+    }
 
     case 'Play': {
       // Respect the query window: skip events outside [begin, end)

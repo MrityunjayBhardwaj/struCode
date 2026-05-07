@@ -68,7 +68,28 @@ export type PatternIR =
   | { tag: 'Scramble'; n: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 (Phase 19-04 T-05) — signal.mjs:405 scramble(n) = _rearrangeWith(_irand(n)._segment(n), n, pat); per-slot independent samples (with replacement) of n slices.
   | { tag: 'Chop';   n: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 (Phase 19-04 T-08) — pattern.mjs:3291-3306 chop(n) = pat.squeezeBind(o => sequence(slice_objects.map(s => merge(o, s)))). Per-event sample-range slicing — each source event becomes n sub-events with progressive begin/end controls. D-04: pattern-level only; audio-buffer slicing deferred to phase 22 (axis 5).
   | { tag: 'Loop';   body: PatternIR; loc?: SourceLocation[]; userMethod?: string }
-  | { tag: 'Code';   code: string; lang: 'strudel'; loc?: SourceLocation[]; userMethod?: string; unresolvedChain?: string; chainOffset?: number }  // Opaque fallback for unparseable fragments
+  | {
+      tag: 'Code'
+      code: string
+      lang: 'strudel'
+      loc?: SourceLocation[]
+      userMethod?: string
+      unresolvedChain?: string
+      chainOffset?: number
+      // Phase 20-04 (PV37 / PK13 step 2 / D-01..D-03). When set, this Code
+      // node is an OPAQUE-FRAGMENT WRAPPER constructed by `wrapAsOpaque`
+      // (parseStrudel.ts) at `applyMethod`'s default arm or any typed
+      // arm's parse-failure branch. The wrapper preserves the typed
+      // `.method(args)` source verbatim while keeping the receiver IR
+      // walkable via `via.inner`. When unset, the Code node is a
+      // parse-failure fallback (DV-08; pre-20-04 semantics unchanged).
+      via?: {
+        method: string                    // raw method name e.g. 'release'
+        args: string                      // RAW (untrimmed) per D-02 — round-trip byte-fidelity
+        callSiteRange: [number, number]   // entire .method(args) source range
+        inner: PatternIR                  // back-pointer to receiver; REQUIRED in wrapper case (D-01 walks it)
+      }
+    }  // Opaque fallback for unparseable fragments OR opaque-fragment wrapper for unrecognised chain methods
 
 /**
  * Optional metadata accepted by every non-rest-spread smart constructor

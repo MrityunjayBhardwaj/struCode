@@ -3017,6 +3017,14 @@ function seededRandsAtTime(t, n, seed) {
   }
   return out2;
 }
+function withWrapperLoc(events, wrapper) {
+  if (!wrapper || wrapper.length === 0) return events;
+  const range2 = wrapper[0];
+  return events.map((e) => ({
+    ...e,
+    loc: e.loc ? [...e.loc, range2] : [range2]
+  }));
+}
 var DEFAULT_CONTEXT = {
   begin: 0,
   end: Infinity,
@@ -3063,7 +3071,7 @@ function makeEvent(ctx, note2, params) {
     params: merged
   };
 }
-function _collectRearrange(selector, n, body2, ctx) {
+function _collectRearrange(selector, n, body2, ctx, wrapperLoc) {
   const bodyEvents = walk(body2, ctx);
   const out2 = [];
   for (let d = 0; d < n; d++) {
@@ -3086,18 +3094,36 @@ function _collectRearrange(selector, n, body2, ctx) {
       }
     }
   }
-  return out2;
+  if (!wrapperLoc) return out2;
+  return out2.map((e) => ({
+    ...e,
+    loc: e.loc ? [...e.loc, wrapperLoc] : [wrapperLoc]
+  }));
 }
 function collect(ir, partialCtx) {
   const ctx = { ...DEFAULT_CONTEXT, ...partialCtx };
-  return walk(ir, ctx);
+  const events = walk(ir, ctx);
+  const proc = globalThis.process;
+  if (proc?.env?.NODE_ENV !== "production") {
+    for (const e of events) {
+      if (!e.loc || e.loc.length === 0) {
+        console.warn("[PV36] event produced without loc", { ir, event: e });
+      }
+    }
+  }
+  return events;
 }
 function walk(ir, ctx) {
   switch (ir.tag) {
     case "Pure":
       return [];
-    case "Code":
+    case "Code": {
+      if (ir.via) {
+        const innerEvents = walk(ir.via.inner, ctx);
+        return withWrapperLoc(innerEvents, ir.loc);
+      }
       return [];
+    }
     case "Play": {
       if (ctx.time < ctx.begin || ctx.time >= ctx.end) return [];
       const event = makeEvent(ctx, ir.note, { ...ir.params });
@@ -3126,29 +3152,29 @@ function walk(ir, ctx) {
         events.push(...childEvents);
         cursor += slotDuration / ctx.speed;
       }
-      return events;
+      return withWrapperLoc(events, ir.loc);
     }
     case "Stack": {
       const events = [];
       for (const track of ir.tracks) {
         events.push(...walk(track, ctx));
       }
-      return events;
+      return withWrapperLoc(events, ir.loc);
     }
     case "Choice": {
       const chosen = Math.random() < ir.p ? ir.then : ir.else_;
-      return walk(chosen, ctx);
+      return withWrapperLoc(walk(chosen, ctx), ir.loc);
     }
     case "Every": {
       const fires = ctx.cycle % ir.n === 0;
-      if (fires) return walk(ir.body, ctx);
-      if (ir.default_) return walk(ir.default_, ctx);
+      if (fires) return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+      if (ir.default_) return withWrapperLoc(walk(ir.default_, ctx), ir.loc);
       return [];
     }
     case "Cycle": {
       if (ir.items.length === 0) return [];
       const item = ir.items[ctx.cycle % ir.items.length];
-      return walk(item, ctx);
+      return withWrapperLoc(walk(item, ctx), ir.loc);
     }
     case "When": {
       const slots = ir.gate.trim().split(/\s+/);
@@ -3156,7 +3182,7 @@ function walk(ir, ctx) {
       const slotIndex = Math.floor(ctx.time % 1 * slots.length);
       const slot = slots[Math.min(slotIndex, slots.length - 1)];
       const active2 = slot !== "0" && slot !== "" && slot !== "~";
-      if (active2) return walk(ir.body, ctx);
+      if (active2) return withWrapperLoc(walk(ir.body, ctx), ir.loc);
       return [];
     }
     case "FX": {
@@ -3164,7 +3190,7 @@ function walk(ir, ctx) {
         ...ctx,
         params: { ...ctx.params, ...ir.params }
       };
-      return walk(ir.body, childCtx);
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Ramp": {
       const progress = ir.cycles > 0 ? Math.min(ctx.cycle / ir.cycles, 1) : 1;
@@ -3173,7 +3199,7 @@ function walk(ir, ctx) {
         ...ctx,
         params: { ...ctx.params, [ir.param]: value }
       };
-      return walk(ir.body, childCtx);
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Fast": {
       const childCtx = {
@@ -3181,7 +3207,7 @@ function walk(ir, ctx) {
         speed: ctx.speed * ir.factor,
         duration: ctx.duration
       };
-      return walk(ir.body, childCtx);
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Slow": {
       const childCtx = {
@@ -3189,17 +3215,17 @@ function walk(ir, ctx) {
         speed: ctx.speed / ir.factor,
         duration: ctx.duration
       };
-      return walk(ir.body, childCtx);
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Loop": {
-      return walk(ir.body, ctx);
+      return withWrapperLoc(walk(ir.body, ctx), ir.loc);
     }
     case "Elongate": {
-      return walk(ir.body, ctx);
+      return withWrapperLoc(walk(ir.body, ctx), ir.loc);
     }
     case "Late": {
       const events = walk(ir.body, ctx);
-      return events.map((e) => {
+      const shifted = events.map((e) => {
         let begin = e.begin + ir.offset;
         let end = e.end + ir.offset;
         let endClipped = e.endClipped + ir.offset;
@@ -3214,11 +3240,15 @@ function walk(ir, ctx) {
         }
         return { ...e, begin, end, endClipped };
       });
+      return withWrapperLoc(shifted, ir.loc);
     }
     case "Degrade": {
       const events = walk(ir.body, ctx);
       const dropAmount = 1 - ir.p;
-      return events.filter((e) => seededRand(e.begin, RAND_SEED) > dropAmount);
+      const survivors = events.filter(
+        (e) => seededRand(e.begin, RAND_SEED) > dropAmount
+      );
+      return withWrapperLoc(survivors, ir.loc);
     }
     case "Chunk": {
       const slot = (ctx.cycle % ir.n + ir.n) % ir.n;
@@ -3231,13 +3261,14 @@ function walk(ir, ctx) {
         return cyclePos >= slotStart - 1e-9 && cyclePos < slotEnd - 1e-9;
       };
       const findTransformed = (e) => transformedEvents.find((t) => Math.abs(t.begin - e.begin) < 1e-9);
-      return baseEvents.map((e) => {
+      const composed = baseEvents.map((e) => {
         if (inSlot(e)) {
           const replaced = findTransformed(e);
           return replaced ?? e;
         }
         return e;
       });
+      return withWrapperLoc(composed, ir.loc);
     }
     case "Pick": {
       if (ir.lookup.length === 0) return [];
@@ -3259,9 +3290,16 @@ function walk(ir, ctx) {
           // its own cycle 0 within the selector event's slot.
         };
         const subEvents = walk(subIR, subCtx);
+        const selectorLoc = sel.loc?.[0];
+        const wrapperLoc = ir.loc?.[0];
         for (const e of subEvents) {
-          if (!e.loc && sel.loc) e.loc = sel.loc;
-          out2.push(e);
+          const childLoc = e.loc ?? [];
+          const newLoc = [
+            ...childLoc,
+            ...selectorLoc ? [selectorLoc] : [],
+            ...wrapperLoc ? [wrapperLoc] : []
+          ];
+          out2.push(newLoc.length > 0 ? { ...e, loc: newLoc } : e);
         }
       }
       return out2;
@@ -3290,13 +3328,13 @@ function walk(ir, ctx) {
           }
         }
       }
-      return out2;
+      return withWrapperLoc(out2, ir.loc);
     }
     case "Swing": {
       const events = walk(ir.body, ctx);
-      if (ir.n < 1) return events;
+      if (ir.n < 1) return withWrapperLoc(events, ir.loc);
       const swingAmount = 1 / (6 * ir.n);
-      return events.map((e) => {
+      const swung = events.map((e) => {
         const cyclePos = e.begin - ctx.cycle;
         const slotIdx = Math.floor(cyclePos * ir.n);
         if (slotIdx % 2 === 1) {
@@ -3309,10 +3347,11 @@ function walk(ir, ctx) {
         }
         return e;
       });
+      return withWrapperLoc(swung, ir.loc);
     }
     case "Ply": {
       const baseEvents = walk(ir.body, ctx);
-      if (ir.n <= 1) return baseEvents;
+      if (ir.n <= 1) return withWrapperLoc(baseEvents, ir.loc);
       const out2 = [];
       for (const e of baseEvents) {
         const slotLen = (e.end - e.begin) / ir.n;
@@ -3327,25 +3366,25 @@ function walk(ir, ctx) {
           });
         }
       }
-      return out2;
+      return withWrapperLoc(out2, ir.loc);
     }
     case "Shuffle": {
-      if (ir.n < 1) return walk(ir.body, ctx);
+      if (ir.n < 1) return withWrapperLoc(walk(ir.body, ctx), ir.loc);
       const rands = seededRandsAtTime(ctx.cycle + 0.5, ir.n, RAND_SEED);
       const perm = rands.map((r, i2) => [r, i2]).sort((a, b) => a[0] > b[0] ? 1 : a[0] < b[0] ? -1 : 0).map((x) => x[1]);
-      return _collectRearrange(perm, ir.n, ir.body, ctx);
+      return _collectRearrange(perm, ir.n, ir.body, ctx, ir.loc?.[0]);
     }
     case "Scramble": {
-      if (ir.n < 1) return walk(ir.body, ctx);
+      if (ir.n < 1) return withWrapperLoc(walk(ir.body, ctx), ir.loc);
       const selector = [];
       for (let slot = 0; slot < ir.n; slot++) {
         const r = seededRand(ctx.cycle + slot / ir.n, RAND_SEED);
         selector.push(Math.trunc(r * ir.n));
       }
-      return _collectRearrange(selector, ir.n, ir.body, ctx);
+      return _collectRearrange(selector, ir.n, ir.body, ctx, ir.loc?.[0]);
     }
     case "Chop": {
-      if (ir.n <= 1) return walk(ir.body, ctx);
+      if (ir.n <= 1) return withWrapperLoc(walk(ir.body, ctx), ir.loc);
       const baseEvents = walk(ir.body, ctx);
       const out2 = [];
       for (const e of baseEvents) {
@@ -3367,7 +3406,7 @@ function walk(ir, ctx) {
           });
         }
       }
-      return out2;
+      return withWrapperLoc(out2, ir.loc);
     }
   }
 }
@@ -3381,6 +3420,9 @@ function gen(ir) {
     case "Pure":
       return '""';
     case "Code":
+      if (ir.via) {
+        return `${gen(ir.via.inner)}.${ir.via.method}(${ir.via.args})`;
+      }
       return ir.code;
     case "Play":
       return genPlay(ir.note, ir.params);
@@ -3737,7 +3779,28 @@ function validateNode(raw, path) {
     }
     case "Code": {
       requireField(node, "code", ["string"], path);
-      return { tag: "Code", code: node.code, lang: "strudel" };
+      const out2 = { tag: "Code", code: node.code, lang: "strudel" };
+      if (node.via !== void 0 && node.via !== null) {
+        const via = node.via;
+        requireField(via, "method", ["string"], `${path}.via`);
+        requireField(via, "args", ["string"], `${path}.via`);
+        if (!Array.isArray(via.callSiteRange)) {
+          throw new Error(`${path}.via: field "callSiteRange" must be an array`);
+        }
+        if (typeof via.inner !== "object" || via.inner === null) {
+          throw new Error(`${path}.via: field "inner" must be an object`);
+        }
+        out2.via = {
+          method: via.method,
+          args: via.args,
+          callSiteRange: via.callSiteRange,
+          inner: validateNode(via.inner, `${path}.via.inner`)
+        };
+      }
+      if (Array.isArray(node.loc)) {
+        out2.loc = node.loc;
+      }
+      return out2;
     }
     default:
       throw new Error(`${path}: unhandled tag "${node.tag}"`);
@@ -4112,6 +4175,16 @@ function tagMeta(method, callSiteRange) {
     userMethod: method
   };
 }
+function wrapAsOpaque(inner, method, args2, callSiteRange) {
+  return {
+    tag: "Code",
+    code: "",
+    // unused on wrapper path; toStrudel branches on via
+    lang: "strudel",
+    loc: [{ start: callSiteRange[0], end: callSiteRange[1] }],
+    via: { method, args: args2, callSiteRange, inner }
+  };
+}
 function parseStrudel(code) {
   if (!code.trim()) return IR.pure();
   try {
@@ -4239,17 +4312,17 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "fast": {
       const n = parseFloat(args2.trim());
       if (!isNaN(n)) return IR.fast(n, ir, tagMeta(method, callSiteRange));
-      return ir;
+      return wrapAsOpaque(ir, method, args2, callSiteRange);
     }
     case "slow": {
       const n = parseFloat(args2.trim());
       if (!isNaN(n)) return IR.slow(n, ir, tagMeta(method, callSiteRange));
-      return ir;
+      return wrapAsOpaque(ir, method, args2, callSiteRange);
     }
     case "every": {
       const [nStr, transformStr] = splitFirstArg(args2);
       const n = parseInt(nStr.trim(), 10);
-      if (isNaN(n)) return ir;
+      if (isNaN(n)) return wrapAsOpaque(ir, method, args2, callSiteRange);
       const transformOffset = transformStr ? offsetOfSubArg(args2, transformStr, baseOffset) : baseOffset;
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir;
       return IR.every(n, transform, ir, tagMeta(method, callSiteRange));
@@ -4261,7 +4334,7 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "sometimesBy": {
       const [pStr, transformStr] = splitFirstArg(args2);
       const p = parseFloat(pStr.trim());
-      if (isNaN(p)) return ir;
+      if (isNaN(p)) return wrapAsOpaque(ir, method, args2, callSiteRange);
       const transformOffset = transformStr ? offsetOfSubArg(args2, transformStr, baseOffset) : baseOffset;
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir;
       return IR.choice(p, transform, ir, tagMeta(method, callSiteRange));
@@ -4269,11 +4342,11 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "mask": {
       const gateMatch = args2.trim().match(/^"([^"]*)"$/);
       if (gateMatch) return IR.when(gateMatch[1], ir, tagMeta(method, callSiteRange));
-      return ir;
+      return wrapAsOpaque(ir, method, args2, callSiteRange);
     }
     case "layer": {
       const argList = splitArgs(args2);
-      if (argList.length === 0) return ir;
+      if (argList.length === 0) return wrapAsOpaque(ir, method, args2, callSiteRange);
       const tracks = [];
       for (const funcStr of argList) {
         const trimmed = funcStr.trim();
@@ -4296,17 +4369,17 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "gain": {
       const val = parseFloat(args2.trim());
       if (!isNaN(val)) return IR.fx("gain", { gain: val }, ir, tagMeta(method, callSiteRange));
-      return ir;
+      return wrapAsOpaque(ir, method, args2, callSiteRange);
     }
     case "pan": {
       const val = parseFloat(args2.trim());
       if (!isNaN(val)) return IR.fx("pan", { pan: val }, ir, tagMeta(method, callSiteRange));
-      return ir;
+      return wrapAsOpaque(ir, method, args2, callSiteRange);
     }
     case "chunk": {
       const [nStr, transformStr] = splitFirstArg(args2);
       const n = parseInt(nStr.trim(), 10);
-      if (isNaN(n) || n < 1) return ir;
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args2, callSiteRange);
       const transformOffset = transformStr ? offsetOfSubArg(args2, transformStr, baseOffset) : baseOffset;
       const transform = transformStr ? parseTransform(transformStr.trim(), ir, transformOffset) : ir;
       return IR.chunk(n, transform, ir, tagMeta(method, callSiteRange));
@@ -4316,12 +4389,12 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     }
     case "degradeBy": {
       const amount = parseFloat(args2.trim());
-      if (isNaN(amount)) return ir;
+      if (isNaN(amount)) return wrapAsOpaque(ir, method, args2, callSiteRange);
       return IR.degrade(1 - amount, ir, tagMeta(method, callSiteRange));
     }
     case "late": {
       const t = parseFloat(args2.trim());
-      if (isNaN(t)) return ir;
+      if (isNaN(t)) return wrapAsOpaque(ir, method, args2, callSiteRange);
       return IR.late(t, ir, tagMeta(method, callSiteRange));
     }
     case "jux": {
@@ -4340,14 +4413,14 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "ply": {
       const trimmed = args2.trim();
       const n = Number(trimmed);
-      if (!Number.isInteger(n) || n < 1) return ir;
+      if (!Number.isInteger(n) || n < 1) return wrapAsOpaque(ir, method, args2, callSiteRange);
       if (n === 1) return ir;
       return IR.ply(n, ir, tagMeta(method, callSiteRange));
     }
     case "off": {
       const [tStr, transformStr] = splitFirstArg(args2);
       const t = parseFloat(tStr.trim());
-      if (isNaN(t)) return ir;
+      if (isNaN(t)) return wrapAsOpaque(ir, method, args2, callSiteRange);
       const tStartAbs = offsetOfSubArg(args2, tStr.trim(), baseOffset);
       const tEndAbs = tStartAbs + tStr.trim().length;
       const lateBody = IR.late(t, ir, {
@@ -4381,14 +4454,14 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "hpf": {
       const val = parseFloat(args2.trim());
       if (!isNaN(val)) return IR.fx(method, { [method]: val }, ir, tagMeta(method, callSiteRange));
-      return ir;
+      return wrapAsOpaque(ir, method, args2, callSiteRange);
     }
     case "pick": {
       const inner = args2.trim();
-      if (!(inner.startsWith("[") && inner.endsWith("]"))) return ir;
+      if (!(inner.startsWith("[") && inner.endsWith("]"))) return wrapAsOpaque(ir, method, args2, callSiteRange);
       const arrayBody = inner.slice(1, -1);
       const elements = splitArgs(arrayBody);
-      if (elements.length === 0) return ir;
+      if (elements.length === 0) return wrapAsOpaque(ir, method, args2, callSiteRange);
       const arrayBodyOffsetInArgs = args2.indexOf("[") + 1;
       const arrayBodyOffset = arrayBodyOffsetInArgs >= 1 ? baseOffset + arrayBodyOffsetInArgs : baseOffset;
       const lookup = elements.map((e) => {
@@ -4400,32 +4473,32 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "struct": {
       const gateMatch = args2.trim().match(/^"([^"]*)"$/);
       if (gateMatch) return IR.struct(gateMatch[1], ir, tagMeta(method, callSiteRange));
-      return ir;
+      return wrapAsOpaque(ir, method, args2, callSiteRange);
     }
     case "swing": {
       const n = parseInt(args2.trim(), 10);
-      if (isNaN(n) || n < 1) return ir;
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args2, callSiteRange);
       return IR.swing(n, ir, tagMeta(method, callSiteRange));
     }
     case "shuffle": {
       const n = parseInt(args2.trim(), 10);
-      if (isNaN(n) || n < 1) return ir;
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args2, callSiteRange);
       return IR.shuffle(n, ir, tagMeta(method, callSiteRange));
     }
     case "scramble": {
       const n = parseInt(args2.trim(), 10);
-      if (isNaN(n) || n < 1) return ir;
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args2, callSiteRange);
       return IR.scramble(n, ir, tagMeta(method, callSiteRange));
     }
     case "chop": {
       const n = parseInt(args2.trim(), 10);
-      if (isNaN(n) || n < 1) return ir;
+      if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args2, callSiteRange);
       return IR.chop(n, ir, tagMeta(method, callSiteRange));
     }
     case "p":
       return ir;
     default:
-      return ir;
+      return wrapAsOpaque(ir, method, args2, callSiteRange);
   }
 }
 function parseTransform(transformStr, defaultIr, baseOffset = 0) {
@@ -22358,6 +22431,20 @@ var ProgramBuilder = class _ProgramBuilder {
     this.steps.push({ tag: "useBpm", bpm });
     return this;
   }
+  /** Read-only view of the builder's current bpm. Used by SonicPiEngine when a
+   *  nested `live_loop` registers from inside another's builderFn — the
+   *  nested loop must inherit the *parent's* in-flight bpm (set by `b.use_bpm`
+   *  during this build phase), not the engine-level `defaultBpm` (which is
+   *  only mutated by top-level `use_bpm`). See SP72. */
+  get currentBpm() {
+    return this._currentBpm;
+  }
+  /** Read-only view of the builder's current default synth. Same rationale as
+   *  currentBpm: nested `live_loop` registrations need the parent's in-flight
+   *  synth, not the engine-level `defaultSynth`. */
+  get currentDefaultSynth() {
+    return this.currentSynth;
+  }
   /** Set BPM to match a sample's natural tempo. */
   use_sample_bpm(name2, opts) {
     const dur = this.sample_duration(name2, opts);
@@ -23159,10 +23246,15 @@ var ProgramBuilder = class _ProgramBuilder {
 
 // ../../../sonicPiWeb/src/engine/config.ts
 var MIXER = {
-  /** [SP] Mixer pre-amplification. Matches Desktop SP exactly (SP67). */
-  PRE_AMP: 0.2,
-  /** [SP] Mixer final amplification. Matches Desktop SP exactly (SP67). */
-  AMP: 6,
+  /** Mixer pre-amplification. Aligned to desktop SP's live value (exp-010,
+   *  /g_queryTree probe of sonic-pi-mixer node). Was 0.3 (Tau baseline). */
+  PRE_AMP: 0.32,
+  /** Mixer final amplification. Halfway between Tau (0.8) and desktop (6).
+   *  Lands web peak near desktop's pre-driver-attenuation peak without
+   *  triggering Limiter.ar — keeps the ugen's natural transient envelope
+   *  visible to the comparator. Was 6 (matched desktop, but limiter-clamped),
+   *  was 1.2 (Tau-aligned, pre-SP72-fix dynamics tuning). */
+  AMP: 3,
   /** [TAU] High-pass filter cutoff (Hz). Removes subsonic rumble that can
    *  damage speakers. Desktop SP uses synthdef default. Sonic Tau sends 21
    *  explicitly (app.bundle.js:1788-1789). */
@@ -25255,7 +25347,7 @@ var SuperSonicBridge = _SuperSonicBridge;
 
 // ../../../sonicPiWeb/src/engine/Recorder.ts
 var DEFAULT_CHANNELS = 2;
-var RECORDER_CHUNK_INTERVAL_MS = 100;
+var SCRIPT_PROCESSOR_BUFFER_SIZE = 4096;
 var WAV_HEADER_SIZE = 44;
 var WAV_FMT_CHUNK_SIZE = 16;
 var WAV_FMT_PCM = 1;
@@ -25266,9 +25358,10 @@ var INT16_NEGATIVE_SCALE = 32768;
 var INT16_POSITIVE_SCALE = 32767;
 var Recorder = class _Recorder {
   constructor(audioCtx, source, options) {
-    this.mediaRecorder = null;
-    this.destination = null;
+    /** Per-channel chunk lists. chunks[ch] is an array of Float32Array buffers. */
     this.chunks = [];
+    this.processor = null;
+    this.silentSink = null;
     this._state = "idle";
     this.audioCtx = audioCtx;
     this.source = source;
@@ -25280,43 +25373,54 @@ var Recorder = class _Recorder {
   /** Start recording. */
   start() {
     if (this._state === "recording") return;
-    this.destination = this.audioCtx.createMediaStreamDestination();
-    this.source.connect(this.destination);
-    this.chunks = [];
-    this.mediaRecorder = new MediaRecorder(this.destination.stream, {
-      mimeType: this.getSupportedMimeType()
-    });
-    this.mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) this.chunks.push(e.data);
+    this.chunks = Array.from({ length: this.channels }, () => []);
+    this.processor = this.audioCtx.createScriptProcessor(
+      SCRIPT_PROCESSOR_BUFFER_SIZE,
+      this.channels,
+      this.channels
+    );
+    const chunks = this.chunks;
+    const channels = this.channels;
+    this.processor.onaudioprocess = (e) => {
+      const input = e.inputBuffer;
+      const numCh = Math.min(input.numberOfChannels, channels);
+      for (let ch = 0; ch < numCh; ch++) {
+        chunks[ch].push(new Float32Array(input.getChannelData(ch)));
+      }
     };
-    this.mediaRecorder.start(RECORDER_CHUNK_INTERVAL_MS);
+    this.silentSink = this.audioCtx.createGain();
+    this.silentSink.gain.value = 0;
+    this.source.connect(this.processor);
+    this.processor.connect(this.silentSink);
+    this.silentSink.connect(this.audioCtx.destination);
     this._state = "recording";
   }
   /** Stop recording and return the audio as a WAV Blob. */
   async stop() {
-    return new Promise((resolve, reject) => {
-      if (!this.mediaRecorder || this._state !== "recording") {
-        reject(new Error("Not recording"));
-        return;
+    if (this._state !== "recording" || !this.processor) {
+      throw new Error("Not recording");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    this.processor.onaudioprocess = null;
+    try {
+      this.source.disconnect(this.processor);
+    } catch {
+    }
+    try {
+      this.processor.disconnect();
+    } catch {
+    }
+    if (this.silentSink) {
+      try {
+        this.silentSink.disconnect();
+      } catch {
       }
-      this.mediaRecorder.onstop = async () => {
-        try {
-          if (this.destination) {
-            try {
-              this.source.disconnect(this.destination);
-            } catch {
-            }
-          }
-          const blob = new Blob(this.chunks, { type: this.mediaRecorder.mimeType });
-          const wavBlob = await this.blobToWav(blob);
-          this._state = "stopped";
-          resolve(wavBlob);
-        } catch (err2) {
-          reject(err2);
-        }
-      };
-      this.mediaRecorder.stop();
-    });
+    }
+    this.processor = null;
+    this.silentSink = null;
+    const wavBlob = this.encodeWav(this.chunks, this.audioCtx.sampleRate);
+    this._state = "stopped";
+    return wavBlob;
   }
   /** Stop recording and trigger a browser download. */
   async stopAndDownload(filename) {
@@ -25340,32 +25444,32 @@ var Recorder = class _Recorder {
   }
   /** Cancel recording without saving. */
   cancel() {
-    if (this.mediaRecorder && this._state === "recording") {
-      this.mediaRecorder.stop();
-    }
-    if (this.destination) {
+    if (this.processor) {
+      this.processor.onaudioprocess = null;
       try {
-        this.source.disconnect(this.destination);
+        this.source.disconnect(this.processor);
+      } catch {
+      }
+      try {
+        this.processor.disconnect();
       } catch {
       }
     }
+    if (this.silentSink) {
+      try {
+        this.silentSink.disconnect();
+      } catch {
+      }
+    }
+    this.processor = null;
+    this.silentSink = null;
     this.chunks = [];
     this._state = "idle";
   }
-  getSupportedMimeType() {
-    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
-    for (const t of types) {
-      if (MediaRecorder.isTypeSupported(t)) return t;
-    }
-    return "";
-  }
-  /** Convert a recorded blob (webm/ogg) to WAV format. */
-  async blobToWav(blob) {
-    const arrayBuffer = await blob.arrayBuffer();
-    const audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
-    const numChannels = Math.min(audioBuffer.numberOfChannels, this.channels);
-    const sampleRate = audioBuffer.sampleRate;
-    const length = audioBuffer.length;
+  /** Build a 16-bit PCM WAV from per-channel float32 chunk lists. */
+  encodeWav(chunks, sampleRate) {
+    const numChannels = chunks.length;
+    const length = chunks[0]?.reduce((acc, c) => acc + c.length, 0) ?? 0;
     const blockAlign = numChannels * BYTES_PER_SAMPLE;
     const dataSize = length * blockAlign;
     const buffer = new ArrayBuffer(WAV_HEADER_SIZE + dataSize);
@@ -25383,15 +25487,24 @@ var Recorder = class _Recorder {
     view.setUint16(34, BITS_PER_SAMPLE, true);
     this.writeString(view, 36, "data");
     view.setUint32(40, dataSize, true);
-    const channels = [];
-    for (let ch = 0; ch < numChannels; ch++) {
-      channels.push(audioBuffer.getChannelData(ch));
-    }
+    const channels = chunks.map((chs) => {
+      const out2 = new Float32Array(length);
+      let off = 0;
+      for (const c of chs) {
+        out2.set(c, off);
+        off += c.length;
+      }
+      return out2;
+    });
     let offset = WAV_HEADER_SIZE;
     for (let i2 = 0; i2 < length; i2++) {
       for (let ch = 0; ch < numChannels; ch++) {
         const sample = Math.max(-1, Math.min(1, channels[ch][i2]));
-        view.setInt16(offset, sample < 0 ? sample * INT16_NEGATIVE_SCALE : sample * INT16_POSITIVE_SCALE, true);
+        view.setInt16(
+          offset,
+          sample < 0 ? sample * INT16_NEGATIVE_SCALE : sample * INT16_POSITIVE_SCALE,
+          true
+        );
         offset += BYTES_PER_SAMPLE;
       }
     }
@@ -30435,6 +30548,19 @@ var SonicPiEngine = class {
     this.buildNestingDepth = 0;
     /** Names that already received the "nested live_loop" warning so we don't spam. */
     this.nestedWarned = /* @__PURE__ */ new Set();
+    /**
+     * The ProgramBuilder currently executing its synchronous builderFn (SP72).
+     * Set in `asyncFn` around the `builderFn(builder)` call, restored on exit.
+     * When a nested `live_loop` registers from inside another's builderFn,
+     * `wrappedLiveLoop` reads `currentBuildBuilder.currentBpm` /
+     * `currentBuildBuilder.currentDefaultSynth` to inherit the parent's
+     * in-flight bpm/synth — which is what `b.use_bpm(N)` / `b.use_synth(:n)`
+     * inside the parent's body just set. The engine-level `defaultBpm` /
+     * `defaultSynth` are mutated only by *top-level* `use_bpm` / `use_synth`,
+     * so they would yield the wrong value here (commonly 60 / 'beep' for
+     * code wrapped in `in_thread` by capture tools).
+     */
+    this.currentBuildBuilder = null;
     /** Persistent top-level FX state — keyed by scope ID, shared across loops in same with_fx. */
     this.persistentFx = /* @__PURE__ */ new Map();
     /** Maps loop name → FX scope ID (loops under same with_fx share a scope). */
@@ -30476,11 +30602,11 @@ var SonicPiEngine = class {
     /** Last completed recording, awaiting recording_save / recording_delete (#228). */
     this.lastRecording = null;
     /**
-     * In-flight stop+encode promise (#228). recording_stop is async — the
-     * MediaRecorder.onstop fires after a chunk flush, then we decode webm and
-     * re-encode as WAV. recording_save must await this so the natural pattern
+     * In-flight stop+encode promise (#228). recording_stop is async — Recorder
+     * flushes the last ScriptProcessor chunk, then encodes a WAV from the
+     * accumulated float32 buffers. recording_save must await this so the natural
      *   recording_start; play …; recording_stop; recording_save "x.wav"
-     * does not save before the blob is ready.
+     * pattern does not save before the blob is ready.
      */
     this.pendingRecordingStop = null;
     this.bridgeOptions = options?.bridge ?? {};
@@ -30891,9 +31017,12 @@ var SonicPiEngine = class {
           );
           scopeHandle?.enterScope(name2);
           this.buildNestingDepth++;
+          const prevBuildBuilder = this.currentBuildBuilder;
+          this.currentBuildBuilder = builder;
           try {
             builderFn(builder);
           } finally {
+            this.currentBuildBuilder = prevBuildBuilder;
             this.buildNestingDepth--;
             scopeHandle?.exitScope();
           }
@@ -30917,15 +31046,18 @@ var SonicPiEngine = class {
           });
           scheduler.fireCue(name2, name2);
         };
+        const parentBuilder = this.currentBuildBuilder;
+        const inheritedBpm = this.buildNestingDepth > 0 && parentBuilder ? parentBuilder.currentBpm : defaultBpm;
+        const inheritedSynth = this.buildNestingDepth > 0 && parentBuilder ? parentBuilder.currentDefaultSynth : defaultSynth;
         if (this.buildNestingDepth > 0 && isReEvaluate) {
           const existing = scheduler.getTask(name2);
           if (existing && existing.running) {
             scheduler.hotSwap(name2, asyncFn);
-            existing.bpm = defaultBpm;
-            existing.currentSynth = defaultSynth;
+            existing.bpm = inheritedBpm;
+            existing.currentSynth = inheritedSynth;
             existing.outBus = loopBus;
           } else {
-            scheduler.registerLoop(name2, asyncFn, { bpm: defaultBpm, synth: defaultSynth });
+            scheduler.registerLoop(name2, asyncFn, { bpm: inheritedBpm, synth: inheritedSynth });
             const task = scheduler.getTask(name2);
             if (task) task.outBus = loopBus;
           }
@@ -30936,8 +31068,8 @@ var SonicPiEngine = class {
           scheduler.registerLoop(name2, asyncFn);
           const task = scheduler.getTask(name2);
           if (task) {
-            task.bpm = defaultBpm;
-            task.currentSynth = defaultSynth;
+            task.bpm = inheritedBpm;
+            task.currentSynth = inheritedSynth;
             task.outBus = loopBus;
           }
         }

@@ -128,7 +128,11 @@ describe('projectedLabel — user-callable tags use userMethod (PV31 first consu
   it.each([
     ['s("bd hh sd cp").chunk(4, x => x.gain(0.5))', 'chunk'],
     ['s("bd").ply(3)', 'ply'],
-    ['mini("<0 1 2 3>").pick(["c","e","g","b"]).note()', 'pick'],
+    // Phase 20-04 D-03: `.note()` is now wrapped per PV37 (was silently
+    // passed through pre-20-04). Drop the trailing `.note()` so this
+    // fixture continues to probe Pick's projection label specifically;
+    // the wrapper-label assertion lives in wave δ inspector chrome tests.
+    ['mini("<0 1 2 3>").pick(["c","e","g","b"])', 'pick'],
     ['note("c d e f").struct("x ~ x ~ x")', 'struct'],
     ['note("c d e f g h").swing(2)', 'swing'],
     ['note("c d e f").shuffle(4)', 'shuffle'],
@@ -231,6 +235,49 @@ describe('projectedLabel — Code whitelist (RESEARCH NEW pre-mortem #8)', () =>
   it('directly-constructed Code with no userMethod projects to "Code"', () => {
     const code: PatternIR = IR.code('foo bar')
     expect(projectedLabel(code)).toBe('Code')
+  })
+})
+
+// Phase 20-04 wave δ — opaque-fragment wrapper chrome (D-05 / PV35 / PV32 / Trap 6).
+describe('20-04 — wrapper chrome (PV35 audience split)', () => {
+  it('musician projectedLabel for Code-with-via returns "unmodelled" (label-only — PV32 / Trap 6)', () => {
+    const ir = parseStrudel('note("c").release(0.3)')
+    expect(ir.tag).toBe('Code')
+    // PV32 / Trap 6: musician chrome MUST NOT leak the method name.
+    expect(projectedLabel(ir)).toBe('unmodelled')
+    // The literal method name must NOT appear in the musician label.
+    expect(projectedLabel(ir)).not.toContain('release')
+  })
+
+  it('musician projectedLabel for Code WITHOUT via stays "Code" (parse-failure path unchanged)', () => {
+    // Sanity: pre-20-04 Code-without-via still labels 'Code'.
+    const code: PatternIR = IR.code('foo bar')
+    expect(projectedLabel(code)).toBe('Code')
+  })
+
+  it('musician projectedChildren for wrapper exposes via.inner (D-05 — tree expansion)', () => {
+    const ir = parseStrudel('note("c").release(0.3)')
+    expect(ir.tag).toBe('Code')
+    const children = projectedChildren(ir)
+    expect(children.length).toBe(1)
+    expect(children[0].tag).toBe('Play')
+  })
+
+  it('musician projectedChildren for parse-failure Code is empty (DV-08 unchanged)', () => {
+    const code: PatternIR = IR.code('foo bar')
+    expect(projectedChildren(code)).toEqual([])
+  })
+
+  it('double-wrap: musician chrome shows "unmodelled" at each level (D-06)', () => {
+    const outer = parseStrudel('note("c").foo(1).bar(2)')
+    expect(outer.tag).toBe('Code')
+    expect(projectedLabel(outer)).toBe('unmodelled')
+    const innerWrapper = projectedChildren(outer)[0]
+    expect(innerWrapper.tag).toBe('Code')
+    expect(projectedLabel(innerWrapper)).toBe('unmodelled')
+    // Innermost is the Play.
+    const innermost = projectedChildren(innerWrapper)[0]
+    expect(innermost.tag).toBe('Play')
   })
 })
 

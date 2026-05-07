@@ -450,6 +450,12 @@ function collectLocEntries(
       collectLocEntries(node.selector, `${path}.selector`, acc)
       node.lookup.forEach((l, i) => collectLocEntries(l, `${path}.lookup[${i}]`, acc))
       break
+    case 'Code':
+      // Phase 20-04 PV37 / D-01: opaque-fragment wrapper has via.inner —
+      // recurse to keep MINI-EXPANDED → CHAIN-APPLIED loc parity when a
+      // chain method (e.g. .add("0,2") inside .layer) wraps the receiver.
+      if (node.via) collectLocEntries(node.via.inner, `${path}.via.inner`, acc)
+      break
     default: break
   }
   return acc

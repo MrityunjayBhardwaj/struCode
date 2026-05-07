@@ -27,6 +27,8 @@ import {
   projectedLabel,
   projectedChildren,
 } from "./irProjection";
+import { summarize, children } from "./IRInspectorChrome";
+export { summarize, children } from "./IRInspectorChrome";   // re-export for callers
 import { IRInspectorTimeline } from "./IRInspectorTimeline";
 
 // Phase 19-08 PR-B — localStorage keys for the timeline UI.
@@ -75,68 +77,10 @@ const TAG_COLOR: Record<PatternIR["tag"], string> = {
   Code:     "var(--ir-code, #ef4444)",
 };
 
-function summarize(node: PatternIR): string {
-  switch (node.tag) {
-    case "Pure":   return "()";
-    case "Play":   return `${JSON.stringify(node.note)} dur=${round(node.duration)}`;
-    case "Sleep":  return `dur=${round(node.duration)}`;
-    case "Seq":    return `${node.children.length} children`;
-    case "Stack":  return `${node.tracks.length} tracks`;
-    case "Cycle":  return `${node.items.length} items`;
-    case "Choice": return `p=${node.p}`;
-    case "Every":  return `n=${node.n}`;
-    case "When":   return `gate=${node.gate}`;
-    case "FX":     return `${node.name}(${Object.keys(node.params).join(", ")})`;
-    case "Ramp":   return `${node.param} ${node.from}→${node.to} over ${node.cycles}c`;
-    case "Fast":
-    case "Slow":
-    case "Elongate":
-      return `factor=${node.factor}`;
-    case "Late":    return `offset=${node.offset}`;
-    case "Degrade": return `p=${node.p}`;
-    case "Chunk":   return `n=${node.n}`;
-    case "Ply":     return `n=${node.n}`;
-    case "Struct":   return `mask="${node.mask}"`;
-    case "Swing":    return `n=${node.n}`;
-    case "Pick":     return `${node.lookup.length} entries`;
-    case "Shuffle":  return `n=${node.n}`;
-    case "Scramble": return `n=${node.n}`;
-    case "Chop":     return `n=${node.n}`;
-    case "Loop":   return "";
-    case "Code":   return JSON.stringify(node.code).slice(0, 60);
-  }
-}
-
-function children(node: PatternIR): readonly PatternIR[] {
-  switch (node.tag) {
-    case "Seq":   return node.children;
-    case "Stack": return node.tracks;
-    case "Cycle": return node.items;
-    case "Choice": return [node.then, node.else_];
-    case "Every": return node.default_ ? [node.body, node.default_] : [node.body];
-    case "When":  return [node.body];
-    case "FX":
-    case "Ramp":
-    case "Fast":
-    case "Slow":
-    case "Elongate":
-    case "Late":
-    case "Degrade":
-    case "Ply":
-    case "Struct":
-    case "Swing":
-    case "Shuffle":
-    case "Scramble":
-    case "Chop":
-    case "Loop":  return [node.body];
-    case "Chunk": return [node.body, node.transform];
-    // Pick is the first IR shape with a list-of-sub-IRs alongside a
-    // distinguished selector child — render selector first, then the
-    // lookup entries as siblings.
-    case "Pick":  return [node.selector, ...node.lookup];
-    default:      return [];
-  }
-}
+// summarize / children moved to IRInspectorChrome.ts (Phase 20-04 wave δ)
+// — pure helpers extracted so unit tests can import without pulling the
+// full panel + transitive `gifenc` (CommonJS) dependency chain. Imported
+// at the top of this file and re-exported alongside the import.
 
 function round(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(3);
