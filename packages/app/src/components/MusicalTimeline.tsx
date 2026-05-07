@@ -78,7 +78,7 @@ const TAB_ID = 'musical-timeline'
 const TRACK_LABEL_WIDTH = 90 // mockup: .daw-gutter width 90px (DV-02)
 const ROW_HEIGHT = 24
 const STATUS_HEIGHT = 24
-const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set())
+const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set<string>())
 
 /**
  * Tiny MIDI int → note name converter. C4 = 60. Used in tooltips when
@@ -321,7 +321,7 @@ export function MusicalTimeline(
         if (line == null) {
           const simpleRe = new RegExp(`\\b${searchStr}\\b`)
           const match = snapshot.code.match(simpleRe)
-          if (match) {
+          if (match && match.index != null) {
             line = countLines(snapshot.code, match.index)
           }
         }
