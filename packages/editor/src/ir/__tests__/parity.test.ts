@@ -1777,3 +1777,95 @@ describe('20-03 — PV36 loc-completeness across collect arms', () => {
     }
   })
 })
+
+
+// ---------------------------------------------------------------------------
+// Phase 20-04 wave β — parser-side wrap probes (D-03 / P33 / PV37).
+// ---------------------------------------------------------------------------
+
+describe('20-04 wave β — parser wrap probes (D-03 / P33 / PV37)', () => {
+  // Each probe asserts that the parser routes through wrapAsOpaque AT THE
+  // EXPECTED FAILURE BRANCH — and that intentional non-wrap sites
+  // (ply(n=1), .p("...")) are preserved unchanged.
+
+  // --- Default-arm wrap (T-04 / DV-06 primary site) --------------------------
+
+  it('default arm wraps unrecognised method (.release)', () => {
+    const ir = parseStrudel('note("c").release(0.3)')
+    expect(ir.tag).toBe('Code')
+    if (ir.tag !== 'Code') return
+    expect(ir.via?.method).toBe('release')
+    expect(ir.via?.args).toBe('0.3')           // raw, untrimmed (D-02)
+    expect(ir.via?.inner.tag).toBe('Play')
+  })
+
+  it('default arm wraps with quoted args verbatim (.s("sawtooth"))', () => {
+    const ir = parseStrudel('note("c").s("sawtooth")')
+    expect(ir.tag).toBe('Code')
+    if (ir.tag !== 'Code') return
+    expect(ir.via?.method).toBe('s')
+    expect(ir.via?.args).toBe('"sawtooth"')    // includes surrounding quotes
+  })
+
+  // --- Typed-arm parse-failure wraps (T-06 / D-03 expansion) -----------------
+
+  it('fast wraps on parseFloat NaN (pattern-as-arg)', () => {
+    const ir = parseStrudel('note("c").fast("<2 3>")')
+    expect(ir.tag).toBe('Code')
+    if (ir.tag !== 'Code') return
+    expect(ir.via?.method).toBe('fast')
+    expect(ir.via?.args).toBe('"<2 3>"')
+  })
+
+  it('gain wraps on parseFloat NaN', () => {
+    const ir = parseStrudel('note("c").gain("0.3 0.7")')
+    expect(ir.tag).toBe('Code')
+    if (ir.tag !== 'Code') return
+    expect(ir.via?.method).toBe('gain')
+  })
+
+  it('lpf wraps on parseFloat NaN (FX group line 618)', () => {
+    const ir = parseStrudel('note("c").lpf("<500 1000>")')
+    expect(ir.tag).toBe('Code')
+    if (ir.tag !== 'Code') return
+    expect(ir.via?.method).toBe('lpf')
+  })
+
+  it('every wraps on parseInt NaN', () => {
+    const ir = parseStrudel('note("c").every("<2 3>", x => x.fast(2))')
+    expect(ir.tag).toBe('Code')
+    if (ir.tag !== 'Code') return
+    expect(ir.via?.method).toBe('every')
+  })
+
+  it('mask wraps when regex fails (bareword arg)', () => {
+    const ir = parseStrudel('note("c").mask(somevar)')
+    expect(ir.tag).toBe('Code')
+    if (ir.tag !== 'Code') return
+    expect(ir.via?.method).toBe('mask')
+  })
+
+  // --- Trap 2: ply(1) NOT wrapped (valid no-op) ------------------------------
+
+  it('ply(1) is preserved as receiver (Trap 2 — valid no-op, NOT wrapped)', () => {
+    const ir = parseStrudel('note("c").ply(1)')
+    // Should be the receiver Play(c), NOT a Code-with-via wrapper.
+    expect(ir.tag).toBe('Play')
+  })
+
+  it('ply with invalid arg DOES wrap (D-03 failure path)', () => {
+    const ir = parseStrudel('note("c").ply("foo")')
+    expect(ir.tag).toBe('Code')
+    if (ir.tag !== 'Code') return
+    expect(ir.via?.method).toBe('ply')
+  })
+
+  // --- Trap 3: .p("...") NOT wrapped (intentional pass-through) --------------
+
+  it('.p("trackId") is preserved as receiver (Trap 3 — track assignment passthrough)', () => {
+    const ir = parseStrudel('note("c").p("track1")')
+    // Track-assignment is consumed externally; the parser passes the
+    // receiver through unchanged. NOT a Code-with-via wrapper.
+    expect(ir.tag).toBe('Play')
+  })
+})
