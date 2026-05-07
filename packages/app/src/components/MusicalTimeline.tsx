@@ -28,8 +28,8 @@
  *     editor tab), the slot map is cleared so File A's tracks don't
  *     leak into File B's row order (Trap NEW-5).
  *
- * Slice γ (click-to-source) is wired — clicking a note block reveals the
- * source line in Monaco via revealLineInFile.
+ * Click-to-source: evt.loc[0] is the contract (PV36 / D-02). No fallbacks.
+ * Multi-range loc supports modifier-click reveal of wrapping ranges (D-01).
  */
 'use client'
 
@@ -288,50 +288,17 @@ export function MusicalTimeline(
 
   const playheadX = cycleToPlayheadX(currentCycle, { gridContentWidth })
 
-  // Slice γ — click-to-source: find the source line that produced this
-  // event and reveal it in Monaco.
-  //
-  // Strategy (in order):
-  // 1. When the event carries a sample name (evt.s), search snapshot.code
-  //    for the $: block whose body contains it as a word. This is more
-  //    reliable than parser loc because the parser drops argument offsets
-  //    for stack() wrapper events (parseStrudel.ts:204), producing
-  //    meaningless start offsets like 3 that resolve to line 1.
-  // 2. When evt.s is absent (e.g. note() events in $default), use the
-  //    parser-provided loc if it carries a non-zero start offset.
+  // Click-to-source — single contract per PV36 / D-02. evt.loc[0] is the
+  // innermost atom range (D-01); modifier-click variants would walk the
+  // rest of evt.loc[] to reveal wrapping call-sites. The 5-commit regex
+  // fallback ladder (cc19d5b..eab49d5) was a workaround cascade for
+  // missing-loc events in the IR — PV36 codifies the contract collect()
+  // now upholds, so the fallbacks have no scenarios left to handle.
   const handleNoteClick = React.useCallback(
     (evt: IREvent) => {
-      if (!snapshot?.source) return
-      let line: number | null = null
-
-      // Primary path: $: block walk by sample name (more reliable).
-      if (evt.s) {
-        const searchStr = evt.s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const blockRe = /^[ \t]*\$:[^\n]*(?:\n(?!\s*\$:)[^\n]*)*/gm
-        let blockMatch: RegExpExecArray | null
-        while ((blockMatch = blockRe.exec(snapshot.code)) !== null) {
-          const body = blockMatch[0]
-          const sampleRe = new RegExp(`\\b${searchStr}\\b`)
-          if (sampleRe.test(body)) {
-            line = countLines(snapshot.code, blockMatch.index)
-            break
-          }
-        }
-        // Fallback: simple word search for evt.s in the code.
-        if (line == null) {
-          const simpleRe = new RegExp(`\\b${searchStr}\\b`)
-          const match = snapshot.code.match(simpleRe)
-          if (match && match.index != null) {
-            line = countLines(snapshot.code, match.index)
-          }
-        }
-      } else if (evt.loc && evt.loc.length > 0 && evt.loc[0].start > 0) {
-        // Fallback: use parser-provided loc (events without evt.s).
-        line = countLines(snapshot.code, evt.loc[0].start)
-      }
-      if (line != null) {
-        revealLineInFile(snapshot.source, line)
-      }
+      if (!snapshot?.source || !evt.loc || evt.loc.length === 0) return
+      const line = countLines(snapshot.code, evt.loc[0].start)
+      revealLineInFile(snapshot.source, line)
     },
     [snapshot],
   )
