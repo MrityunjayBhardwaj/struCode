@@ -1015,10 +1015,16 @@ describe('parseStrudel', () => {
     })
 
     it('events from collect carry loc all the way through', () => {
+      // PV36 / D-01 — multi-range loc, innermost first. The atom range
+      // ("c4" / "e4") stays at loc[0]; Seq's wrapping range (the whole
+      // mini-notation string source) is appended at loc[1+].
       const events = collect(parseStrudel('note("c4 e4")'))
       expect(events).toHaveLength(2)
-      expect(events[0].loc).toEqual([{ start: 6, end: 8 }])
-      expect(events[1].loc).toEqual([{ start: 9, end: 11 }])
+      expect(events[0].loc?.[0]).toEqual({ start: 6, end: 8 })
+      expect(events[1].loc?.[0]).toEqual({ start: 9, end: 11 })
+      // Non-empty loc on every event — the contract PV36 enforces.
+      expect(events[0].loc!.length).toBeGreaterThanOrEqual(1)
+      expect(events[1].loc!.length).toBeGreaterThanOrEqual(1)
     })
 
     it('opaque expressions have no loc (correct — the mapping is unknown)', () => {

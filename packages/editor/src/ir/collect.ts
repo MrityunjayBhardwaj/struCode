@@ -10,7 +10,7 @@
  */
 
 import type { PatternIR } from './PatternIR'
-import type { IREvent } from './IREvent'
+import type { IREvent, SourceLocation } from './IREvent'
 
 // ---------------------------------------------------------------------------
 // Deterministic seeded PRNG used by the `Degrade` tag. We mirror Strudel's
@@ -88,6 +88,31 @@ function seededRandsAtTime(t: number, n: number, seed: number): number[] {
     s = xorwise(s)
   }
   return out
+}
+
+/**
+ * Append a wrapper IR node's loc range to each event's existing loc array,
+ * preserving D-01 innermost-first ordering. Used by class-B/A collect arms
+ * to thread parent IR's source range onto produced events without
+ * overwriting child-atom provenance.
+ *
+ * Append, never prepend — child events arriving here may already carry
+ * multi-element loc[] (e.g. Play inside Late inside Off); the wrapper's
+ * range becomes loc[N], not loc[0]. Consumers reading loc[0] continue
+ * to get the most-specific atom range.
+ *
+ * PV36 / PK13 step 3.
+ */
+function withWrapperLoc(
+  events: IREvent[],
+  wrapper?: PatternIR['loc'],
+): IREvent[] {
+  if (!wrapper || wrapper.length === 0) return events
+  const range = wrapper[0]
+  return events.map((e) => ({
+    ...e,
+    loc: e.loc ? [...e.loc, range] : [range],
+  }))
 }
 
 export interface CollectContext {
@@ -187,6 +212,7 @@ function _collectRearrange(
   n: number,
   body: PatternIR,
   ctx: CollectContext,
+  wrapperLoc?: SourceLocation,
 ): IREvent[] {
   const bodyEvents = walk(body, ctx)
   const out: IREvent[] = []
@@ -212,7 +238,14 @@ function _collectRearrange(
       }
     }
   }
-  return out
+  // PV36 / D-01 — append the .shuffle(N)/.scramble(N) call-site range
+  // after each event's existing loc (innermost stays at loc[0]). When
+  // wrapperLoc is omitted (legacy callers), behaviour is unchanged.
+  if (!wrapperLoc) return out
+  return out.map((e) => ({
+    ...e,
+    loc: e.loc ? [...e.loc, wrapperLoc] : [wrapperLoc],
+  }))
 }
 
 /**
@@ -223,7 +256,21 @@ function _collectRearrange(
  */
 export function collect(ir: PatternIR, partialCtx?: Partial<CollectContext>): IREvent[] {
   const ctx: CollectContext = { ...DEFAULT_CONTEXT, ...partialCtx }
-  return walk(ir, ctx)
+  const events = walk(ir, ctx)
+  // PV36 / D-03 — dev-only loc-completeness catcher. esbuild substitutes
+  // process.env.NODE_ENV at build time; production builds dead-code-
+  // eliminate the entire block. vitest runs with NODE_ENV='test' so the
+  // warn fires alongside the contract test, giving two complementary
+  // signals when a future arm ships without loc-propagation.
+  if (process.env.NODE_ENV !== 'production') {
+    for (const e of events) {
+      if (!e.loc || e.loc.length === 0) {
+        // eslint-disable-next-line no-console
+        console.warn('[PV36] event produced without loc', { ir, event: e })
+      }
+    }
+  }
+  return events
 }
 
 function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
@@ -277,7 +324,10 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
         events.push(...childEvents)
         cursor += slotDuration / ctx.speed
       }
-      return events
+      // PV36 — top-level Seq nodes (synthetic from extractTracks) have
+      // no loc; user-visible Seq nodes (from sequence(...)) carry their
+      // call-site range. withWrapperLoc no-ops when ir.loc is empty.
+      return withWrapperLoc(events, ir.loc)
     }
 
     case 'Stack': {
@@ -286,20 +336,28 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       for (const track of ir.tracks) {
         events.push(...walk(track, ctx))
       }
-      return events
+      // PV36 — synthetic Stack from layer/jux/off carries the call-site
+      // range as ir.loc (parseStrudel.ts:392-397/517-522/593-599); that
+      // becomes the wrapper provenance on every produced event. Multi-
+      // track top-level Stack from extractTracks has no loc; helper
+      // no-ops in that case.
+      return withWrapperLoc(events, ir.loc)
     }
 
     case 'Choice': {
       // Probabilistic: pick one branch (seeded determinism deferred to Phase 19)
       const chosen = Math.random() < ir.p ? ir.then : ir.else_
-      return walk(chosen, ctx)
+      // PV36 — the .sometimes(...) / .sometimesBy(...) call-site is the
+      // wrapper provenance the user clicked.
+      return withWrapperLoc(walk(chosen, ctx), ir.loc)
     }
 
     case 'Every': {
       // Periodic: body fires on matching cycles, default otherwise
       const fires = ctx.cycle % ir.n === 0
-      if (fires) return walk(ir.body, ctx)
-      if (ir.default_) return walk(ir.default_, ctx)
+      // PV36 — both branches share the .every(n, ...) call-site as wrapper.
+      if (fires) return withWrapperLoc(walk(ir.body, ctx), ir.loc)
+      if (ir.default_) return withWrapperLoc(walk(ir.default_, ctx), ir.loc)
       return []
     }
 
@@ -307,7 +365,7 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // Alternation: pick item based on current cycle
       if (ir.items.length === 0) return []
       const item = ir.items[ctx.cycle % ir.items.length]
-      return walk(item, ctx)
+      return withWrapperLoc(walk(item, ctx), ir.loc)
     }
 
     case 'When': {
@@ -319,7 +377,9 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       const slotIndex = Math.floor((ctx.time % 1) * slots.length)
       const slot = slots[Math.min(slotIndex, slots.length - 1)]
       const active = slot !== '0' && slot !== '' && slot !== '~'
-      if (active) return walk(ir.body, ctx)
+      // PV36 — DV-06 atomic gate-token loc is deferred; loc on the
+      // entire .mask(...) / .struct(...) call site is sufficient for v1.
+      if (active) return withWrapperLoc(walk(ir.body, ctx), ir.loc)
       return []
     }
 
@@ -329,7 +389,8 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
         ...ctx,
         params: { ...ctx.params, ...ir.params },
       }
-      return walk(ir.body, childCtx)
+      // PV36 — .gain(N) / .pan(N) / .lpf(N) etc. call-site as wrapper.
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
     }
 
     case 'Ramp': {
@@ -340,7 +401,7 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
         ...ctx,
         params: { ...ctx.params, [ir.param]: value },
       }
-      return walk(ir.body, childCtx)
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
     }
 
     case 'Fast': {
@@ -350,7 +411,9 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
         speed: ctx.speed * ir.factor,
         duration: ctx.duration,
       }
-      return walk(ir.body, childCtx)
+      // PV36 — .fast(N) call-site. fast(2) duplicates inherit the same
+      // loc[1+] (DV-05 — Inspector dedupes by (loc[0], begin) pair).
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
     }
 
     case 'Slow': {
@@ -360,13 +423,13 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
         speed: ctx.speed / ir.factor,
         duration: ctx.duration,
       }
-      return walk(ir.body, childCtx)
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
     }
 
     case 'Loop': {
       // Loop is structural — the scheduler handles repetition.
       // collect() evaluates body once (for the current cycle window).
-      return walk(ir.body, ctx)
+      return withWrapperLoc(walk(ir.body, ctx), ir.loc)
     }
 
     case 'Elongate': {
@@ -375,7 +438,7 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // — there is no sibling to take time from, so we just walk the
       // body unchanged. The factor is recoverable from the tree if a
       // future consumer needs structural intent.
-      return walk(ir.body, ctx)
+      return withWrapperLoc(walk(ir.body, ctx), ir.loc)
     }
 
     case 'Late': {
@@ -391,7 +454,7 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // overwhelming-typical Strudel use case — at most one wrap unit is
       // needed.
       const events = walk(ir.body, ctx)
-      return events.map((e) => {
+      const shifted = events.map((e) => {
         let begin = e.begin + ir.offset
         let end = e.end + ir.offset
         let endClipped = e.endClipped + ir.offset
@@ -406,6 +469,9 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
         }
         return { ...e, begin, end, endClipped }
       })
+      // PV36 — .late(t) call-site (or off-derived synthetic Late carrying
+      // the .off(...) range as ir.loc per parseStrudel.ts:585-588).
+      return withWrapperLoc(shifted, ir.loc)
     }
 
     case 'Degrade': {
@@ -431,7 +497,11 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // when event onsets match.
       const events = walk(ir.body, ctx)
       const dropAmount = 1 - ir.p
-      return events.filter((e) => seededRand(e.begin, RAND_SEED) > dropAmount)
+      const survivors = events.filter(
+        (e) => seededRand(e.begin, RAND_SEED) > dropAmount,
+      )
+      // PV36 — .degrade() / .degradeBy(x) call-site as wrapper.
+      return withWrapperLoc(survivors, ir.loc)
     }
 
     case 'Chunk': {
@@ -482,13 +552,16 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // tolerance because Strudel uses Fraction; our IR uses Number.
       const findTransformed = (e: IREvent): IREvent | undefined =>
         transformedEvents.find((t) => Math.abs(t.begin - e.begin) < 1e-9)
-      return baseEvents.map((e) => {
+      const composed = baseEvents.map((e) => {
         if (inSlot(e)) {
           const replaced = findTransformed(e)
           return replaced ?? e
         }
         return e
       })
+      // PV36 — .chunk(n, transform) call-site as wrapper. Both branches
+      // (replaced and pass-through) need it; map after the swap.
+      return withWrapperLoc(composed, ir.loc)
     }
 
     case 'Pick': {
@@ -531,12 +604,22 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
           // its own cycle 0 within the selector event's slot.
         }
         const subEvents = walk(subIR, subCtx)
-        // Propagate the selector event's loc onto sub-events when the
-        // sub-event lacks its own loc (PV24 — every IREvent must carry
-        // loc; the selector's loc is the closest source range).
+        // PV36 / D-01 — multi-range loc: lookup atom is innermost
+        // (loc[0]), selector is loc[1], .pick(...) call-site is loc[2].
+        // Replaces the pre-PV36 conditional-assignment shape (which only
+        // wrote selector.loc when child lacked one). When the child has
+        // its own loc it stays at loc[0]; consumers reading loc[0]
+        // continue to get the most-specific atom range.
+        const selectorLoc = sel.loc?.[0]
+        const wrapperLoc = ir.loc?.[0]
         for (const e of subEvents) {
-          if (!e.loc && sel.loc) e.loc = sel.loc
-          out.push(e)
+          const childLoc = e.loc ?? []
+          const newLoc = [
+            ...childLoc,
+            ...(selectorLoc ? [selectorLoc] : []),
+            ...(wrapperLoc ? [wrapperLoc] : []),
+          ]
+          out.push(newLoc.length > 0 ? { ...e, loc: newLoc } : e)
         }
       }
       return out
@@ -592,7 +675,9 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
           }
         }
       }
-      return out
+      // PV36 — .struct("...") call-site as wrapper. DV-06 atomic gate-
+      // token loc is deferred.
+      return withWrapperLoc(out, ir.loc)
     }
 
     case 'Swing': {
@@ -615,9 +700,9 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // re-play body — same trap that promoted Ply to a forced tag).
       // Instead we apply lateness directly to body events.
       const events = walk(ir.body, ctx)
-      if (ir.n < 1) return events
+      if (ir.n < 1) return withWrapperLoc(events, ir.loc)
       const swingAmount = 1 / (6 * ir.n)
-      return events.map((e) => {
+      const swung = events.map((e) => {
         const cyclePos = e.begin - ctx.cycle
         const slotIdx = Math.floor(cyclePos * ir.n)
         if (slotIdx % 2 === 1) {
@@ -630,6 +715,9 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
         }
         return e
       })
+      // PV36 — .swing(n) call-site as wrapper. Both branches (swung and
+      // pass-through) need it; map after the lateness application.
+      return withWrapperLoc(swung, ir.loc)
     }
 
     case 'Ply': {
@@ -653,7 +741,7 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // copies whose `begin` and `end` carve up the original [begin, end)
       // window. `loc` flows through the spread (PV24).
       const baseEvents = walk(ir.body, ctx)
-      if (ir.n <= 1) return baseEvents
+      if (ir.n <= 1) return withWrapperLoc(baseEvents, ir.loc)
       const out: IREvent[] = []
       for (const e of baseEvents) {
         const slotLen = (e.end - e.begin) / ir.n
@@ -668,7 +756,9 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
           })
         }
       }
-      return out
+      // PV36 — .ply(n) call-site as wrapper. The n duplicates per source
+      // event share child atom (loc[0]) AND ply call-site (loc[1+]).
+      return withWrapperLoc(out, ir.loc)
     }
 
     case 'Shuffle': {
@@ -689,13 +779,15 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // `(a[0] > b[0]) - (a[0] < b[0])` — so we sort raw, not absolute.
       //
       // PV28: re-time direct via _collectRearrange, NOT through Fast.
-      if (ir.n < 1) return walk(ir.body, ctx)
+      // PV36 — pass .shuffle(n) call-site to the shared helper so both
+      // Shuffle and Scramble thread their wrapper provenance the same way.
+      if (ir.n < 1) return withWrapperLoc(walk(ir.body, ctx), ir.loc)
       const rands = seededRandsAtTime(ctx.cycle + 0.5, ir.n, RAND_SEED)
       const perm = rands
         .map((r, i) => [r, i] as const)
         .sort((a, b) => (a[0] > b[0] ? 1 : a[0] < b[0] ? -1 : 0))
         .map((x) => x[1])
-      return _collectRearrange(perm, ir.n, ir.body, ctx)
+      return _collectRearrange(perm, ir.n, ir.body, ctx, ir.loc?.[0])
     }
 
     case 'Scramble': {
@@ -710,13 +802,14 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // per slot (with replacement); slices may repeat or not appear.
       //
       // PV28: re-time direct via _collectRearrange, NOT through Fast.
-      if (ir.n < 1) return walk(ir.body, ctx)
+      // PV36 — pass .scramble(n) call-site to the shared helper.
+      if (ir.n < 1) return withWrapperLoc(walk(ir.body, ctx), ir.loc)
       const selector: number[] = []
       for (let slot = 0; slot < ir.n; slot++) {
         const r = seededRand(ctx.cycle + slot / ir.n, RAND_SEED)
         selector.push(Math.trunc(r * ir.n))
       }
-      return _collectRearrange(selector, ir.n, ir.body, ctx)
+      return _collectRearrange(selector, ir.n, ir.body, ctx, ir.loc?.[0])
     }
 
     case 'Chop': {
@@ -747,7 +840,7 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // PV28: direct emission per source event, NOT a desugar through Fast.
       // Fast scales speed; it does not re-play the body. The same trap that
       // promoted Ply to a forced tag.
-      if (ir.n <= 1) return walk(ir.body, ctx)
+      if (ir.n <= 1) return withWrapperLoc(walk(ir.body, ctx), ir.loc)
       const baseEvents = walk(ir.body, ctx)
       const out: IREvent[] = []
       for (const e of baseEvents) {
@@ -771,7 +864,9 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
           })
         }
       }
-      return out
+      // PV36 — .chop(n) call-site as wrapper. The n sub-events per
+      // source event share child atom (loc[0]) + chop call-site (loc[1+]).
+      return withWrapperLoc(out, ir.loc)
     }
   }
 }
