@@ -292,23 +292,21 @@ export function MusicalTimeline(
   // event and reveal it in Monaco.
   //
   // Strategy (in order):
-  // 1. If event has a meaningful loc (start > 0), use character offset → line.
-  // 2. Otherwise, search snapshot.code for the $: block or bare expression
-  //    that matches evt.s (the sample/instrument name).
+  // 1. When the event carries a sample name (evt.s), search snapshot.code
+  //    for the $: block whose body contains it as a word. This is more
+  //    reliable than parser loc because the parser drops argument offsets
+  //    for stack() wrapper events (parseStrudel.ts:204), producing
+  //    meaningless start offsets like 3 that resolve to line 1.
+  // 2. When evt.s is absent (e.g. note() events in $default), use the
+  //    parser-provided loc if it carries a non-zero start offset.
   const handleNoteClick = React.useCallback(
     (evt: IREvent) => {
       if (!snapshot?.source) return
       let line: number | null = null
 
-      // Prefer parser-provided loc when it has a non-zero start offset.
-      if (evt.loc && evt.loc.length > 0 && evt.loc[0].start > 0) {
-        line = countLines(snapshot.code, evt.loc[0].start)
-      } else if (evt.s) {
-        // Fallback: find the $: block line whose body contains this
-        // sample name as a standalone word (\b word boundary).
+      // Primary path: $: block walk by sample name (more reliable).
+      if (evt.s) {
         const searchStr = evt.s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        // Match each $: block; for the first one that contains the
-        // sample as a word, count its line number.
         const blockRe = /^[ \t]*\$:[^\n]*(?:\n(?!\s*\$:)[^\n]*)*/gm
         let blockMatch: RegExpExecArray | null
         while ((blockMatch = blockRe.exec(snapshot.code)) !== null) {
@@ -319,14 +317,21 @@ export function MusicalTimeline(
             break
           }
         }
-        // If no $: block found, fall back to simple word search.
+        // Fallback: simple word search for evt.s in the code.
         if (line == null) {
           const simpleRe = new RegExp(`\\b${searchStr}\\b`)
           const match = snapshot.code.match(simpleRe)
-          if (match) line = countLines(snapshot.code, match.index)
+          if (match) {
+            line = countLines(snapshot.code, match.index)
+          }
         }
+      } else if (evt.loc && evt.loc.length > 0 && evt.loc[0].start > 0) {
+        // Fallback: use parser-provided loc (events without evt.s).
+        line = countLines(snapshot.code, evt.loc[0].start)
       }
-      if (line != null) revealLineInFile(snapshot.source, line)
+      if (line != null) {
+        revealLineInFile(snapshot.source, line)
+      }
     },
     [snapshot],
   )
