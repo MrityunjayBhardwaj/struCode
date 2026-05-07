@@ -262,7 +262,12 @@ export function collect(ir: PatternIR, partialCtx?: Partial<CollectContext>): IR
   // eliminate the entire block. vitest runs with NODE_ENV='test' so the
   // warn fires alongside the contract test, giving two complementary
   // signals when a future arm ships without loc-propagation.
-  if (process.env.NODE_ENV !== 'production') {
+  //
+  // Phase 20-04: ambient process declaration so tsup's dts builder doesn't
+  // need @types/node (the editor package intentionally avoids that dep —
+  // runtime esbuild-substitution doesn't require it).
+  const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process
+  if (proc?.env?.NODE_ENV !== 'production') {
     for (const e of events) {
       if (!e.loc || e.loc.length === 0) {
         // eslint-disable-next-line no-console

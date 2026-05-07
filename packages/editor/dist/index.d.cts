@@ -294,6 +294,12 @@ type PatternIR = {
     userMethod?: string;
     unresolvedChain?: string;
     chainOffset?: number;
+    via?: {
+        method: string;
+        args: string;
+        callSiteRange: [number, number];
+        inner: PatternIR;
+    };
 };
 /**
  * Optional metadata accepted by every non-rest-spread smart constructor

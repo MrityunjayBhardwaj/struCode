@@ -60,6 +60,8 @@ import {
   parseStrudel,
   collect,
   toStrudel,
+  patternToJSON,
+  patternFromJSON,
   type IREvent,
   type PatternIR,
   type CollectContext,
@@ -1957,5 +1959,49 @@ describe('20-04 wave γ — consumer wiring (D-01 / D-02 / PV37 clauses 3-5)', (
         expect(toStrudel(parseStrudel(code))).toBe(code)
       }
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-04 wave δ — full corpus contract (T-14 / PLAN §7).
+// ---------------------------------------------------------------------------
+
+describe('20-04 wave δ — PV37 opaque-fragment wrapper end-to-end corpus', () => {
+  // 7-entry corpus per PLAN §7 / RESEARCH §7.6 — exercises default-arm,
+  // typed-arm-failure, double-wrap, and chains across all four waves.
+  const CORPUS = [
+    'note("c").release(0.3)',
+    'note("c").s("sawtooth")',
+    's("bd hh sd").shape(0.5)',
+    'note("c").foo(1).bar(2)',
+    'note("c").fast("<2 3>")',
+    'note("c").gain("0.3 0.7").lpf(2400)',
+    'note("c d").bank("RolandTR909")',
+  ]
+
+  for (const code of CORPUS) {
+    it(`round-trips byte-equal — ${JSON.stringify(code).slice(0, 60)}`, () => {
+      expect(toStrudel(parseStrudel(code))).toBe(code)
+    })
+
+    it(`serialize → deserialize → toStrudel byte-equal — ${JSON.stringify(code).slice(0, 60)}`, () => {
+      const tree = parseStrudel(code)
+      const round = patternFromJSON(patternToJSON(tree))
+      expect(toStrudel(round)).toBe(code)
+    })
+  }
+
+  // Collect-walks-inner end-to-end: every code with at least one
+  // recognisable atom should produce >0 events with multi-range loc.
+  it('collect produces events with multi-range loc for the corpus', () => {
+    for (const code of CORPUS) {
+      const events = collect(parseStrudel(code))
+      // All corpus entries have at least one atom — events.length > 0.
+      expect(events.length, `code=${code}`).toBeGreaterThan(0)
+      for (const e of events) {
+        expect(e.loc, `code=${code} event=${JSON.stringify(e)}`).toBeDefined()
+        expect(e.loc!.length).toBeGreaterThanOrEqual(2)   // atom + ≥1 wrapper
+      }
+    }
   })
 })

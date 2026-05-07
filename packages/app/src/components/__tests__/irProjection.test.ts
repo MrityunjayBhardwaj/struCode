@@ -238,6 +238,49 @@ describe('projectedLabel — Code whitelist (RESEARCH NEW pre-mortem #8)', () =>
   })
 })
 
+// Phase 20-04 wave δ — opaque-fragment wrapper chrome (D-05 / PV35 / PV32 / Trap 6).
+describe('20-04 — wrapper chrome (PV35 audience split)', () => {
+  it('musician projectedLabel for Code-with-via returns "unmodelled" (label-only — PV32 / Trap 6)', () => {
+    const ir = parseStrudel('note("c").release(0.3)')
+    expect(ir.tag).toBe('Code')
+    // PV32 / Trap 6: musician chrome MUST NOT leak the method name.
+    expect(projectedLabel(ir)).toBe('unmodelled')
+    // The literal method name must NOT appear in the musician label.
+    expect(projectedLabel(ir)).not.toContain('release')
+  })
+
+  it('musician projectedLabel for Code WITHOUT via stays "Code" (parse-failure path unchanged)', () => {
+    // Sanity: pre-20-04 Code-without-via still labels 'Code'.
+    const code: PatternIR = IR.code('foo bar')
+    expect(projectedLabel(code)).toBe('Code')
+  })
+
+  it('musician projectedChildren for wrapper exposes via.inner (D-05 — tree expansion)', () => {
+    const ir = parseStrudel('note("c").release(0.3)')
+    expect(ir.tag).toBe('Code')
+    const children = projectedChildren(ir)
+    expect(children.length).toBe(1)
+    expect(children[0].tag).toBe('Play')
+  })
+
+  it('musician projectedChildren for parse-failure Code is empty (DV-08 unchanged)', () => {
+    const code: PatternIR = IR.code('foo bar')
+    expect(projectedChildren(code)).toEqual([])
+  })
+
+  it('double-wrap: musician chrome shows "unmodelled" at each level (D-06)', () => {
+    const outer = parseStrudel('note("c").foo(1).bar(2)')
+    expect(outer.tag).toBe('Code')
+    expect(projectedLabel(outer)).toBe('unmodelled')
+    const innerWrapper = projectedChildren(outer)[0]
+    expect(innerWrapper.tag).toBe('Code')
+    expect(projectedLabel(innerWrapper)).toBe('unmodelled')
+    // Innermost is the Play.
+    const innermost = projectedChildren(innerWrapper)[0]
+    expect(innermost.tag).toBe('Play')
+  })
+})
+
 describe('projectedLabel — synthetic intermediates hidden (D-02)', () => {
   it('Late inside .off() (userMethod undefined) returns undefined', () => {
     const ir = parseRoot('s("bd").off(0.125, x => x.gain(0.5))')
