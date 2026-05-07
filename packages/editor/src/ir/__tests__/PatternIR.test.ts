@@ -3,6 +3,7 @@ import { IR, type PatternIR } from '../PatternIR'
 import { collect } from '../collect'
 import { toStrudel } from '../toStrudel'
 import { patternToJSON, patternFromJSON, PATTERN_IR_SCHEMA_VERSION } from '../serialize'
+import { parseStrudel, __test_wrapAsOpaque } from '../parseStrudel'
 
 // ---------------------------------------------------------------------------
 // Type construction — every node variant via smart constructors
@@ -140,6 +141,58 @@ describe('PatternIR smart constructors', () => {
   it('IR.stack(IR.play("c4"), IR.play("e4")) is valid', () => {
     const node = IR.stack(IR.play('c4'), IR.play('e4'))
     expect(node).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-04 — wrapAsOpaque helper shape (PV37 / PK13 step 2 / D-01..D-03)
+// ---------------------------------------------------------------------------
+
+describe('20-04 — wrapAsOpaque helper shape', () => {
+  // Wave α probes: the helper alone, no parser wiring yet.
+  // (Wave β proves the parser routes through this helper; see parity.test.ts.)
+  // Tests use the test-only re-export `__test_wrapAsOpaque`; helper is
+  // module-private at runtime per PLAN §7 T-02.
+  void parseStrudel  // silence unused-import lint; consumed by other test files
+
+  it('wrapper has tag="Code" with via populated', () => {
+    const inner = IR.play('c4')
+    const wrapper = __test_wrapAsOpaque(inner, 'release', '0.3', [10, 25])
+    expect(wrapper.tag).toBe('Code')
+    if (wrapper.tag !== 'Code') return
+    expect(wrapper.via).toBeDefined()
+    expect(wrapper.via?.method).toBe('release')
+    expect(wrapper.via?.args).toBe('0.3')
+  })
+
+  it('wrapper carries callSiteRange and inner verbatim', () => {
+    const inner = IR.play('c4')
+    const wrapper = __test_wrapAsOpaque(inner, 'release', '0.3', [10, 25])
+    if (wrapper.tag !== 'Code') return
+    expect(wrapper.via?.callSiteRange).toEqual([10, 25])
+    expect(wrapper.via?.inner).toBe(inner)   // structural reference, not copy
+    expect(wrapper.via?.inner.tag).toBe('Play')
+  })
+
+  it('wrapper itself is loc-complete (PV36 — loc[0] = callSiteRange)', () => {
+    const wrapper = __test_wrapAsOpaque(IR.play('c4'), 'release', '0.3', [10, 25])
+    if (wrapper.tag !== 'Code') return
+    expect(wrapper.loc).toBeDefined()
+    expect(wrapper.loc?.length).toBe(1)
+    expect(wrapper.loc?.[0]).toEqual({ start: 10, end: 25 })
+  })
+
+  it('args are stored RAW (untrimmed) per D-02 byte-fidelity', () => {
+    // Whitespace inside parens is part of the round-trip contract.
+    const wrapper = __test_wrapAsOpaque(IR.play('c4'), 'release', ' 0.5 ', [10, 26])
+    if (wrapper.tag !== 'Code') return
+    expect(wrapper.via?.args).toBe(' 0.5 ')   // NOT trimmed
+  })
+
+  it('code field is "" on wrapper path (unused — toStrudel branches on via)', () => {
+    const wrapper = __test_wrapAsOpaque(IR.play('c4'), 'release', '0.3', [10, 25])
+    if (wrapper.tag !== 'Code') return
+    expect(wrapper.code).toBe('')
   })
 })
 

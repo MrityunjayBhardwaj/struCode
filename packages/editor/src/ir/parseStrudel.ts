@@ -46,6 +46,50 @@ export function tagMeta(
   }
 }
 
+/**
+ * Phase 20-04 (PV37 / PK13 step 2 / D-01..D-03).
+ *
+ * Wrap a receiver pattern as an opaque Code-with-via node carrying the
+ * full source range of the .method(args) call site. Used by:
+ *   - applyMethod's default arm (any unrecognised method — DV-06)
+ *   - typed arms' parse-failure branches (D-03 — e.g. .fast("<2 3>"))
+ *
+ * The wrapper preserves the typed source for round-trip (toStrudel re-emits
+ * via.method/args verbatim per D-02) AND for collect (walks via.inner;
+ * threads loc per D-01 via withWrapperLoc, which lands in 20-03).
+ *
+ * `args` MUST be passed RAW (untrimmed) — D-02 byte-fidelity contract.
+ * `code: ''` is unused on the wrapper path (`toStrudel` branches on `via`).
+ *
+ * Known v1 limitation (Trap 5): argless unrecognised methods round-trip
+ * with empty parens — `note("c").nudge` becomes `note("c").nudge()`.
+ * Documented in PR description; fixtures avoid argless probes.
+ *
+ * @param inner Receiver IR (required — D-01 walks it).
+ * @param method Raw method name as the user typed it.
+ * @param args Raw arg string between parens (whitespace preserved).
+ * @param callSiteRange Absolute source range of the entire .method(args) substring.
+ */
+function wrapAsOpaque(
+  inner: PatternIR,
+  method: string,
+  args: string,
+  callSiteRange: [number, number],
+): PatternIR {
+  return {
+    tag: 'Code',
+    code: '',                                // unused on wrapper path; toStrudel branches on via
+    lang: 'strudel',
+    loc: [{ start: callSiteRange[0], end: callSiteRange[1] }],
+    via: { method, args, callSiteRange, inner },
+  }
+}
+
+/** Test-only re-export of the module-private wrapAsOpaque helper. Mirrors
+ *  the `__resetParseTransformDebug` convention below; not part of the
+ *  public API. Consumed by PatternIR.test.ts wave-α probes. */
+export const __test_wrapAsOpaque = wrapAsOpaque
+
 /** Parse a Strudel code string. Always returns a tree (Code node for unsupported). */
 export function parseStrudel(code: string): PatternIR {
   if (!code.trim()) return IR.pure()
