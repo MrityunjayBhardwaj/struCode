@@ -37,6 +37,7 @@ import { FORBIDDEN_VOCABULARY } from '../musicalTimeline/forbiddenVocabulary'
 
 let mockCurrent: IRSnapshot | null = null
 const mockListeners = new Set<(s: IRSnapshot | null) => void>()
+const revealLineInFileMock = vi.fn<[string, number], void>()
 
 vi.mock('@stave/editor', () => {
   return {
@@ -47,6 +48,8 @@ vi.mock('@stave/editor', () => {
         mockListeners.delete(cb)
       }
     },
+    revealLineInFile: (source: string, line: number) =>
+      revealLineInFileMock(source, line),
   }
 })
 
@@ -134,6 +137,7 @@ beforeEach(() => {
   mockCurrent = null
   mockListeners.clear()
   mockGridWidth = 800
+  revealLineInFileMock.mockClear()
   globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver
 })
 
@@ -622,5 +626,225 @@ describe('MusicalTimeline active-event glow (Phase 20-02 DV-05 / DV-07 / DV-15)'
     })
     const block = container.querySelector('[data-musical-timeline-note]')
     expect(block?.getAttribute('data-musical-timeline-active')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-03 / D-02 — click-to-source primary-loc path. PV36 says every
+// IREvent carries loc[]; D-02 says evt.loc[0] is the single contract for
+// click-to-source resolution. The 5 fallback layers (sample-name regex,
+// $:-block walk, parser-loc fallback) are removed; this describe block
+// pins the new behavior.
+// ---------------------------------------------------------------------------
+describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-02)', () => {
+  // Source corpus per fixture is held to one $: line with a stable layout
+  // so we can hand-compute char offsets for evt.loc and the line numbers
+  // the resolver should report.
+  const PLAY_CODE = '$: note("c4 e4 g4")\n'
+  const FAST_CODE = '$: note("c d").fast(2)\n'
+  const PICK_CODE = '$: note("c d").pick([note("e"), note("g")])\n'
+  const OFF_CODE = '$: note("c d").off(0.125, x => x.gain(0.5))\n'
+  const LAYER_CODE = '$: note("c d").layer(x => x.fast(2))\n'
+
+  function rangeOf(code: string, sub: string): { start: number; end: number } {
+    const start = code.indexOf(sub)
+    if (start < 0) throw new Error(`fixture corruption: '${sub}' not in code`)
+    return { start, end: start + sub.length }
+  }
+
+  async function clickFirstNote(container: HTMLElement) {
+    const block = container.querySelector(
+      '[data-musical-timeline-note]',
+    ) as HTMLElement | null
+    expect(block).not.toBeNull()
+    await act(async () => {
+      block!.click()
+    })
+  }
+
+  it('Play (atom) — click resolves to inner-atom line via evt.loc[0]', async () => {
+    const code = PLAY_CODE
+    const atomLoc = rangeOf(code, 'c4')
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot({
+        ts: 0,
+        source: 'fixture.strudel',
+        runtime: 'strudel' as IRSnapshot['runtime'],
+        code,
+        passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
+        ir: { tag: 'Pure' } as PatternIR,
+        events: [
+          evt({
+            trackId: 'note',
+            s: null,
+            note: 'c4',
+            begin: 0,
+            end: 0.33,
+            endClipped: 0.33,
+            loc: [atomLoc],
+          }),
+        ],
+      })
+    })
+    await clickFirstNote(container)
+    expect(revealLineInFileMock).toHaveBeenCalledTimes(1)
+    expect(revealLineInFileMock).toHaveBeenCalledWith('fixture.strudel', 1)
+  })
+
+  it('Fast (duplicates) — both copies of a fast(2)-derived event share loc, click reveals same line', async () => {
+    const code = FAST_CODE
+    // D-01: loc[0] is the inner atom; loc[1] is the .fast(2) wrapper. Both
+    // duplicates share the same loc (DV-05 — multi-event loc duplication).
+    const atomLoc = rangeOf(code, 'c d')
+    const fastLoc = rangeOf(code, '.fast(2)')
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot({
+        ts: 0,
+        source: 'fixture.strudel',
+        runtime: 'strudel' as IRSnapshot['runtime'],
+        code,
+        passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
+        ir: { tag: 'Pure' } as PatternIR,
+        events: [
+          evt({
+            trackId: 'note',
+            note: 'c',
+            begin: 0,
+            end: 0.25,
+            endClipped: 0.25,
+            loc: [atomLoc, fastLoc],
+          }),
+          evt({
+            trackId: 'note',
+            note: 'c',
+            begin: 0.5,
+            end: 0.75,
+            endClipped: 0.75,
+            loc: [atomLoc, fastLoc],
+          }),
+        ],
+      })
+    })
+    const blocks = container.querySelectorAll(
+      '[data-musical-timeline-note]',
+    ) as NodeListOf<HTMLElement>
+    expect(blocks.length).toBe(2)
+    await act(async () => {
+      blocks[0].click()
+      blocks[1].click()
+    })
+    expect(revealLineInFileMock).toHaveBeenCalledTimes(2)
+    expect(revealLineInFileMock).toHaveBeenNthCalledWith(1, 'fixture.strudel', 1)
+    expect(revealLineInFileMock).toHaveBeenNthCalledWith(2, 'fixture.strudel', 1)
+  })
+
+  it('Pick — click reveals inner lookup-atom line (loc[0]), NOT the .pick(...) line', async () => {
+    // Multi-line corpus so the inner atom and outer call sit on different
+    // lines — this is exactly the case D-01 multi-range loc protects:
+    // loc[0] resolves to the lookup atom even though the .pick(...) call
+    // is on a later line.
+    const code = '$: note("c d")\n     .pick([note("e"), note("g")])\n'
+    const lookupAtomLoc = rangeOf(code, '"e"')
+    const pickLoc = rangeOf(code, '.pick([note("e"), note("g")])')
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot({
+        ts: 0,
+        source: 'fixture.strudel',
+        runtime: 'strudel' as IRSnapshot['runtime'],
+        code,
+        passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
+        ir: { tag: 'Pure' } as PatternIR,
+        events: [
+          evt({
+            trackId: 'note',
+            note: 'e',
+            begin: 0,
+            end: 0.5,
+            endClipped: 0.5,
+            // D-01: lookup atom innermost; .pick(...) is wrapper.
+            loc: [lookupAtomLoc, pickLoc],
+          }),
+        ],
+      })
+    })
+    await clickFirstNote(container)
+    expect(revealLineInFileMock).toHaveBeenCalledTimes(1)
+    // "e" sits on line 2 (after the first \n); .pick(...) sits on line 2
+    // too in this corpus, but we still verify loc[0] (the lookup atom)
+    // controls the line.
+    expect(revealLineInFileMock).toHaveBeenCalledWith('fixture.strudel', 2)
+  })
+
+  it('Off (transformed arm) — click on transformed event reveals inner atom (loc[0])', async () => {
+    const code = OFF_CODE
+    const atomLoc = rangeOf(code, 'c d')
+    const offLoc = rangeOf(code, '.off(0.125, x => x.gain(0.5))')
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot({
+        ts: 0,
+        source: 'fixture.strudel',
+        runtime: 'strudel' as IRSnapshot['runtime'],
+        code,
+        passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
+        ir: { tag: 'Pure' } as PatternIR,
+        events: [
+          evt({
+            trackId: 'note',
+            note: 'c',
+            begin: 0.125,
+            end: 0.375,
+            endClipped: 0.375,
+            loc: [atomLoc, offLoc],
+          }),
+        ],
+      })
+    })
+    await clickFirstNote(container)
+    expect(revealLineInFileMock).toHaveBeenCalledTimes(1)
+    expect(revealLineInFileMock).toHaveBeenCalledWith('fixture.strudel', 1)
+  })
+
+  it('Layer (synthetic Stack) — click on layer-produced event reveals inner atom', async () => {
+    const code = LAYER_CODE
+    const atomLoc = rangeOf(code, 'c d')
+    const layerLoc = rangeOf(code, '.layer(x => x.fast(2))')
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot({
+        ts: 0,
+        source: 'fixture.strudel',
+        runtime: 'strudel' as IRSnapshot['runtime'],
+        code,
+        passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
+        ir: { tag: 'Pure' } as PatternIR,
+        events: [
+          evt({
+            trackId: 'note',
+            note: 'c',
+            begin: 0,
+            end: 0.25,
+            endClipped: 0.25,
+            loc: [atomLoc, layerLoc],
+          }),
+        ],
+      })
+    })
+    await clickFirstNote(container)
+    expect(revealLineInFileMock).toHaveBeenCalledTimes(1)
+    expect(revealLineInFileMock).toHaveBeenCalledWith('fixture.strudel', 1)
   })
 })
