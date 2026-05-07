@@ -288,24 +288,40 @@ export function MusicalTimeline(
 
   const playheadX = cycleToPlayheadX(currentCycle, { gridContentWidth })
 
-  // Slice γ — click-to-source: convert event.loc character offset to
-  // a line number and reveal it in Monaco (mirrors IRInspectorPanel.tsx).
-  // Falls back to searching source code for the $: block matching trackId
-  // when loc is absent (live path events from IR.play() without parser).
+  // Slice γ — click-to-source: find the source line that produced this
+  // event and reveal it in Monaco.
+  //
+  // Strategy (in order):
+  // 1. If event has a meaningful loc (start > 0), use character offset → line.
+  // 2. Otherwise, search snapshot.code for the $: block or bare expression
+  //    that matches evt.s (the sample/instrument name).
   const handleNoteClick = React.useCallback(
     (evt: IREvent) => {
       if (!snapshot?.source) return
       let line: number | null = null
-      if (evt.loc && evt.loc.length > 0) {
+
+      // Prefer parser-provided loc when it has a non-zero start offset.
+      if (evt.loc && evt.loc.length > 0 && evt.loc[0].start > 0) {
         line = countLines(snapshot.code, evt.loc[0].start)
       } else if (evt.s) {
-        // Fallback: find the first `$:` line in code that contains the
-        // sample name as a match for this event's source.
+        // Fallback: find the line containing this sample name in source.
+        // First try matching $: blocks (multi-track form), then bare
+        // expressions (single-track or inline form like s("bd")).
         const searchStr = evt.s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const regex = new RegExp(`^\\s*\\$:.*${searchStr}`, 'm')
-        const match = snapshot.code.match(regex)
-        if (match) {
-          line = countLines(snapshot.code, match.index)
+        const patterns = [
+          // $: block form with multiline body: $: stack(s("bd")...)
+          new RegExp(`^\\s*\\$:[\\s\\S]*?["'\`]${searchStr}["'\`]`, 'm'),
+          // Bare expression form: s("bd hh ..."), note("c4 ...")
+          new RegExp(`^\\s*${searchStr}\\s*\\(`, 'm'),
+          // Quoted string inline: "bd"
+          new RegExp(`["'\`]${searchStr}["'\`]`),
+        ]
+        for (const re of patterns) {
+          const match = snapshot.code.match(re)
+          if (match) {
+            line = countLines(snapshot.code, match.index)
+            break
+          }
         }
       }
       if (line != null) revealLineInFile(snapshot.source, line)
