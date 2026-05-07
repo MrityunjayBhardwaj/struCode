@@ -1363,6 +1363,57 @@ describe('19-05 — per-method loc containment (D-04 + D-11)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 20-03 wave δ — outermost-IR-node loc-presence audit (PV36 + PK13 step 1).
+//
+// RESEARCH §5.8 enumerated every recognised applyMethod arm in
+// parseStrudel.ts:303-732 and confirmed each one calls tagMeta(...) or
+// literal-construction with [start, end]. Wave δ doesn't change any arm
+// — it confirms via test that the OUTERMOST IR node returned from
+// parseStrudel(code) carries loc.length >= 1 across the W7 corpus.
+//
+// The default: arm at parseStrudel.ts:729 is the only construction-time
+// gap; phase 20-04 (PV37) owns it. This audit explicitly does NOT cover
+// it — every fixture below is a recognised arm.
+//
+// Why these probes: they catch drift if a future arm ships without a
+// loc field on the outermost IR node, before wave-ε event-level checks
+// can even fire. parser-side regression caught at the parser boundary.
+// ---------------------------------------------------------------------------
+describe('20-03 — outermost IR node carries loc (wave δ audit)', () => {
+  const W7_OUTERMOST_FIXTURES: ReadonlyArray<{
+    name: string
+    code: string
+  }> = [
+    { name: 'every', code: 'note("c d e f").every(2, x => x.fast(2))' },
+    { name: 'sometimes', code: 'note("c d").sometimes(x => x.fast(2))' },
+    { name: 'sometimesBy', code: 'note("c d").sometimesBy(0.5, x => x.fast(2))' },
+    { name: 'chunk', code: 'note("c d e f").chunk(4, x => x.fast(2))' },
+    { name: 'off', code: 'note("c d").off(0.125, x => x.gain(0.5))' },
+    { name: 'jux', code: 'note("c d").jux(rev)' },
+    { name: 'layer', code: 'note("c d").layer(x => x.fast(2))' },
+    { name: 'late', code: 'note("c d e f").late(0.125)' },
+    { name: 'degrade', code: 's("bd hh sd cp ride lt mt ht").degrade()' },
+    { name: 'degradeBy', code: 's("bd hh sd cp ride lt mt ht").degradeBy(0.3)' },
+    { name: 'chop', code: 's("bd").chop(4)' },
+    { name: 'pick', code: 'mini("<0 1>").pick(["c","e"]).note()' },
+    { name: 'struct', code: 'note("c d e f").struct("x ~ x ~")' },
+    { name: 'swing', code: 'note("c d e f").swing(4)' },
+    { name: 'shuffle', code: 'note("c d e f").shuffle(4)' },
+    { name: 'scramble', code: 'note("c d e f").scramble(4)' },
+    { name: 'ply', code: 'note("c d").ply(2)' },
+    { name: '3-method chain', code: 's("bd").fast(2).late(0.125).gain(0.5)' },
+  ]
+
+  for (const { name, code } of W7_OUTERMOST_FIXTURES) {
+    it(`${name} — outermost IR node has loc.length >= 1`, () => {
+      const ir = parseStrudel(code) as PatternIR & { loc?: SourceLocation[] }
+      expect(ir.loc).toBeDefined()
+      expect(ir.loc!.length).toBeGreaterThanOrEqual(1)
+    })
+  }
+})
+
+// ---------------------------------------------------------------------------
 // 19-05 / #74 — `userMethod` round-trip on representative tags (D-08).
 //
 // D-08 exact-token taxonomy: `userMethod` is the literal method name the
