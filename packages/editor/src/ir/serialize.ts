@@ -8,6 +8,7 @@
  */
 
 import type { PatternIR, PlayParams } from './PatternIR'
+import type { SourceLocation } from './IREvent'
 
 export const PATTERN_IR_SCHEMA_VERSION = '1.0'
 
@@ -218,8 +219,36 @@ function validateNode(raw: unknown, path: string): PatternIR {
     }
 
     case 'Code': {
+      // Phase 20-04 T-11 (PV37 clause 4 / D-02 / Trap 4).
+      // Wrapper case: carry `via` through JSON snapshot round-trip — without
+      // this passthrough, serialize→deserialize would silently strip `via`,
+      // breaking debugger replay and the round-trip contract. Mirror the
+      // existing requireField shape; recurse into via.inner via validateNode.
+      // `loc` propagation also added — wrapper carries non-trivial loc that
+      // must round-trip.
       requireField(node, 'code', ['string'], path)
-      return { tag: 'Code', code: node.code as string, lang: 'strudel' }
+      const out: PatternIR = { tag: 'Code', code: node.code as string, lang: 'strudel' }
+      if (node.via !== undefined && node.via !== null) {
+        const via = node.via as Record<string, unknown>
+        requireField(via, 'method', ['string'], `${path}.via`)
+        requireField(via, 'args', ['string'], `${path}.via`)
+        if (!Array.isArray(via.callSiteRange)) {
+          throw new Error(`${path}.via: field "callSiteRange" must be an array`)
+        }
+        if (typeof via.inner !== 'object' || via.inner === null) {
+          throw new Error(`${path}.via: field "inner" must be an object`)
+        }
+        out.via = {
+          method: via.method as string,
+          args: via.args as string,
+          callSiteRange: via.callSiteRange as [number, number],
+          inner: validateNode(via.inner, `${path}.via.inner`),
+        }
+      }
+      if (Array.isArray(node.loc)) {
+        out.loc = node.loc as SourceLocation[]
+      }
+      return out
     }
 
     default:

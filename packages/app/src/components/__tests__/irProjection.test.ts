@@ -128,7 +128,11 @@ describe('projectedLabel — user-callable tags use userMethod (PV31 first consu
   it.each([
     ['s("bd hh sd cp").chunk(4, x => x.gain(0.5))', 'chunk'],
     ['s("bd").ply(3)', 'ply'],
-    ['mini("<0 1 2 3>").pick(["c","e","g","b"]).note()', 'pick'],
+    // Phase 20-04 D-03: `.note()` is now wrapped per PV37 (was silently
+    // passed through pre-20-04). Drop the trailing `.note()` so this
+    // fixture continues to probe Pick's projection label specifically;
+    // the wrapper-label assertion lives in wave δ inspector chrome tests.
+    ['mini("<0 1 2 3>").pick(["c","e","g","b"])', 'pick'],
     ['note("c d e f").struct("x ~ x ~ x")', 'struct'],
     ['note("c d e f g h").swing(2)', 'swing'],
     ['note("c d e f").shuffle(4)', 'shuffle'],

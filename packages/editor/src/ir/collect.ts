@@ -278,9 +278,18 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     case 'Pure':
       return []
 
-    case 'Code':
+    case 'Code': {
+      // Phase 20-04 T-09 (D-01 / PV37 / PK13 step 3).
+      // Wrapper case: walk via.inner; thread our call-site range onto
+      // produced events as loc[N+] per D-01-from-20-03 (innermost first).
+      // Parse-failure case (no via): return [] as before — DV-08 unchanged.
+      if (ir.via) {
+        const innerEvents = walk(ir.via.inner, ctx)
+        return withWrapperLoc(innerEvents, ir.loc)
+      }
       // Opaque fallback — cannot be evaluated without Strudel runtime
       return []
+    }
 
     case 'Play': {
       // Respect the query window: skip events outside [begin, end)

@@ -832,6 +832,53 @@ describe('patternToJSON / patternFromJSON', () => {
     expect(patternFromJSON(patternToJSON(tree))).toEqual(tree)
   })
 
+  it('round-trips Code-with-via wrapper preserves via fields (Phase 20-04 / PV37 clause 4 / T-11)', () => {
+    // Trap 4 catcher: pre-T-11 serialize.ts stripped via silently. Now
+    // the validator carries via through, including method/args/callSiteRange/inner.
+    // Note: loc on inner Play is stripped by the existing serialize Play
+    // arm (pre-20-04 behaviour, out of scope for this phase) — assertion
+    // narrows to via fidelity + outer wrapper loc + inner tag.
+    const tree = parseStrudel('note("c").release(0.3)')
+    expect(tree.tag).toBe('Code')
+    const round = patternFromJSON(patternToJSON(tree))
+    expect(round.tag).toBe('Code')
+    if (round.tag === 'Code') {
+      expect(round.via?.method).toBe('release')
+      expect(round.via?.args).toBe('0.3')
+      expect(round.via?.callSiteRange).toEqual([9, 22])
+      expect(round.via?.inner.tag).toBe('Play')
+      // Outer wrapper loc round-trips
+      expect(round.loc?.[0]).toEqual({ start: 9, end: 22 })
+    }
+  })
+
+  it('round-trips double-wrap Code-with-via preserves nesting (D-06 / T-11)', () => {
+    const tree = parseStrudel('note("c").foo(1).bar(2)')
+    const round = patternFromJSON(patternToJSON(tree))
+    expect(round.tag).toBe('Code')
+    if (round.tag === 'Code' && round.via) {
+      expect(round.via.method).toBe('bar')
+      // Inner is the foo(1) wrapper.
+      const inner = round.via.inner
+      expect(inner.tag).toBe('Code')
+      if (inner.tag === 'Code' && inner.via) {
+        expect(inner.via.method).toBe('foo')
+        expect(inner.via.inner.tag).toBe('Play')
+      }
+    }
+  })
+
+  it('round-trips Code-with-via through toStrudel byte-equal after JSON round-trip (T-11 + T-10)', () => {
+    // The strict round-trip property: serialize → deserialize → toStrudel
+    // produces the same source as toStrudel(parseStrudel(code)). via is
+    // sufficient to reconstruct the source even if inner-Play.loc is
+    // stripped by serialize (loc isn't read on the round-trip path).
+    const code = 'note("c").release(0.3)'
+    const tree = parseStrudel(code)
+    const round = patternFromJSON(patternToJSON(tree))
+    expect(toStrudel(round)).toBe(code)
+  })
+
   it('round-trips complex nested tree', () => {
     const tree = IR.stack(
       IR.seq(IR.play('bd', 0.25, { s: 'bd' }), IR.sleep(0.25),

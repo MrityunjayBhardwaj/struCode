@@ -59,6 +59,7 @@ import { mini, miniAllStrings } from '@strudel/mini/mini.mjs'
 import {
   parseStrudel,
   collect,
+  toStrudel,
   type IREvent,
   type PatternIR,
   type CollectContext,
@@ -1432,9 +1433,14 @@ describe('19-05 — userMethod round-trip on representative tags (D-08)', () => 
   })
 
   it('Pick: parseStrudel(`mini("<0 1>").pick(["c","e"]).note()`) — Pick tag carries userMethod="pick"', () => {
-    // .note() at the end is a no-arg method (returns ir unchanged in our
-    // parser) so the root walks: Pick wrapping mini's Cycle selector.
-    const ir = parseStrudel('mini("<0 1>").pick(["c","e"]).note()') as PatternIR & { userMethod?: string }
+    // Phase 20-04 D-03 update: .note() at the end is now wrapped per PV37
+    // (was silently passed through pre-20-04). The outer wrapper is the
+    // .note() Code-with-via; via.inner is the Pick we want to inspect.
+    const outer = parseStrudel('mini("<0 1>").pick(["c","e"]).note()')
+    expect(outer.tag).toBe('Code')
+    if (outer.tag !== 'Code' || !outer.via) return
+    expect(outer.via.method).toBe('note')
+    const ir = outer.via.inner as PatternIR & { userMethod?: string }
     expect(ir.tag).toBe('Pick')
     expect(ir.userMethod).toBe('pick')
   })
@@ -1867,5 +1873,89 @@ describe('20-04 wave β — parser wrap probes (D-03 / P33 / PV37)', () => {
     // Track-assignment is consumed externally; the parser passes the
     // receiver through unchanged. NOT a Code-with-via wrapper.
     expect(ir.tag).toBe('Play')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-04 wave γ — consumer wiring (collect / toStrudel / serialize).
+// ---------------------------------------------------------------------------
+
+describe('20-04 wave γ — consumer wiring (D-01 / D-02 / PV37 clauses 3-5)', () => {
+  // collect walks via.inner (T-09)
+  describe('collect walks via.inner', () => {
+    it('collect on .release(0.3) wrapper produces inner Plays with appended loc', () => {
+      const events = collect(parseStrudel('note("c d").release(0.3)'))
+      expect(events.length).toBe(2)
+      // Each event carries multi-range loc: atom + wrapper-call-site
+      // (innermost first). PV36 invariant.
+      for (const e of events) {
+        expect(e.loc).toBeDefined()
+        expect(e.loc!.length).toBeGreaterThanOrEqual(2)
+      }
+    })
+
+    it('collect on single-atom wrapper threads call-site as loc[N]', () => {
+      const code = 'note("c").s("sawtooth")'
+      const events = collect(parseStrudel(code))
+      expect(events.length).toBe(1)
+      expect(events[0].loc).toBeDefined()
+      // Last loc entry should be the .s("sawtooth") call-site range.
+      const lastLoc = events[0].loc![events[0].loc!.length - 1]
+      const callSiteStart = code.indexOf('.s(')
+      const callSiteEnd = code.length
+      expect(lastLoc.start).toBe(callSiteStart)
+      expect(lastLoc.end).toBe(callSiteEnd)
+    })
+
+    it('double-wrap: collect threads both call-site ranges innermost-first (D-06)', () => {
+      const events = collect(parseStrudel('note("c d").foo(1).bar(2)'))
+      expect(events.length).toBe(2)
+      // Each event's loc has at least 3 entries: atom + .foo(1) + .bar(2).
+      for (const e of events) {
+        expect(e.loc!.length).toBeGreaterThanOrEqual(3)
+      }
+    })
+  })
+
+  // toStrudel round-trip (T-10)
+  describe('toStrudel round-trip byte-fidelity', () => {
+    it('round-trips note("c").release(0.3) byte-equal', () => {
+      const code = 'note("c").release(0.3)'
+      expect(toStrudel(parseStrudel(code))).toBe(code)
+    })
+
+    it('preserves whitespace inside parens (D-02 — raw args)', () => {
+      const code = 'note("c").release( 0.5 )'
+      expect(toStrudel(parseStrudel(code))).toBe(code)
+    })
+
+    it('round-trips chains of unrecognised methods byte-equal', () => {
+      const code = 'note("c").s("sawtooth").release(0.3)'
+      expect(toStrudel(parseStrudel(code))).toBe(code)
+    })
+
+    it('round-trips double-wrap byte-equal', () => {
+      const code = 'note("c").foo(1).bar(2)'
+      expect(toStrudel(parseStrudel(code))).toBe(code)
+    })
+
+    it('round-trips typed-arm parse-failure (.fast pattern-arg) byte-equal', () => {
+      const code = 'note("c").fast("<2 3>")'
+      expect(toStrudel(parseStrudel(code))).toBe(code)
+    })
+
+    it('round-trips meta-corpus byte-equal', () => {
+      const corpus = [
+        'note("c").release(0.3)',
+        'note("c").s("sawtooth")',
+        's("bd hh sd").shape(0.5)',
+        'note("c").foo(1).bar(2)',
+        'note("c").fast("<2 3>")',
+        'note("c").gain("0.3 0.7").lpf(2400)',
+      ]
+      for (const code of corpus) {
+        expect(toStrudel(parseStrudel(code))).toBe(code)
+      }
+    })
   })
 })

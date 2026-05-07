@@ -571,14 +571,19 @@ describe('parseStrudel', () => {
     }
   })
 
-  it('parses .ply(2.5) by silently dropping the method (non-integer falls through)', () => {
-    // CONTEXT D-02 / RESEARCH §2.4: non-integer / pattern factors fall
-    // through to the body — same default-branch behaviour the parser uses
-    // for unrecognised method-arg shapes today. Documented as a v1
-    // limitation; revisit in 19-04 if user demand surfaces.
+  it('parses .ply(2.5) as opaque wrapper over the body (D-03 / PV37 — phase 20-04)', () => {
+    // CONTEXT D-02 / RESEARCH §2.4: non-integer / pattern factors used to
+    // fall through to the body unchanged (silent drop — P33). Phase 20-04
+    // D-03 lifts the failure branch into wrapAsOpaque, so .ply(2.5)
+    // produces a Code-with-via wrapper whose inner is the receiver Seq.
+    // The body remains observable via via.inner; the .ply(2.5) call site
+    // is no longer silently dropped.
     const tree = parseStrudel('s("bd hh sd cp").ply(2.5)')
-    expect(tree.tag).not.toBe('Ply')
-    expect(tree.tag).toBe('Seq')
+    expect(tree.tag).toBe('Code')
+    if (tree.tag !== 'Code') return
+    expect(tree.via?.method).toBe('ply')
+    expect(tree.via?.args).toBe('2.5')
+    expect(tree.via?.inner.tag).toBe('Seq')
   })
 
   // Phase 19-04 T-02 — Pick tag shape tests.

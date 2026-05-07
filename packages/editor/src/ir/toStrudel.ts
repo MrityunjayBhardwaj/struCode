@@ -22,6 +22,14 @@ function gen(ir: PatternIR): string {
       return '""'
 
     case 'Code':
+      // Phase 20-04 T-10 (D-02 / PV37 clause 4).
+      // Wrapper case: re-emit ${gen(via.inner)}.${method}(${args}) using
+      // the RAW (untrimmed) args — round-trip is byte-equivalent to the
+      // typed source. Parse-failure case (no via): return ir.code as
+      // before — DV-08 unchanged.
+      if (ir.via) {
+        return `${gen(ir.via.inner)}.${ir.via.method}(${ir.via.args})`
+      }
       // Identity — opaque fragment, return as-is
       return ir.code
 
