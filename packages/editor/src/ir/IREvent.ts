@@ -44,6 +44,12 @@ export interface IREvent {
 
   /** Source code ranges for highlighting */
   loc?: SourceLocation[]
+  /** Stable content-addressed id of the IR node that produced this event.
+   *  REQUIRED-by-convention for collect-produced events at the leaf arm
+   *  (PV38 clause 1; assigned by collect.ts:assignNodeId at the Play leaf).
+   *  Absent for hap-derived events with no IR-side match
+   *  (PV37-aligned runtime-only path). */
+  irNodeId?: string
   /** Which track/loop produced this event */
   trackId?: string
   /** Engine-specific extended parameters */
