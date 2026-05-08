@@ -194,7 +194,7 @@ export class StrudelEngine implements LiveCodingEngine {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const wrappedOutput = async (hap: any, deadline: number, duration: number, cps: number, t: number) => {
       // Emit to all visualizers / highlighters BEFORE triggering audio
-      hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime)
+      hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime, this.lastIRNodeLocLookup ?? undefined)
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return await (webaudioOutput as any)(hap, deadline, duration, cps, t)

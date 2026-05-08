@@ -1,4 +1,6 @@
 import { noteToMidi } from './noteToMidi'
+import type { IREvent } from '../ir/IREvent'
+import { findMatchedEvent } from './NormalizedHap'
 
 export interface HapEvent {
   /** Full Strudel Hap object (optional for non-Strudel engines) */
@@ -18,6 +20,13 @@ export interface HapEvent {
   color: string | null
   /** Source character ranges in the original code string */
   loc: Array<{ start: number; end: number }> | null
+  /**
+   * Set when the hap's structural loc matches an IR-published node
+   * (PV38 clause 2). Absent for runtime-only haps — same semantics as
+   * IREvent.irNodeId. Populated by HapStream.emit when a lookup is
+   * supplied (Phase 20-06).
+   */
+  irNodeId?: string
 }
 
 type HapHandler = (event: HapEvent) => void
@@ -43,6 +52,13 @@ export class HapStream {
    *
    * Parameters match Strudel's onTrigger signature:
    *   (hap, deadline, duration, cps, t)
+   *
+   * Optional 6th positional `lookup` (Phase 20-06) — when supplied AND the
+   * hap carries a structural loc, the published IR-side match is resolved
+   * via `findMatchedEvent` and the matched event's `irNodeId` is populated
+   * onto the fan-out HapEvent. PV38 clause 2 onTrigger half. Single-
+   * strategy match (P50) — same helper as the queryArc-side enrichment in
+   * `normalizeStrudelHap`.
    */
   emit(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,7 +66,8 @@ export class HapStream {
     deadline: number,
     duration: number,
     cps: number,
-    audioCtxCurrentTime: number
+    audioCtxCurrentTime: number,
+    lookup?: ReadonlyMap<string, IREvent[]>
   ): void {
     const scheduledAheadMs = (deadline - audioCtxCurrentTime) * 1000
     const audioDuration = duration
@@ -64,6 +81,16 @@ export class HapStream {
       s: hap?.value?.s ?? null,
       color: hap?.value?.color ?? null,
       loc: hap?.context?.locations ?? hap?.context?.loc ?? null,
+    }
+
+    // PV38 clause 2 — onTrigger-side identity carry. Mirror the
+    // `if (id) event.irNodeId = id` discipline at NormalizedHap.ts:124-127:
+    // truthy-only assignment preserves the "absent vs present:undefined"
+    // distinction (PV37 alignment). NO fallback ladder (P50).
+    if (lookup && event.loc && event.loc.length > 0) {
+      const begin = Number(hap?.whole?.begin ?? 0)
+      const matched = findMatchedEvent(event.loc, begin, lookup)
+      if (matched?.irNodeId) event.irNodeId = matched.irNodeId
     }
 
     this.emitEvent(event)
