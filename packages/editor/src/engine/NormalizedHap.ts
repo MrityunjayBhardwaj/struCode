@@ -53,22 +53,32 @@ function extractLoc(hap: unknown): SourceLocation[] | undefined {
 }
 
 /**
- * Resolve a hap's leaf-loc to an irNodeId by structural lookup against
- * the published snapshot's loc map (PV38 clause 2). Single-strategy:
+ * Resolve a hap's leaf-loc to the matching IREvent by structural lookup
+ * against the published snapshot's loc map (PV38 clause 2). Single-strategy:
  *
  *   key = `${loc[0].start}:${loc[0].end}`   (innermost leaf range)
  *   tie-break = closest event by `whole.begin`
+ *
+ * Returns the full IREvent (richer than just `irNodeId`) so callers needing
+ * both the identity and the IR-side begin (e.g. fast(N)/ply disambig at the
+ * MusicalTimeline subscriber) get them in one shot — the IR-side begin is
+ * the value rows are keyed on, not the hap-side begin (which is what's
+ * already passed in).
  *
  * On miss: returns undefined. The runtime-only-hap path (PV37-aligned) —
  * NO fallback ladder (P50 awareness). If user patterns produce haps that
  * don't structurally match, that's the runtime-only path; the corpus
  * test catches genuine regressions, not the resolver.
+ *
+ * Phase 20-06 — widened from `findMatch` (string | undefined) → exported
+ * `findMatchedEvent` (IREvent | undefined). Body unchanged except the final
+ * return; existing internal call site reads `.irNodeId` from the result.
  */
-function findMatch(
+export function findMatchedEvent(
   loc: SourceLocation[] | undefined,
   begin: number,
   locLookup: ReadonlyMap<string, IREvent[]> | undefined,
-): string | undefined {
+): IREvent | undefined {
   if (!locLookup || !loc || loc.length === 0) return undefined
   const key = `${loc[0].start}:${loc[0].end}`
   const candidates = locLookup.get(key)
@@ -79,7 +89,7 @@ function findMatch(
     const d = Math.abs(candidates[i].begin - begin)
     if (d < bestDist) { best = candidates[i]; bestDist = d }
   }
-  return best.irNodeId
+  return best
 }
 
 /**
@@ -121,7 +131,8 @@ export function normalizeStrudelHap(
   if (trackId) event.trackId = trackId
   // PV38 clause 2 — single-strategy structural match. Miss → undefined
   // (PV37-aligned runtime-only path; no fallback ladder per P50).
-  const id = findMatch(loc, begin, irNodeLocLookup)
+  const matched = findMatchedEvent(loc, begin, irNodeLocLookup)
+  const id = matched?.irNodeId
   // IMPORTANT: only set when truthy — preserves "absent" vs "present:undefined"
   // distinction (PV37 alignment). Unconditional `event.irNodeId = id` would
   // serialize an `undefined`-valued key, breaking any future shape-deep probe.

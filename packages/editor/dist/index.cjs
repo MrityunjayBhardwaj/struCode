@@ -3025,6 +3025,19 @@ function withWrapperLoc(events, wrapper) {
     loc: e.loc ? [...e.loc, range2] : [range2]
   }));
 }
+function fnv1a(input) {
+  let h = 2166136261;
+  for (let i2 = 0; i2 < input.length; i2++) {
+    h ^= input.charCodeAt(i2);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+function assignNodeId(ir, position) {
+  const start2 = ir.loc?.[0]?.start ?? -1;
+  const end = ir.loc?.[0]?.end ?? -1;
+  return fnv1a(`${start2}:${end}:${ir.tag}:${position}`);
+}
 var DEFAULT_CONTEXT = {
   begin: 0,
   end: Infinity,
@@ -3128,6 +3141,7 @@ function walk(ir, ctx) {
       if (ctx.time < ctx.begin || ctx.time >= ctx.end) return [];
       const event = makeEvent(ctx, ir.note, { ...ir.params });
       if (ir.loc && ir.loc.length > 0) event.loc = ir.loc;
+      event.irNodeId = assignNodeId(ir, 0);
       return [event];
     }
     case "Sleep":
@@ -4826,6 +4840,86 @@ function noteToMidi(note2) {
   return (parseInt(m[3]) + 1) * 12 + base[m[1]] + acc;
 }
 
+// src/engine/NormalizedHap.ts
+var KNOWN_VALUE_FIELDS = /* @__PURE__ */ new Set([
+  "note",
+  "n",
+  "freq",
+  "s",
+  "gain",
+  "velocity",
+  "color"
+]);
+function extractParams(value) {
+  if (!value || typeof value !== "object") return void 0;
+  let extras;
+  for (const [k, v] of Object.entries(value)) {
+    if (KNOWN_VALUE_FIELDS.has(k)) continue;
+    if (v === void 0) continue;
+    if (!extras) extras = {};
+    extras[k] = v;
+  }
+  return extras;
+}
+function extractLoc(hap) {
+  if (!hap || typeof hap !== "object") return void 0;
+  const ctx = hap.context;
+  const raw = ctx?.locations ?? ctx?.loc;
+  if (!Array.isArray(raw)) return void 0;
+  const out2 = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const start2 = r.start;
+    const end = r.end;
+    if (typeof start2 === "number" && typeof end === "number") {
+      out2.push({ start: start2, end });
+    }
+  }
+  return out2.length > 0 ? out2 : void 0;
+}
+function findMatchedEvent(loc, begin, locLookup) {
+  if (!locLookup || !loc || loc.length === 0) return void 0;
+  const key = `${loc[0].start}:${loc[0].end}`;
+  const candidates = locLookup.get(key);
+  if (!candidates || candidates.length === 0) return void 0;
+  let best = candidates[0];
+  let bestDist = Math.abs(best.begin - begin);
+  for (let i2 = 1; i2 < candidates.length; i2++) {
+    const d = Math.abs(candidates[i2].begin - begin);
+    if (d < bestDist) {
+      best = candidates[i2];
+      bestDist = d;
+    }
+  }
+  return best;
+}
+function normalizeStrudelHap(hap, trackId, irNodeLocLookup) {
+  const begin = Number(hap.whole?.begin ?? 0);
+  const end = Number(hap.whole?.end ?? begin + 0.25);
+  const endClipped = Number(hap.endClipped ?? end);
+  const value = hap.value;
+  const event = {
+    begin,
+    end,
+    endClipped,
+    note: value?.note ?? value?.n ?? null,
+    freq: typeof value?.freq === "number" ? value.freq : null,
+    s: value?.s ?? null,
+    gain: value?.gain ?? 1,
+    velocity: value?.velocity ?? 1,
+    color: value?.color ?? null
+  };
+  const loc = extractLoc(hap);
+  if (loc) event.loc = loc;
+  if (trackId) event.trackId = trackId;
+  const matched = findMatchedEvent(loc, begin, irNodeLocLookup);
+  const id = matched?.irNodeId;
+  if (id) event.irNodeId = id;
+  const params = extractParams(value);
+  if (params) event.params = params;
+  return event;
+}
+
 // src/engine/HapStream.ts
 var HapStream = class {
   constructor() {
@@ -4843,8 +4937,15 @@ var HapStream = class {
    *
    * Parameters match Strudel's onTrigger signature:
    *   (hap, deadline, duration, cps, t)
+   *
+   * Optional 6th positional `lookup` (Phase 20-06) — when supplied AND the
+   * hap carries a structural loc, the published IR-side match is resolved
+   * via `findMatchedEvent` and the matched event's `irNodeId` is populated
+   * onto the fan-out HapEvent. PV38 clause 2 onTrigger half. Single-
+   * strategy match (P50) — same helper as the queryArc-side enrichment in
+   * `normalizeStrudelHap`.
    */
-  emit(hap, deadline, duration, cps, audioCtxCurrentTime) {
+  emit(hap, deadline, duration, cps, audioCtxCurrentTime, lookup) {
     const scheduledAheadMs = (deadline - audioCtxCurrentTime) * 1e3;
     const audioDuration = duration;
     const event = {
@@ -4857,6 +4958,11 @@ var HapStream = class {
       color: hap?.value?.color ?? null,
       loc: hap?.context?.locations ?? hap?.context?.loc ?? null
     };
+    if (lookup && event.loc && event.loc.length > 0) {
+      const begin = Number(hap?.whole?.begin ?? 0);
+      const matched = findMatchedEvent(event.loc, begin, lookup);
+      if (matched?.irNodeId) event.irNodeId = matched.irNodeId;
+    }
     this.emitEvent(event);
   }
   /**
@@ -5036,67 +5142,6 @@ function renderNote(ctx, oscType, freq, gain, release, startTime, endTime) {
   osc.stop(endTime + 1e-3);
 }
 
-// src/engine/NormalizedHap.ts
-var KNOWN_VALUE_FIELDS = /* @__PURE__ */ new Set([
-  "note",
-  "n",
-  "freq",
-  "s",
-  "gain",
-  "velocity",
-  "color"
-]);
-function extractParams(value) {
-  if (!value || typeof value !== "object") return void 0;
-  let extras;
-  for (const [k, v] of Object.entries(value)) {
-    if (KNOWN_VALUE_FIELDS.has(k)) continue;
-    if (v === void 0) continue;
-    if (!extras) extras = {};
-    extras[k] = v;
-  }
-  return extras;
-}
-function extractLoc(hap) {
-  if (!hap || typeof hap !== "object") return void 0;
-  const ctx = hap.context;
-  const raw = ctx?.locations ?? ctx?.loc;
-  if (!Array.isArray(raw)) return void 0;
-  const out2 = [];
-  for (const r of raw) {
-    if (!r || typeof r !== "object") continue;
-    const start2 = r.start;
-    const end = r.end;
-    if (typeof start2 === "number" && typeof end === "number") {
-      out2.push({ start: start2, end });
-    }
-  }
-  return out2.length > 0 ? out2 : void 0;
-}
-function normalizeStrudelHap(hap, trackId) {
-  const begin = Number(hap.whole?.begin ?? 0);
-  const end = Number(hap.whole?.end ?? begin + 0.25);
-  const endClipped = Number(hap.endClipped ?? end);
-  const value = hap.value;
-  const event = {
-    begin,
-    end,
-    endClipped,
-    note: value?.note ?? value?.n ?? null,
-    freq: typeof value?.freq === "number" ? value.freq : null,
-    s: value?.s ?? null,
-    gain: value?.gain ?? 1,
-    velocity: value?.velocity ?? 1,
-    color: value?.color ?? null
-  };
-  const loc = extractLoc(hap);
-  if (loc) event.loc = loc;
-  if (trackId) event.trackId = trackId;
-  const params = extractParams(value);
-  if (params) event.params = params;
-  return event;
-}
-
 // src/engine/StrudelEngine.ts
 function extractVizName(rawArg) {
   if (typeof rawArg === "string") return rawArg || void 0;
@@ -5156,6 +5201,11 @@ var StrudelEngine = class {
     // Pattern IR from the last successful evaluate() — derived by propagation
     this.lastPatternIR = null;
     this.lastIREvents = [];
+    // PV38 clause 2 — loc-keyed lookup over lastIREvents; both queryArc
+    // callbacks (per-track + convenience) read this to enrich haps with
+    // `irNodeId`. Mirrors the lifecycle of lastIREvents (built on eval
+    // success, cleared on failure).
+    this.lastIRNodeLocLookup = null;
   }
   async init() {
     if (this.initialized) return;
@@ -5190,7 +5240,7 @@ var StrudelEngine = class {
     const hapStream = this.hapStream;
     const audioCtxRef = audioCtx;
     const wrappedOutput = async (hap, deadline, duration, cps, t) => {
-      hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime);
+      hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime, this.lastIRNodeLocLookup ?? void 0);
       try {
         return await webaudioOutput(hap, deadline, duration, cps, t);
       } catch (err2) {
@@ -5317,7 +5367,7 @@ var StrudelEngine = class {
             now: () => sched.now(),
             query: (begin, end) => {
               try {
-                return captured.queryArc(begin, end).map((hap) => normalizeStrudelHap(hap, trackId));
+                return captured.queryArc(begin, end).map((hap) => normalizeStrudelHap(hap, trackId, this.lastIRNodeLocLookup ?? void 0));
               } catch {
                 return [];
               }
@@ -5332,9 +5382,20 @@ var StrudelEngine = class {
         );
         this.lastPatternIR = irBag.patternIR ?? null;
         this.lastIREvents = irBag.irEvents ?? [];
+        const locLookup = /* @__PURE__ */ new Map();
+        for (const e of this.lastIREvents) {
+          if (e.loc && e.loc.length > 0) {
+            const key = `${e.loc[0].start}:${e.loc[0].end}`;
+            const arr = locLookup.get(key);
+            if (arr) arr.push(e);
+            else locLookup.set(key, [e]);
+          }
+        }
+        this.lastIRNodeLocLookup = locLookup;
       } else {
         this.lastPatternIR = null;
         this.lastIREvents = [];
+        this.lastIRNodeLocLookup = null;
       }
       return result;
     } finally {
@@ -5472,7 +5533,7 @@ var StrudelEngine = class {
       now: () => sched.now(),
       query: (begin, end) => {
         try {
-          return pattern.queryArc(begin, end).map(normalizeStrudelHap);
+          return pattern.queryArc(begin, end).map((hap) => normalizeStrudelHap(hap, void 0, this.lastIRNodeLocLookup ?? void 0));
         } catch {
           return [];
         }
@@ -20617,6 +20678,19 @@ var LiveCodingRuntime = class {
     const v = this.engine.components.queryable?.scheduler?.now();
     return Number.isFinite(v) ? v : null;
   }
+  /**
+   * Engine-owned HapStream, or `null` when the engine doesn't expose one
+   * (non-Strudel runtimes / not yet initialized). Mirrors `getCurrentCycle`'s
+   * shape — read-through accessor over the engine's components.
+   *
+   * Phase 20-06 — consumed by MusicalTimeline (closure-bound accessor pattern
+   * via StrudelEditorClient → StaveApp's `getHapStreamRef`) so the timeline
+   * can subscribe to live hap dispatch and glow rows on real fires
+   * (PV38 / PK13 step 8 — musician half).
+   */
+  getHapStream() {
+    return this.engine.components.streaming?.hapStream ?? null;
+  }
   // -------------------------------------------------------------------------
   // Internal listener dispatchers — snapshot-then-iterate so a listener
   // that unsubscribes itself during the callback doesn't break the loop.
@@ -34155,15 +34229,34 @@ function setCaptureCapacity(n) {
 // src/engine/irInspector.ts
 var current = null;
 var listeners6 = /* @__PURE__ */ new Set();
+function enrichWithLookups(snap) {
+  const idLookup = /* @__PURE__ */ new Map();
+  const locLookup = /* @__PURE__ */ new Map();
+  for (const e of snap.events) {
+    if (e.irNodeId) idLookup.set(e.irNodeId, e);
+    if (e.loc && e.loc.length > 0) {
+      const key = `${e.loc[0].start}:${e.loc[0].end}`;
+      const arr = locLookup.get(key);
+      if (arr) arr.push(e);
+      else locLookup.set(key, [e]);
+    }
+  }
+  return {
+    ...snap,
+    irNodeIdLookup: idLookup,
+    irNodeLocLookup: locLookup
+  };
+}
 function publishIRSnapshot(snap, meta) {
-  current = snap;
-  captureSnapshot(snap, {
-    ts: snap.ts,
+  const enriched = enrichWithLookups(snap);
+  current = enriched;
+  captureSnapshot(enriched, {
+    ts: enriched.ts,
     cycleCount: meta?.cycleCount ?? null
   });
   for (const l of listeners6) {
     try {
-      l(snap);
+      l(enriched);
     } catch {
     }
   }

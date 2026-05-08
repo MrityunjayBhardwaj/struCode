@@ -99,6 +99,7 @@
  */
 
 import type { LiveCodingEngine } from '../../engine/LiveCodingEngine'
+import type { HapStream } from '../../engine/HapStream'
 import { BufferedScheduler } from '../../engine/BufferedScheduler'
 import { workspaceAudioBus } from '../WorkspaceAudioBus'
 import type {
@@ -634,6 +635,20 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
   getCurrentCycle(): number | null {
     const v = this.engine.components.queryable?.scheduler?.now()
     return Number.isFinite(v) ? (v as number) : null
+  }
+
+  /**
+   * Engine-owned HapStream, or `null` when the engine doesn't expose one
+   * (non-Strudel runtimes / not yet initialized). Mirrors `getCurrentCycle`'s
+   * shape — read-through accessor over the engine's components.
+   *
+   * Phase 20-06 — consumed by MusicalTimeline (closure-bound accessor pattern
+   * via StrudelEditorClient → StaveApp's `getHapStreamRef`) so the timeline
+   * can subscribe to live hap dispatch and glow rows on real fires
+   * (PV38 / PK13 step 8 — musician half).
+   */
+  getHapStream(): HapStream | null {
+    return this.engine.components.streaming?.hapStream ?? null
   }
 
   // -------------------------------------------------------------------------
