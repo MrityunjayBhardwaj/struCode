@@ -24,7 +24,7 @@ import {
   type Pass,
 } from '../../ir'
 import type { PatternIR } from '../../ir/PatternIR'
-import { publishIRSnapshot, clearIRSnapshot, type IRSnapshot } from '../irInspector'
+import { publishIRSnapshot, clearIRSnapshot, type IRSnapshotInput } from '../irInspector'
 import { getCaptureBuffer, __resetCaptureForTest } from '../timelineCapture'
 
 const v4Passes: readonly Pass<PatternIR>[] = [
@@ -99,7 +99,7 @@ describe('irInspector integration — parse → run → collect', () => {
 // refactors that accidentally break the fan-out trip a clear test
 // here, separate from the unit-level coverage in timelineCapture.test.ts.
 
-function buildSnap(code: string = 'note("c3")'): IRSnapshot {
+function buildSnap(code: string = 'note("c3")'): IRSnapshotInput {
   const seed = IR.code(code)
   const passes = runPasses(seed, v4Passes)
   const finalIR = passes[passes.length - 1].ir
@@ -125,8 +125,18 @@ describe('publishIRSnapshot also captures into timelineCapture (PK9 step 8a)', (
     const snap = buildSnap()
     publishIRSnapshot(snap, { cycleCount: 1.5 })
     expect(getCaptureBuffer()).toHaveLength(1)
-    // PV27-cousin: snapshot stored BY REFERENCE, not cloned.
-    expect(getCaptureBuffer()[0].snapshot).toBe(snap)
+    // PV27-cousin: snapshot stored without deep-cloning. Phase 20-05: the
+    // publisher now wraps the input via `enrichWithLookups` (PV38 clause 1)
+    // — a shallow spread that adds `irNodeIdLookup` + `irNodeLocLookup`
+    // and preserves all inner references (events, passes, ir). The
+    // captured snapshot is the enriched object; inner refs equal the
+    // input's inner refs (no deep clone, only a shallow wrap).
+    const captured = getCaptureBuffer()[0].snapshot
+    expect(captured.events).toBe(snap.events)
+    expect(captured.passes).toBe(snap.passes)
+    expect(captured.ir).toBe(snap.ir)
+    expect(captured.irNodeIdLookup).toBeInstanceOf(Map)
+    expect(captured.irNodeLocLookup).toBeInstanceOf(Map)
     expect(getCaptureBuffer()[0].cycleCount).toBe(1.5)
   })
 

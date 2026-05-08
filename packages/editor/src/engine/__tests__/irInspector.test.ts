@@ -5,10 +5,11 @@ import {
   getIRSnapshot,
   subscribeIRSnapshot,
   type IRSnapshot,
+  type IRSnapshotInput,
 } from '../irInspector'
 import { IR } from '../../ir/PatternIR'
 
-const sample = (): IRSnapshot => {
+const sample = (): IRSnapshotInput => {
   const ir = IR.play('c4')
   return {
     ts: 1000,
@@ -104,7 +105,7 @@ describe('irInspector store', () => {
   it('multi-pass: ir alias matches passes[last]', () => {
     const irA = IR.play('c4')
     const irB = IR.play('d4')
-    const snap: IRSnapshot = {
+    const snap: IRSnapshotInput = {
       ts: 1,
       source: 'pattern.strudel',
       runtime: 'strudel',
@@ -136,5 +137,13 @@ describe('irInspector store', () => {
     // ts-expect-error directive load-bearing (the literal above is the
     // sole reason this assignment is type-checked).
     expect(bad).toBeDefined()
+  })
+
+  it('publishIRSnapshot enriches with frozen lookup tables (PV38 clause 1 / PV33)', () => {
+    publishIRSnapshot(sample())
+    const got = getIRSnapshot()
+    expect(got).not.toBeNull()
+    expect(got!.irNodeIdLookup).toBeInstanceOf(Map)
+    expect(got!.irNodeLocLookup).toBeInstanceOf(Map)
   })
 })

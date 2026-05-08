@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { normalizeStrudelHap } from '../NormalizedHap'
+import type { IREvent } from '../../ir/IREvent'
 
 describe('normalizeStrudelHap', () => {
   it('extracts all fields from a full Strudel hap with Fraction-like objects', () => {
@@ -176,5 +177,63 @@ describe('normalizeStrudelHap', () => {
       expect(n.trackId).toBe('bass')
       expect(n.params).toEqual({ cutoff: 800 })
     })
+  })
+})
+
+describe('20-05 — normalizeStrudelHap resolves irNodeId from snapshot lookup (PV38 clause 2)', () => {
+  it('matches when hap.context.locations[0] + whole.begin agree with a candidate', () => {
+    const irEvent: IREvent = {
+      begin: 0.5, end: 1.0, endClipped: 1.0,
+      note: 'c4', freq: null, s: null, gain: 1, velocity: 1, color: null,
+      loc: [{ start: 5, end: 10 }],
+      irNodeId: 'fnv1abcd',
+    }
+    const lookup = new Map<string, IREvent[]>([['5:10', [irEvent]]])
+    const hap = {
+      whole: { begin: 0.5, end: 1.0 },
+      value: { note: 'c4' },
+      context: { locations: [{ start: 5, end: 10 }] },
+    }
+    const n = normalizeStrudelHap(hap, undefined, lookup)
+    expect(n.irNodeId).toBe('fnv1abcd')
+  })
+
+  it('returns undefined irNodeId when hap has no context (pure(...) / runtime-only path; PV37-aligned)', () => {
+    const lookup = new Map<string, IREvent[]>()
+    const hap = { whole: { begin: 0.5, end: 1.0 }, value: { note: 'c4' } }
+    const n = normalizeStrudelHap(hap, undefined, lookup)
+    expect(n.irNodeId).toBeUndefined()
+  })
+
+  it('returns undefined irNodeId when loc has no match in snapshot (runtime-only PV37 alignment; no fallback ladder per P50)', () => {
+    const lookup = new Map<string, IREvent[]>([['5:10', []]])
+    const hap = {
+      whole: { begin: 0.5, end: 1.0 },
+      value: { note: 'c4' },
+      context: { locations: [{ start: 99, end: 100 }] },
+    }
+    const n = normalizeStrudelHap(hap, undefined, lookup)
+    expect(n.irNodeId).toBeUndefined()
+  })
+
+  it('disambiguates among multiple events sharing a loc by closest begin (fast(N) / ply duplicate scenario)', () => {
+    const ev0: IREvent = {
+      begin: 0.0, end: 0.5, endClipped: 0.5,
+      note: 'c4', freq: null, s: null, gain: 1, velocity: 1, color: null,
+      loc: [{ start: 5, end: 10 }], irNodeId: 'idA',
+    }
+    const ev1: IREvent = {
+      begin: 0.5, end: 1.0, endClipped: 1.0,
+      note: 'c4', freq: null, s: null, gain: 1, velocity: 1, color: null,
+      loc: [{ start: 5, end: 10 }], irNodeId: 'idB',
+    }
+    const lookup = new Map<string, IREvent[]>([['5:10', [ev0, ev1]]])
+    const hap = {
+      whole: { begin: 0.5, end: 1.0 },
+      value: { note: 'c4' },
+      context: { locations: [{ start: 5, end: 10 }] },
+    }
+    const n = normalizeStrudelHap(hap, undefined, lookup)
+    expect(n.irNodeId).toBe('idB')
   })
 })

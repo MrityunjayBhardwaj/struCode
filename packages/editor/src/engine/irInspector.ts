@@ -28,12 +28,47 @@ export interface IRSnapshot {
   ir: PatternIR
   /** Collected events for one cycle window starting at t=0. */
   events: IREvent[]
+  /** Lookup: irNodeId → IREvent. PV38 clause 1.
+   *  Built at publish time by enrichWithLookups; ReadonlyMap enforces
+   *  PV33 (snapshot immutability post-publish). */
+  irNodeIdLookup: ReadonlyMap<string, IREvent>
+  /** Lookup: `${loc[0].start}:${loc[0].end}` → IREvent[]. Used by
+   *  engine-side hap matching (normalizeStrudelHap); haps don't carry
+   *  the hash, only the loc. ReadonlyMap enforces PV33. */
+  irNodeLocLookup: ReadonlyMap<string, IREvent[]>
 }
+
+/** Input shape for publishIRSnapshot — caller does not construct lookups;
+ *  the publisher enriches via enrichWithLookups. Type-system enforces
+ *  this contract (Trap 9 mitigation — caller cannot bypass the publisher). */
+export type IRSnapshotInput = Omit<IRSnapshot, 'irNodeIdLookup' | 'irNodeLocLookup'>
 
 type Listener = (snap: IRSnapshot | null) => void
 
 let current: IRSnapshot | null = null
 const listeners = new Set<Listener>()
+
+/** Build the two lookup tables from snap.events. Pure function; returns
+ *  a NEW IRSnapshot with the lookups attached. Original `snap` is unchanged
+ *  (PV33 alignment — caller's input shape is never mutated). */
+function enrichWithLookups(snap: IRSnapshotInput): IRSnapshot {
+  const idLookup = new Map<string, IREvent>()
+  const locLookup = new Map<string, IREvent[]>()
+  for (const e of snap.events) {
+    if (e.irNodeId) idLookup.set(e.irNodeId, e)
+    if (e.loc && e.loc.length > 0) {
+      const key = `${e.loc[0].start}:${e.loc[0].end}`
+      const arr = locLookup.get(key)
+      if (arr) arr.push(e)
+      else locLookup.set(key, [e])
+    }
+  }
+  return {
+    ...snap,
+    irNodeIdLookup: idLookup,
+    irNodeLocLookup: locLookup,
+  }
+}
 
 /**
  * Publish a snapshot. Two parallel side-effects fire on every publish
@@ -49,18 +84,21 @@ const listeners = new Set<Listener>()
  * defaults `cycleCount` to `null` in that case.
  */
 export function publishIRSnapshot(
-  snap: IRSnapshot,
+  snap: IRSnapshotInput,
   meta?: { cycleCount?: number | null },
 ): void {
-  current = snap
+  // Enrich BEFORE storing/capturing/notifying so all consumers see the
+  // same lookup tables. PV33: lookups join the immutable snapshot.
+  const enriched = enrichWithLookups(snap)
+  current = enriched
   // PK9 step 8a — timeline capture fan-out (Phase 19-08).
-  captureSnapshot(snap, {
-    ts: snap.ts,
+  captureSnapshot(enriched, {
+    ts: enriched.ts,
     cycleCount: meta?.cycleCount ?? null,
   })
   // PK9 step 8b — listener fan-out (single-slot consumers).
   for (const l of listeners) {
-    try { l(snap) } catch { /* listener errors don't block the publish */ }
+    try { l(enriched) } catch { /* listener errors don't block the publish */ }
   }
 }
 

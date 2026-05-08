@@ -100,6 +100,11 @@ export class StrudelEngine implements LiveCodingEngine {
   // Pattern IR from the last successful evaluate() — derived by propagation
   private lastPatternIR: PatternIR | null = null
   private lastIREvents: IREvent[] = []
+  // PV38 clause 2 — loc-keyed lookup over lastIREvents; both queryArc
+  // callbacks (per-track + convenience) read this to enrich haps with
+  // `irNodeId`. Mirrors the lifecycle of lastIREvents (built on eval
+  // success, cleared on failure).
+  private lastIRNodeLocLookup: ReadonlyMap<string, IREvent[]> | null = null
 
   async init(): Promise<void> {
     if (this.initialized) return
@@ -365,7 +370,7 @@ export class StrudelEngine implements LiveCodingEngine {
               try {
                 return captured
                   .queryArc(begin, end)
-                  .map((hap: unknown) => normalizeStrudelHap(hap, trackId))
+                  .map((hap: unknown) => normalizeStrudelHap(hap, trackId, this.lastIRNodeLocLookup ?? undefined))
               } catch {
                 return []
               }
@@ -390,10 +395,31 @@ export class StrudelEngine implements LiveCodingEngine {
         )
         this.lastPatternIR = irBag.patternIR ?? null
         this.lastIREvents = irBag.irEvents ?? []
+        // PV38 clause 2 — build the loc lookup once per eval; queryArc
+        // callbacks read it to enrich haps with irNodeId. Mirrors how
+        // lastIREvents is stored alongside lastPatternIR. ReadonlyMap
+        // (via type) enforces PV33 immutability per snapshot lifetime.
+        // NOTE: this duplicates the loc-lookup build in irInspector.ts's
+        // `enrichWithLookups` — kept separate per phase 20-05 PLAN §7
+        // T-γ-4 "Note on duplication": two specific sites today (engine's
+        // lastIREvents from `propagate()` vs published snapshot from
+        // `collect(finalIR)` in StrudelEditorClient.tsx). DEC-NEW-1:
+        // consolidation requires a third occurrence + span-check signal.
+        const locLookup = new Map<string, IREvent[]>()
+        for (const e of this.lastIREvents) {
+          if (e.loc && e.loc.length > 0) {
+            const key = `${e.loc[0].start}:${e.loc[0].end}`
+            const arr = locLookup.get(key)
+            if (arr) arr.push(e)
+            else locLookup.set(key, [e])
+          }
+        }
+        this.lastIRNodeLocLookup = locLookup
       } else {
         // Failed evaluate — clear stale IR
         this.lastPatternIR = null
         this.lastIREvents = []
+        this.lastIRNodeLocLookup = null
       }
 
       return result
@@ -577,7 +603,15 @@ export class StrudelEngine implements LiveCodingEngine {
     return {
       now: () => sched.now(),
       query: (begin: number, end: number) => {
-        try { return pattern.queryArc(begin, end).map(normalizeStrudelHap) } catch { return [] }
+        // Side-fix (closes #101): the previous bare normalizeStrudelHap reference
+        // passed directly to Array#map received the `index` arg as trackId
+        // (latent bug since the trackId param landed). Arrow-wrap explicitly
+        // to pass undefined trackId AND the loc lookup. PV38 clause 2 + Trap 8.
+        try {
+          return pattern
+            .queryArc(begin, end)
+            .map((hap: unknown) => normalizeStrudelHap(hap, undefined, this.lastIRNodeLocLookup ?? undefined))
+        } catch { return [] }
       },
     }
   }
