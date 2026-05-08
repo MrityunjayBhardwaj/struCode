@@ -26,6 +26,7 @@ import {
   type SnapshotMeta,
   type WorkspaceShellHandle,
   type HapStream,
+  type BreakpointStore,
 } from "@stave/editor";
 import { seedProjectFromTemplate } from "../templates";
 import { exportProjectAsZip } from "../exportProject";
@@ -494,6 +495,21 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   // Phase 20-06 (PV38, PK13 step 7+8) — closure-bound accessor onto the
   // active runtime's HapStream for the MusicalTimeline subscriber.
   const getHapStreamRef = useRef<() => HapStream | null>(() => null);
+  // Phase 20-07 wave γ (R-2) — Inspector accessors. Live alongside
+  // getHapStreamRef. Each ref holds a closure that reads through the
+  // active runtime; default returns null/false so renders before the
+  // runtime is attached are well-typed. The IRInspectorPanel reads the
+  // refs each render via wrapping arrow closures (mirrors 20-06's
+  // `getHapStream={() => getHapStreamRef.current()}` shape).
+  const getBreakpointStoreRef = useRef<() => BreakpointStore | null>(() => null);
+  const getIsPausedRef = useRef<() => boolean>(() => false);
+  const onResumeRef = useRef<() => void>(() => {});
+  // Listener bus — IRInspectorPanel + Monaco command both subscribe to
+  // pause-state transitions through this. Default is "subscribe and
+  // immediately unsubscribe" so the panel's useEffect cleanup is safe.
+  const onPauseChangedRef = useRef<(cb: (paused: boolean) => void) => () => void>(
+    () => () => {},
+  );
 
   const handleRuntimeStateChange = useCallback(
     (
@@ -505,6 +521,13 @@ export function StaveApp({ initialProject }: StaveAppProps) {
             getCycle?: () => number | null;
             getCps?: () => number | null;
             getHapStream?: () => HapStream | null;
+            // Phase 20-07 wave γ (R-2) — debugger accessors. Optional
+            // because non-Strudel runtimes (DemoEngine, SonicPi) skip
+            // them; the default no-op refs survive a null assignment.
+            getBreakpointStore?: () => BreakpointStore | null;
+            getIsPaused?: () => boolean;
+            onResume?: () => void;
+            onPauseChanged?: (cb: (paused: boolean) => void) => () => void;
           }
         | null,
     ) => {
@@ -515,6 +538,14 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       getCycleRef.current = s?.getCycle ?? (() => null);
       getCpsRef.current = s?.getCps ?? (() => null);
       getHapStreamRef.current = s?.getHapStream ?? (() => null);
+      // Phase 20-07 wave γ (R-2) — Inspector accessor refs. When `s` is
+      // null (runtime detached / non-Strudel tab), the no-op defaults
+      // mean IRInspectorPanel renders without breakpoint / pulse / Resume
+      // affordances (the legacy 20-04 + 19-08 surface).
+      getBreakpointStoreRef.current = s?.getBreakpointStore ?? (() => null);
+      getIsPausedRef.current = s?.getIsPaused ?? (() => false);
+      onResumeRef.current = s?.onResume ?? (() => {});
+      onPauseChangedRef.current = s?.onPauseChanged ?? (() => () => {});
       setActiveRuntime((prev) => {
         if (!s) return prev === null ? prev : null;
         if (
@@ -1003,7 +1034,15 @@ export function StaveApp({ initialProject }: StaveAppProps) {
           </div>
         )}
         {!zenMode && activePanelId === "console" && <ConsolePanel />}
-        {!zenMode && activePanelId === "ir-inspector" && <IRInspectorPanel />}
+        {!zenMode && activePanelId === "ir-inspector" && (
+          <IRInspectorPanel
+            getHapStream={() => getHapStreamRef.current()}
+            getBreakpointStore={() => getBreakpointStoreRef.current()}
+            getIsPaused={() => getIsPausedRef.current()}
+            onResume={() => onResumeRef.current()}
+            onPauseChanged={(cb) => onPauseChangedRef.current(cb)}
+          />
+        )}
         {!zenMode && activePanelId === "outline" && (
           <div style={styles.panelRoot} data-sidebar>
             <div style={styles.panelHeader}>OUTLINE</div>

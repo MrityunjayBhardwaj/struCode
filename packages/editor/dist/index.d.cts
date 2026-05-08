@@ -639,14 +639,108 @@ declare class HapStream {
      * onto the fan-out HapEvent. PV38 clause 2 onTrigger half. Single-
      * strategy match (P50) — same helper as the queryArc-side enrichment in
      * `normalizeStrudelHap`.
+     *
+     * Phase 20-07 (T-α-2) — returns the enriched HapEvent so the engine's
+     * wrappedOutput hit-check can read `event.irNodeId` in O(1) without
+     * re-running findMatchedEvent (P50 — single-strategy match preserved).
+     * Additive: 8 existing test callers + 1 production caller currently
+     * ignore the void return; widening void → HapEvent does not break them.
      */
-    emit(hap: any, deadline: number, duration: number, cps: number, audioCtxCurrentTime: number, lookup?: ReadonlyMap<string, IREvent[]>): void;
+    emit(hap: any, deadline: number, duration: number, cps: number, audioCtxCurrentTime: number, lookup?: ReadonlyMap<string, IREvent[]>): HapEvent;
     /**
      * Emit a pre-constructed HapEvent directly.
      * Preferred API for non-Strudel engines that don't have raw hap objects.
      */
     emitEvent(event: HapEvent): void;
     dispose(): void;
+}
+
+/**
+ * BreakpointStore — engine-attached registry of irNodeIds that should
+ * pause the scheduler when a hap with that id fires (PK13 step 9).
+ *
+ * Single source of truth for both registration UIs:
+ *  - Monaco gutter click → toggleSet([leaf-ids on that line])
+ *  - Inspector chain-row click → toggleSet([leaf-ids in that subtree])
+ *
+ * Hit-check at StrudelEngine.wrappedOutput reads `has(irNodeId)` on every
+ * fired hap; HOT PATH — keep API to O(1) Set ops only (P50 — D-03 forbids
+ * predicate evaluation here).
+ *
+ * Per-engine scope (CONTEXT T9): one instance per StrudelEngine, disposed
+ * with the engine. File-switch resets breakpoints — documented v1
+ * behaviour. Future 20-07-follow-up adds localStorage hydrate via
+ * `serialize()` / `hydrate()` methods. Do NOT add them now (Q6 — premature
+ * solidification).
+ *
+ * Phase 20-07 (PV38, PK13 step 9, P50).
+ */
+type Listener$5 = () => void;
+/**
+ * Phase 20-07 (R-3) — per-id metadata held alongside the irNodeId.
+ *
+ * `lineHint` is the 1-based Monaco line number captured at registration
+ * time. It exists so an orphaned breakpoint (id no longer in
+ * snap.irNodeIdLookup, e.g. user edited the s-string) can still render a
+ * muted glyph on its original line — letting the user clear it via
+ * gutter-click. Without `lineHint`, an orphaned id registered via the
+ * Inspector chain-row (no Monaco line context) is unreachable from the
+ * gutter and persists silently in the store.
+ *
+ * Set when add/addSet is called from the gutter handler (β):
+ *   lineHint = clicked line.
+ * Set when add/addSet is called from the Inspector chain-row (γ):
+ *   lineHint = matched IREvent's loc[0] resolved to a 1-based line via
+ *   snap.irNodeIdsByLine reverse-lookup, OR undefined if unavailable.
+ *
+ * `undefined` is allowed: an orphan with no lineHint is documented as
+ * "Inspector-side orphan; cleared via Inspector right-click in
+ * 20-07-follow-up."
+ */
+interface BreakpointMeta {
+    readonly lineHint?: number;
+}
+declare class BreakpointStore {
+    private ids;
+    private listeners;
+    has(id: string): boolean;
+    size(): number;
+    /** Phase 20-07 (R-3) — read the optional lineHint for orphan rendering. */
+    getMeta(id: string): BreakpointMeta | undefined;
+    add(id: string, meta?: BreakpointMeta): void;
+    remove(id: string): void;
+    toggle(id: string, meta?: BreakpointMeta): void;
+    /**
+     * Add every id in `ids` to the store. Existing ids keep their meta —
+     * `meta` is applied to NEWLY added ids only. This is the discipline that
+     * lets a gutter-click set lineHint without clobbering a hint set by an
+     * earlier Inspector registration (CONTEXT T5 / R-3).
+     */
+    addSet(ids: readonly string[], meta?: BreakpointMeta): void;
+    removeSet(ids: readonly string[]): void;
+    /**
+     * Toggle a SET semantically: if every id is already present, remove all;
+     * else add all (treating the set as one breakpoint). The "any missing →
+     * add all" rule resolves the gutter-vs-Inspector desync case (CONTEXT
+     * T5) — gutter click on a line where Inspector removed individual ids
+     * re-adds the full set.
+     *
+     * `meta` is applied to ids being ADDED in this call only; ids already
+     * present keep their existing meta (don't clobber a lineHint set by an
+     * earlier registration path).
+     */
+    toggleSet(ids: readonly string[], meta?: BreakpointMeta): void;
+    /** Read-only iteration — for orphan detection + UI rendering. */
+    entries(): ReadonlyMap<string, BreakpointMeta>;
+    /** Convenience: just the ids without metadata. */
+    idSet(): ReadonlySet<string>;
+    /**
+     * Subscribe to mutate events. Returns a disposer mirroring
+     * `LiveCodingRuntime.onPlayingChanged` (RESEARCH Q3 / S3).
+     */
+    subscribe(cb: Listener$5): () => void;
+    dispose(): void;
+    private fireChanged;
 }
 
 /** Real-time hap event stream for visualizers and highlighting. */
@@ -828,6 +922,9 @@ declare class StrudelEngine implements LiveCodingEngine {
     private lastPatternIR;
     private lastIREvents;
     private lastIRNodeLocLookup;
+    private breakpointStore;
+    private isPausedState;
+    private pauseChangedListeners;
     init(): Promise<void>;
     evaluate(code: string): Promise<{
         error?: Error;
@@ -841,6 +938,40 @@ declare class StrudelEngine implements LiveCodingEngine {
     private buildVizRequestsWithLines;
     play(): void;
     stop(): void;
+    /**
+     * Phase 20-07 (DEC-AMENDED-1) — debugger pause. Calls
+     * `scheduler.pause()` (NOT `.stop()`) — pause preserves cycle position
+     * (cyclist.mjs:112-116), stop rewinds lastEnd to 0 (cyclist.mjs:117-122).
+     * Idempotent: setPaused() guards against double-fire of listeners (T17).
+     */
+    pause(): void;
+    /**
+     * Phase 20-07 — debugger resume. Calls `scheduler.start()` which uses
+     * the preserved lastEnd from pause (cyclist.mjs:101-111). Idempotent.
+     */
+    resume(): void;
+    /** Current debugger pause state (true after a breakpoint hit). */
+    getPaused(): boolean;
+    /**
+     * Subscribe to engine pause-state transitions. Mirrors the
+     * subscriber-set pattern used by `LiveCodingRuntime.onPlayingChanged`
+     * (RESEARCH Q3). Returns a disposer.
+     */
+    onPausedChanged(listener: (paused: boolean) => void): () => void;
+    /**
+     * Phase 20-07 — accessor onto the engine's BreakpointStore. The
+     * runtime exposes this through its own `getBreakpointStore()` so the
+     * editor's useBreakpoints hook (Wave β) and the Inspector (Wave γ)
+     * share a single store.
+     */
+    getBreakpointStore(): BreakpointStore;
+    /**
+     * Internal — flip pause state and fan out to subscribers, with an
+     * idempotence guard (T17): both Inspector + Monaco "Resume" surfaces
+     * may fire setPaused(false) simultaneously; this short-circuits the
+     * second call so listeners never see a redundant transition.
+     */
+    private setPaused;
     record(durationSeconds: number): Promise<Blob>;
     renderOffline(code: string, duration: number, sampleRate?: number): Promise<Blob>;
     renderStems(stems: Record<string, string>, duration: number, onProgress?: (stem: string, i: number, total: number) => void): Promise<Record<string, Blob>>;
@@ -2055,6 +2186,19 @@ interface AudioPayload {
      * viz renderers must read from this field to get per-track data.
      */
     readonly engineComponents?: Partial<EngineComponents>;
+    /**
+     * Phase 20-07 — per-engine breakpoint registry. The Monaco gutter UI in
+     * EditorView reads this to subscribe + render glyphs; the gutter click
+     * handler calls `toggleSet` to register breakpoints. Absent for engines
+     * that don't support the breakpoint protocol.
+     */
+    readonly breakpointStore?: BreakpointStore;
+    /**
+     * Phase 20-07 — invoked when the user clicks "Debugger: Resume" via the
+     * Monaco command palette. Calls `runtime.resume()`. Absent for engines
+     * without scheduler-pause support.
+     */
+    readonly onResume?: () => void;
 }
 /**
  * Description of a single registered publisher, returned from
@@ -3988,6 +4132,24 @@ declare class LiveCodingRuntime implements LiveCodingRuntime$1 {
      * (PV38 / PK13 step 8 — musician half).
      */
     getHapStream(): HapStream | null;
+    /** Phase 20-07 — explicit user-driven pause. Engine pauses scheduler. */
+    pause(): void;
+    /** Phase 20-07 — resume after pause (or breakpoint hit). */
+    resume(): void;
+    /** Phase 20-07 — current debugger pause state (false on engines without pause). */
+    getPaused(): boolean;
+    /**
+     * Phase 20-07 — subscribe to engine pause-state transitions. Returns a
+     * disposer. No-op disposer when the engine doesn't implement
+     * onPausedChanged (non-Strudel runtimes).
+     */
+    onPausedChanged(listener: (paused: boolean) => void): () => void;
+    /**
+     * Phase 20-07 — accessor onto the engine's BreakpointStore. Returns
+     * null when the engine doesn't expose one (non-Strudel runtimes / not
+     * yet initialized). Mirrors `getHapStream`'s shape.
+     */
+    getBreakpointStore(): BreakpointStore | null;
     private fireOnError;
     private firePlayingChanged;
     private fireEvaluateSuccess;
@@ -4667,11 +4829,19 @@ interface IRSnapshot {
      *  engine-side hap matching (normalizeStrudelHap); haps don't carry
      *  the hash, only the loc. ReadonlyMap enforces PV33. */
     irNodeLocLookup: ReadonlyMap<string, IREvent[]>;
+    /** Lookup: 1-based Monaco line number → leaf irNodeIds whose
+     *  loc[0] starts on that line. PV38 phase-20-07 use; built once
+     *  at publish time by enrichWithLookups; ReadonlyMap enforces PV33.
+     *  Empty map when no events carry both irNodeId and loc. Used by
+     *  Monaco gutter click → leaf-set resolver for breakpoint
+     *  registration (Phase 20-07). PV37 alignment: events without
+     *  irNodeId never appear in this index. */
+    irNodeIdsByLine: ReadonlyMap<number, readonly string[]>;
 }
 /** Input shape for publishIRSnapshot — caller does not construct lookups;
  *  the publisher enriches via enrichWithLookups. Type-system enforces
  *  this contract (Trap 9 mitigation — caller cannot bypass the publisher). */
-type IRSnapshotInput = Omit<IRSnapshot, 'irNodeIdLookup' | 'irNodeLocLookup'>;
+type IRSnapshotInput = Omit<IRSnapshot, 'irNodeIdLookup' | 'irNodeLocLookup' | 'irNodeIdsByLine'>;
 type Listener$2 = (snap: IRSnapshot | null) => void;
 /**
  * Publish a snapshot. Two parallel side-effects fire on every publish
@@ -5118,4 +5288,4 @@ declare const SONICPI_DOCS_INDEX: DocsIndex;
 
 declare const STRUDEL_DOCS_INDEX: DocsIndex;
 
-export { AUTO_SNAPSHOT_PREFIX, type AudioPayload, type AudioSourceRef, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, type BackdropQuality, BottomPanel, type BottomPanelTab, BufferedScheduler, type ChromeContext, type ChromeForTab, type CollectContext, type ComponentBag, type CropRegion, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, type DocKind, type DocsIndex, type EditorTheme, EditorView, type EngineComponents, ErrorBoundary, type ErrorBoundaryProps, type FixedMarker, type FormatOptions, type FriendlyErrorParts, type FuzzyMatch, HYDRA_DOCS_INDEX, HYDRA_VIZ, type HapEvent, HapStream, type HydraPatternFn, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, type IRComponent, type IREvent, IREventCollectSystem, type IRPattern, type IRSnapshot, LIGHT_THEME_TOKENS, LiveCodingEditor, type LiveCodingEditorProps, type LiveCodingEngine, LiveCodingRuntime, type LiveCodingRuntime$1 as LiveCodingRuntimeInterface, type LiveCodingRuntimeProvider, LiveRecorder, type LogEntry, type LogLevel, type LogSuggestion, type NormalizedHap, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, type Pass, type PatternIR, type PatternScheduler, PianorollSketch, PitchwheelSketch, type PlayParams, type PreviewContext, type PreviewProvider, PreviewView, type ProjectMeta, type ResolvedTheme, type RuntimeDoc, type RuntimeId, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, type SnapshotMeta, SonicPiEngine, type SourceLocation, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, type StrudelEditorProps, StrudelEngine, StrudelParseSystem, type StrudelTheme, type System, type TimelineCaptureEntry, UI_ICON_SIZE_VAR, type UseWorkspaceFileResult, type VizConfig, type VizDescriptor, VizDropdown, VizEditor, type VizEditorProps, VizPanel, VizPicker, type VizPreset, VizPresetStore, type VizRefs, type VizRenderer, type VizRendererSource, WavEncoder, type WorkspaceAudioBus, type WorkspaceFile, type WorkspaceGroupState, type WorkspaceLanguage, WorkspaceShell, type WorkspaceShellHandle, type WorkspaceShellProps, type WorkspaceTab, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, type AudioPayload, type AudioSourceRef, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, type BackdropQuality, BottomPanel, type BottomPanelTab, type BreakpointMeta, BreakpointStore, BufferedScheduler, type ChromeContext, type ChromeForTab, type CollectContext, type ComponentBag, type CropRegion, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, type DocKind, type DocsIndex, type EditorTheme, EditorView, type EngineComponents, ErrorBoundary, type ErrorBoundaryProps, type FixedMarker, type FormatOptions, type FriendlyErrorParts, type FuzzyMatch, HYDRA_DOCS_INDEX, HYDRA_VIZ, type HapEvent, HapStream, type HydraPatternFn, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, type IRComponent, type IREvent, IREventCollectSystem, type IRPattern, type IRSnapshot, LIGHT_THEME_TOKENS, LiveCodingEditor, type LiveCodingEditorProps, type LiveCodingEngine, LiveCodingRuntime, type LiveCodingRuntime$1 as LiveCodingRuntimeInterface, type LiveCodingRuntimeProvider, LiveRecorder, type LogEntry, type LogLevel, type LogSuggestion, type NormalizedHap, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, type Pass, type PatternIR, type PatternScheduler, PianorollSketch, PitchwheelSketch, type PlayParams, type PreviewContext, type PreviewProvider, PreviewView, type ProjectMeta, type ResolvedTheme, type RuntimeDoc, type RuntimeId, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, type SnapshotMeta, SonicPiEngine, type SourceLocation, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, type StrudelEditorProps, StrudelEngine, StrudelParseSystem, type StrudelTheme, type System, type TimelineCaptureEntry, UI_ICON_SIZE_VAR, type UseWorkspaceFileResult, type VizConfig, type VizDescriptor, VizDropdown, VizEditor, type VizEditorProps, VizPanel, VizPicker, type VizPreset, VizPresetStore, type VizRefs, type VizRenderer, type VizRendererSource, WavEncoder, type WorkspaceAudioBus, type WorkspaceFile, type WorkspaceGroupState, type WorkspaceLanguage, WorkspaceShell, type WorkspaceShellHandle, type WorkspaceShellProps, type WorkspaceTab, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };

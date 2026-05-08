@@ -136,6 +136,7 @@ function makeSnapshot({
     // irNodeId off events directly, not through these tables.
     irNodeIdLookup: new Map(),
     irNodeLocLookup: new Map(),
+    irNodeIdsByLine: new Map(),
   }
 }
 
@@ -881,6 +882,7 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         ir: { tag: 'Pure' } as PatternIR,
         irNodeIdLookup: new Map(),
         irNodeLocLookup: new Map(),
+        irNodeIdsByLine: new Map(),
         events: [
           evt({
             trackId: 'note',
@@ -918,6 +920,7 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         ir: { tag: 'Pure' } as PatternIR,
         irNodeIdLookup: new Map(),
         irNodeLocLookup: new Map(),
+        irNodeIdsByLine: new Map(),
         events: [
           evt({
             trackId: 'note',
@@ -972,6 +975,7 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         ir: { tag: 'Pure' } as PatternIR,
         irNodeIdLookup: new Map(),
         irNodeLocLookup: new Map(),
+        irNodeIdsByLine: new Map(),
         events: [
           evt({
             trackId: 'note',
@@ -1010,6 +1014,7 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         ir: { tag: 'Pure' } as PatternIR,
         irNodeIdLookup: new Map(),
         irNodeLocLookup: new Map(),
+        irNodeIdsByLine: new Map(),
         events: [
           evt({
             trackId: 'note',
@@ -1044,6 +1049,7 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         ir: { tag: 'Pure' } as PatternIR,
         irNodeIdLookup: new Map(),
         irNodeLocLookup: new Map(),
+        irNodeIdsByLine: new Map(),
         events: [
           evt({
             trackId: 'note',

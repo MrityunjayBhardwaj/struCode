@@ -4918,6 +4918,12 @@ var HapStream = class {
    * onto the fan-out HapEvent. PV38 clause 2 onTrigger half. Single-
    * strategy match (P50) — same helper as the queryArc-side enrichment in
    * `normalizeStrudelHap`.
+   *
+   * Phase 20-07 (T-α-2) — returns the enriched HapEvent so the engine's
+   * wrappedOutput hit-check can read `event.irNodeId` in O(1) without
+   * re-running findMatchedEvent (P50 — single-strategy match preserved).
+   * Additive: 8 existing test callers + 1 production caller currently
+   * ignore the void return; widening void → HapEvent does not break them.
    */
   emit(hap, deadline, duration, cps, audioCtxCurrentTime, lookup) {
     const scheduledAheadMs = (deadline - audioCtxCurrentTime) * 1e3;
@@ -4938,6 +4944,7 @@ var HapStream = class {
       if (matched?.irNodeId) event.irNodeId = matched.irNodeId;
     }
     this.emitEvent(event);
+    return event;
   }
   /**
    * Emit a pre-constructed HapEvent directly.
@@ -4953,6 +4960,119 @@ var HapStream = class {
   }
   dispose() {
     this.handlers.clear();
+  }
+};
+
+// src/engine/BreakpointStore.ts
+var BreakpointStore = class {
+  constructor() {
+    this.ids = /* @__PURE__ */ new Map();
+    this.listeners = /* @__PURE__ */ new Set();
+  }
+  has(id) {
+    return this.ids.has(id);
+  }
+  size() {
+    return this.ids.size;
+  }
+  /** Phase 20-07 (R-3) — read the optional lineHint for orphan rendering. */
+  getMeta(id) {
+    return this.ids.get(id);
+  }
+  add(id, meta = {}) {
+    if (this.ids.has(id)) return;
+    this.ids.set(id, meta);
+    this.fireChanged();
+  }
+  remove(id) {
+    if (!this.ids.delete(id)) return;
+    this.fireChanged();
+  }
+  toggle(id, meta = {}) {
+    if (this.ids.has(id)) this.ids.delete(id);
+    else this.ids.set(id, meta);
+    this.fireChanged();
+  }
+  /**
+   * Add every id in `ids` to the store. Existing ids keep their meta —
+   * `meta` is applied to NEWLY added ids only. This is the discipline that
+   * lets a gutter-click set lineHint without clobbering a hint set by an
+   * earlier Inspector registration (CONTEXT T5 / R-3).
+   */
+  addSet(ids, meta = {}) {
+    let changed = false;
+    for (const id of ids) {
+      if (!this.ids.has(id)) {
+        this.ids.set(id, meta);
+        changed = true;
+      }
+    }
+    if (changed) this.fireChanged();
+  }
+  removeSet(ids) {
+    let changed = false;
+    for (const id of ids) {
+      if (this.ids.delete(id)) changed = true;
+    }
+    if (changed) this.fireChanged();
+  }
+  /**
+   * Toggle a SET semantically: if every id is already present, remove all;
+   * else add all (treating the set as one breakpoint). The "any missing →
+   * add all" rule resolves the gutter-vs-Inspector desync case (CONTEXT
+   * T5) — gutter click on a line where Inspector removed individual ids
+   * re-adds the full set.
+   *
+   * `meta` is applied to ids being ADDED in this call only; ids already
+   * present keep their existing meta (don't clobber a lineHint set by an
+   * earlier registration path).
+   */
+  toggleSet(ids, meta = {}) {
+    if (ids.length === 0) return;
+    const allPresent = ids.every((id) => this.ids.has(id));
+    if (allPresent) {
+      for (const id of ids) this.ids.delete(id);
+    } else {
+      for (const id of ids) {
+        if (!this.ids.has(id)) this.ids.set(id, meta);
+      }
+    }
+    this.fireChanged();
+  }
+  /** Read-only iteration — for orphan detection + UI rendering. */
+  entries() {
+    return this.ids;
+  }
+  /** Convenience: just the ids without metadata. */
+  idSet() {
+    return new Set(this.ids.keys());
+  }
+  /**
+   * Subscribe to mutate events. Returns a disposer mirroring
+   * `LiveCodingRuntime.onPlayingChanged` (RESEARCH Q3 / S3).
+   */
+  subscribe(cb) {
+    this.listeners.add(cb);
+    let unsubscribed = false;
+    return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      this.listeners.delete(cb);
+    };
+  }
+  dispose() {
+    this.ids.clear();
+    this.listeners.clear();
+  }
+  fireChanged() {
+    if (this.listeners.size === 0) return;
+    const snapshot = Array.from(this.listeners);
+    for (const cb of snapshot) {
+      try {
+        cb();
+      } catch {
+      }
+    }
   }
 };
 
@@ -5180,6 +5300,16 @@ var StrudelEngine = class {
     // `irNodeId`. Mirrors the lifecycle of lastIREvents (built on eval
     // success, cleared on failure).
     this.lastIRNodeLocLookup = null;
+    // Phase 20-07 (PK13 step 9) — engine-attached breakpoint registry.
+    // Per-engine scope (PV33). The hit-check in `wrappedOutput` reads
+    // `breakpointStore.has(irNodeId)` on the audio scheduler hot path.
+    this.breakpointStore = new BreakpointStore();
+    // Phase 20-07 — engine-driven pause state. Mirrored to consumers via
+    // `onPausedChanged` listeners. Set when the hit-check pauses the
+    // scheduler (engine pauses ITSELF on hit) and via the public pause()
+    // method. Idempotence guarded by setPaused().
+    this.isPausedState = false;
+    this.pauseChangedListeners = /* @__PURE__ */ new Set();
   }
   async init() {
     if (this.initialized) return;
@@ -5214,7 +5344,12 @@ var StrudelEngine = class {
     const hapStream = this.hapStream;
     const audioCtxRef = audioCtx;
     const wrappedOutput = async (hap, deadline, duration, cps, t) => {
-      hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime, this.lastIRNodeLocLookup ?? void 0);
+      const enriched = hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime, this.lastIRNodeLocLookup ?? void 0);
+      if (enriched.irNodeId && this.breakpointStore.has(enriched.irNodeId)) {
+        this.repl?.scheduler?.pause();
+        this.setPaused(true);
+        return;
+      }
       try {
         return await webaudioOutput(hap, deadline, duration, cps, t);
       } catch (err2) {
@@ -5453,6 +5588,67 @@ var StrudelEngine = class {
   stop() {
     this.repl?.scheduler?.stop();
   }
+  /**
+   * Phase 20-07 (DEC-AMENDED-1) — debugger pause. Calls
+   * `scheduler.pause()` (NOT `.stop()`) — pause preserves cycle position
+   * (cyclist.mjs:112-116), stop rewinds lastEnd to 0 (cyclist.mjs:117-122).
+   * Idempotent: setPaused() guards against double-fire of listeners (T17).
+   */
+  pause() {
+    this.repl?.scheduler?.pause?.();
+    this.setPaused(true);
+  }
+  /**
+   * Phase 20-07 — debugger resume. Calls `scheduler.start()` which uses
+   * the preserved lastEnd from pause (cyclist.mjs:101-111). Idempotent.
+   */
+  resume() {
+    this.repl?.scheduler?.start?.();
+    this.setPaused(false);
+  }
+  /** Current debugger pause state (true after a breakpoint hit). */
+  getPaused() {
+    return this.isPausedState;
+  }
+  /**
+   * Subscribe to engine pause-state transitions. Mirrors the
+   * subscriber-set pattern used by `LiveCodingRuntime.onPlayingChanged`
+   * (RESEARCH Q3). Returns a disposer.
+   */
+  onPausedChanged(listener) {
+    this.pauseChangedListeners.add(listener);
+    let unsubscribed = false;
+    return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      this.pauseChangedListeners.delete(listener);
+    };
+  }
+  /**
+   * Phase 20-07 — accessor onto the engine's BreakpointStore. The
+   * runtime exposes this through its own `getBreakpointStore()` so the
+   * editor's useBreakpoints hook (Wave β) and the Inspector (Wave γ)
+   * share a single store.
+   */
+  getBreakpointStore() {
+    return this.breakpointStore;
+  }
+  /**
+   * Internal — flip pause state and fan out to subscribers, with an
+   * idempotence guard (T17): both Inspector + Monaco "Resume" surfaces
+   * may fire setPaused(false) simultaneously; this short-circuits the
+   * second call so listeners never see a redundant transition.
+   */
+  setPaused(paused) {
+    if (this.isPausedState === paused) return;
+    this.isPausedState = paused;
+    for (const l of this.pauseChangedListeners) {
+      try {
+        l(paused);
+      } catch {
+      }
+    }
+  }
   async record(durationSeconds) {
     if (!this.analyserNode || !this.audioCtx) {
       throw new Error("StrudelEngine not initialized \u2014 call init() first");
@@ -5552,6 +5748,8 @@ var StrudelEngine = class {
     }
     this.trackAnalysers.clear();
     this.trackOrbit.clear();
+    this.breakpointStore.dispose();
+    this.pauseChangedListeners.clear();
     this.initialized = false;
     this.repl = null;
   }
@@ -15557,7 +15755,7 @@ function payloadForRef(ref) {
 }
 function payloadsEquivalent(prev, next) {
   if (!prev) return false;
-  return prev.hapStream === next.hapStream && prev.analyser === next.analyser && prev.scheduler === next.scheduler && prev.inlineViz === next.inlineViz && prev.audio === next.audio;
+  return prev.hapStream === next.hapStream && prev.analyser === next.analyser && prev.scheduler === next.scheduler && prev.inlineViz === next.inlineViz && prev.audio === next.audio && prev.breakpointStore === next.breakpointStore && prev.onResume === next.onResume;
 }
 function notifySourcesChanged() {
   if (sourcesChangedListeners.size === 0) return;
@@ -15797,6 +15995,265 @@ function useHighlighting(editor, hapStream) {
       teardown(timeoutIdsRef.current, hapCollectionsRef.current);
     };
   }, [editor, hapStream]);
+  return { clearAll };
+}
+
+// src/engine/timelineCapture.ts
+var DEFAULT_CAPACITY = 30;
+var entries = [];
+var capacity = DEFAULT_CAPACITY;
+var listeners2 = /* @__PURE__ */ new Set();
+function fanOut() {
+  for (const l of listeners2) {
+    try {
+      l();
+    } catch {
+    }
+  }
+}
+function captureSnapshot(snap, meta = {}) {
+  try {
+    Object.freeze(snap);
+    Object.freeze(snap.passes);
+  } catch {
+  }
+  const entry = Object.freeze({
+    snapshot: snap,
+    ts: meta.ts ?? snap.ts ?? Date.now(),
+    cycleCount: meta.cycleCount ?? null
+  });
+  entries.push(entry);
+  while (entries.length > capacity) {
+    entries.shift();
+  }
+  fanOut();
+}
+function getCaptureBuffer() {
+  return entries;
+}
+function subscribeCapture(l) {
+  listeners2.add(l);
+  return () => {
+    listeners2.delete(l);
+  };
+}
+function clearCapture() {
+  entries = [];
+  fanOut();
+}
+function getCaptureCapacity() {
+  return capacity;
+}
+function setCaptureCapacity(n) {
+  if (!Number.isFinite(n) || n < 1) return;
+  capacity = Math.floor(n);
+  if (entries.length > capacity) {
+    entries = entries.slice(-capacity);
+  }
+  fanOut();
+}
+
+// src/engine/irInspector.ts
+var current = null;
+var listeners3 = /* @__PURE__ */ new Set();
+function enrichWithLookups(snap) {
+  const idLookup = /* @__PURE__ */ new Map();
+  const locLookup = /* @__PURE__ */ new Map();
+  const lineLookup = /* @__PURE__ */ new Map();
+  for (const e of snap.events) {
+    if (e.irNodeId) idLookup.set(e.irNodeId, e);
+    if (e.loc && e.loc.length > 0) {
+      const key = `${e.loc[0].start}:${e.loc[0].end}`;
+      const arr = locLookup.get(key);
+      if (arr) arr.push(e);
+      else locLookup.set(key, [e]);
+      if (e.irNodeId) {
+        const line2 = countLines(snap.code, e.loc[0].start);
+        const ids = lineLookup.get(line2);
+        if (ids) {
+          if (!ids.includes(e.irNodeId)) ids.push(e.irNodeId);
+        } else {
+          lineLookup.set(line2, [e.irNodeId]);
+        }
+      }
+    }
+  }
+  return {
+    ...snap,
+    irNodeIdLookup: idLookup,
+    irNodeLocLookup: locLookup,
+    irNodeIdsByLine: lineLookup
+  };
+}
+function countLines(code, offset) {
+  let line2 = 1;
+  for (let i2 = 0; i2 < offset && i2 < code.length; i2++) {
+    if (code.charCodeAt(i2) === 10) line2++;
+  }
+  return line2;
+}
+function publishIRSnapshot(snap, meta) {
+  const enriched = enrichWithLookups(snap);
+  current = enriched;
+  captureSnapshot(enriched, {
+    ts: enriched.ts,
+    cycleCount: meta?.cycleCount ?? null
+  });
+  for (const l of listeners3) {
+    try {
+      l(enriched);
+    } catch {
+    }
+  }
+}
+function clearIRSnapshot() {
+  current = null;
+  for (const l of listeners3) {
+    try {
+      l(null);
+    } catch {
+    }
+  }
+}
+function getIRSnapshot() {
+  return current;
+}
+function subscribeIRSnapshot(fn) {
+  listeners3.add(fn);
+  return () => listeners3.delete(fn);
+}
+
+// src/monaco/useBreakpoints.ts
+var MOUSE_TARGET_GUTTER_GLYPH_MARGIN = 2;
+var baseStyleInjected2 = false;
+function ensureBaseBreakpointStyle() {
+  if (baseStyleInjected2 || typeof document === "undefined") return;
+  baseStyleInjected2 = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    .stave-bp-active {
+      background: radial-gradient(circle, #ef4444 30%, transparent 30%);
+      width: 14px !important;
+      margin-left: 4px;
+      cursor: pointer;
+    }
+    .stave-bp-orphaned {
+      background: radial-gradient(circle, #6b7280 30%, transparent 30%);
+      width: 14px !important;
+      margin-left: 4px;
+      opacity: 0.5;
+      cursor: pointer;
+    }
+    .stave-bp-hovered {
+      background: radial-gradient(circle, rgba(239, 68, 68, 0.4) 30%, transparent 30%);
+      width: 14px !important;
+      margin-left: 4px;
+      cursor: pointer;
+    }
+  `;
+  document.head.appendChild(style);
+}
+function useBreakpoints(editor, store, onResume) {
+  const collectionRef = useRef(null);
+  const clearAll = useCallback(() => {
+    collectionRef.current?.clear();
+    collectionRef.current = null;
+  }, []);
+  useEffect(() => {
+    if (!editor || !onResume) return;
+    const action = editor.addAction({
+      id: "stave.debugger.resume",
+      label: "Debugger: Resume",
+      keybindings: [],
+      contextMenuGroupId: "navigation",
+      run: () => {
+        onResume();
+      }
+    });
+    return () => {
+      action.dispose();
+    };
+  }, [editor, onResume]);
+  useEffect(() => {
+    if (!editor || !store) return;
+    ensureBaseBreakpointStyle();
+    let currentSnapshot = getIRSnapshot();
+    const render = () => {
+      const model = editor.getModel();
+      if (!model) return;
+      const entries2 = store.entries();
+      if (entries2.size === 0) {
+        collectionRef.current?.clear();
+        collectionRef.current = null;
+        return;
+      }
+      const lineState = /* @__PURE__ */ new Map();
+      const snap = currentSnapshot;
+      for (const [id, meta] of entries2) {
+        const event = snap?.irNodeIdLookup.get(id);
+        if (event && event.loc && event.loc.length > 0) {
+          let line2 = null;
+          for (const [lineKey, idsOnLine] of snap.irNodeIdsByLine) {
+            if (idsOnLine.includes(id)) {
+              line2 = lineKey;
+              break;
+            }
+          }
+          if (line2 == null) continue;
+          lineState.set(line2, "active");
+          continue;
+        }
+        const hint = meta.lineHint;
+        if (hint == null) continue;
+        const cur = lineState.get(hint);
+        if (cur !== "active") lineState.set(hint, "orphaned");
+      }
+      const decorations = [];
+      for (const [line2, state4] of lineState) {
+        decorations.push({
+          range: {
+            startLineNumber: line2,
+            startColumn: 1,
+            endLineNumber: line2,
+            endColumn: 1
+          },
+          options: {
+            isWholeLine: false,
+            glyphMarginClassName: state4 === "active" ? "stave-bp-active" : "stave-bp-orphaned",
+            stickiness: 1
+            // NeverGrowsWhenTypingAtEdges
+          }
+        });
+      }
+      if (collectionRef.current) {
+        collectionRef.current.set(decorations);
+      } else {
+        collectionRef.current = editor.createDecorationsCollection(decorations);
+      }
+    };
+    render();
+    const unsubStore = store.subscribe(render);
+    const unsubSnap = subscribeIRSnapshot((snap) => {
+      currentSnapshot = snap;
+      render();
+    });
+    const mouseDisposable = editor.onMouseDown((e) => {
+      if (e.target.type !== MOUSE_TARGET_GUTTER_GLYPH_MARGIN) return;
+      const line2 = e.target.position?.lineNumber;
+      if (line2 == null) return;
+      const snap = getIRSnapshot();
+      const ids = snap?.irNodeIdsByLine.get(line2);
+      if (!ids || ids.length === 0) return;
+      store.toggleSet(ids, { lineHint: line2 });
+    });
+    return () => {
+      unsubStore();
+      unsubSnap();
+      mouseDisposable.dispose();
+      collectionRef.current?.clear();
+      collectionRef.current = null;
+    };
+  }, [editor, store]);
   return { clearAll };
 }
 
@@ -16199,7 +16656,7 @@ function clearLineMarkers(monaco, model, owner) {
 
 // src/visualizers/namedVizRegistry.ts
 var registry = /* @__PURE__ */ new Map();
-var listeners2 = /* @__PURE__ */ new Set();
+var listeners4 = /* @__PURE__ */ new Set();
 function registerNamedViz(name2, descriptor) {
   const existing = registry.get(name2);
   if (existing === descriptor) return;
@@ -16221,17 +16678,17 @@ function listNamedVizEntries() {
   return Array.from(registry.entries());
 }
 function onNamedVizChanged(cb) {
-  listeners2.add(cb);
+  listeners4.add(cb);
   let unsubscribed = false;
   return () => {
     if (unsubscribed) return;
     unsubscribed = true;
-    listeners2.delete(cb);
+    listeners4.delete(cb);
   };
 }
 function notifyListeners() {
-  if (listeners2.size === 0) return;
-  const snapshot = Array.from(listeners2);
+  if (listeners4.size === 0) return;
+  const snapshot = Array.from(listeners4);
   for (const cb of snapshot) {
     try {
       cb();
@@ -16969,7 +17426,8 @@ var MONACO_OPTIONS = {
     useShadows: false
   },
   lineNumbersMinChars: 3,
-  glyphMargin: false,
+  glyphMargin: true,
+  // Phase 20-07 — gutter glyphs render breakpoint markers via useBreakpoints
   folding: false,
   renderLineHighlight: "line",
   cursorBlinking: "smooth",
@@ -16993,6 +17451,8 @@ function EditorView({
   const viewZoneHandleRef = useRef(null);
   const lastPayloadRef = useRef(null);
   const [hapStream, setHapStream] = useState(null);
+  const [breakpointStore, setBreakpointStore] = useState(null);
+  const [onResume, setOnResume] = useState(null);
   const [editorReady, setEditorReady] = useState(false);
   useEffect(() => {
     if (!containerRef.current) return;
@@ -17009,6 +17469,8 @@ function EditorView({
       { kind: "file", fileId },
       (payload) => {
         setHapStream(payload?.hapStream ?? null);
+        setBreakpointStore(payload?.breakpointStore ?? null);
+        setOnResume(() => payload?.onResume ?? null);
         lastPayloadRef.current = payload;
         if (payload?.inlineViz?.vizRequests?.size && editorRef.current) {
           viewZoneHandleRef.current?.cleanup();
@@ -17055,6 +17517,7 @@ function EditorView({
     };
   }, [fileId]);
   useHighlighting(editorRef.current, hapStream);
+  useBreakpoints(editorRef.current, breakpointStore, onResume ?? void 0);
   useEffect(() => {
     return () => {
       if (editorRef.current) unregisterEditor(fileId, editorRef.current);
@@ -17236,7 +17699,7 @@ function safeLocalStorage2() {
   }
 }
 var values = /* @__PURE__ */ new Map();
-var listeners3 = /* @__PURE__ */ new Map();
+var listeners5 = /* @__PURE__ */ new Map();
 function keyFor(fileId) {
   return `${STORAGE_PREFIX}${fileId}`;
 }
@@ -17254,22 +17717,22 @@ function setVizLive(fileId, on) {
   if (prev === on) return;
   values.set(fileId, on);
   safeLocalStorage2()?.setItem(keyFor(fileId), on ? "1" : "0");
-  const set = listeners3.get(fileId);
+  const set = listeners5.get(fileId);
   if (set) for (const cb of Array.from(set)) cb(on);
 }
 function toggleVizLive(fileId) {
   setVizLive(fileId, !getVizLive(fileId));
 }
 function onVizLiveChange(fileId, cb) {
-  let set = listeners3.get(fileId);
+  let set = listeners5.get(fileId);
   if (!set) {
     set = /* @__PURE__ */ new Set();
-    listeners3.set(fileId, set);
+    listeners5.set(fileId, set);
   }
   set.add(cb);
   return () => {
     set.delete(cb);
-    if (set.size === 0) listeners3.delete(fileId);
+    if (set.size === 0) listeners5.delete(fileId);
   };
 }
 function payloadKey(ref, payload) {
@@ -18265,9 +18728,9 @@ function findBuiltinExampleSource(sourceId) {
 
 // src/workspace/bottomPanel/bottomPanelRegistry.ts
 var tabs = /* @__PURE__ */ new Map();
-var listeners4 = /* @__PURE__ */ new Set();
+var listeners6 = /* @__PURE__ */ new Set();
 function notify2() {
-  for (const l of listeners4) {
+  for (const l of listeners6) {
     try {
       l();
     } catch {
@@ -18296,9 +18759,9 @@ function getBottomPanelTab(id) {
   return tabs.get(id);
 }
 function subscribeToBottomPanelTabs(cb) {
-  listeners4.add(cb);
+  listeners6.add(cb);
   return () => {
-    listeners4.delete(cb);
+    listeners6.delete(cb);
   };
 }
 
@@ -20438,6 +20901,7 @@ var LiveCodingRuntime = class {
       }
       scheduler = this.bufferedSchedulerRef;
     }
+    const breakpointStore = this.engine.getBreakpointStore?.() ?? void 0;
     const payload = {
       hapStream: streaming?.hapStream,
       analyser: audio?.analyser,
@@ -20448,7 +20912,12 @@ var LiveCodingRuntime = class {
       // shape. addInlineViewZones reads queryable.trackSchedulers,
       // audio.trackAnalysers, inlineViz.trackStreams — the flat fields
       // above don't carry per-track data.
-      engineComponents: this.engine.components
+      engineComponents: this.engine.components,
+      // Phase 20-07 — Monaco gutter breakpoint UI consumes via the bus.
+      breakpointStore,
+      onResume: breakpointStore ? () => {
+        this.resume();
+      } : void 0
     };
     workspaceAudioBus.publish(this.fileId, payload);
     try {
@@ -20664,6 +21133,44 @@ var LiveCodingRuntime = class {
    */
   getHapStream() {
     return this.engine.components.streaming?.hapStream ?? null;
+  }
+  // -------------------------------------------------------------------------
+  // Phase 20-07 — debugger pause/resume + BreakpointStore accessor.
+  //
+  // Mirror of the 20-06 `getHapStream` accessor pattern: the engine owns
+  // the state, the runtime is a thin pass-through. Optional-chained
+  // delegates via `?.()` so non-Strudel runtimes (DemoEngine, SonicPi)
+  // that don't implement these methods are no-ops, not exceptions
+  // (LiveCodingEngine interface keeps them unrequired in v1).
+  // -------------------------------------------------------------------------
+  /** Phase 20-07 — explicit user-driven pause. Engine pauses scheduler. */
+  pause() {
+    this.engine.pause?.();
+  }
+  /** Phase 20-07 — resume after pause (or breakpoint hit). */
+  resume() {
+    this.engine.resume?.();
+  }
+  /** Phase 20-07 — current debugger pause state (false on engines without pause). */
+  getPaused() {
+    return this.engine.getPaused?.() ?? false;
+  }
+  /**
+   * Phase 20-07 — subscribe to engine pause-state transitions. Returns a
+   * disposer. No-op disposer when the engine doesn't implement
+   * onPausedChanged (non-Strudel runtimes).
+   */
+  onPausedChanged(listener) {
+    return this.engine.onPausedChanged?.(listener) ?? (() => {
+    });
+  }
+  /**
+   * Phase 20-07 — accessor onto the engine's BreakpointStore. Returns
+   * null when the engine doesn't expose one (non-Strudel runtimes / not
+   * yet initialized). Mirrors `getHapStream`'s shape.
+   */
+  getBreakpointStore() {
+    return this.engine.getBreakpointStore?.() ?? null;
   }
   // -------------------------------------------------------------------------
   // Internal listener dispatchers — snapshot-then-iterate so a listener
@@ -34145,113 +34652,6 @@ function emitFromGlobal(err2, _kind) {
   });
 }
 
-// src/engine/timelineCapture.ts
-var DEFAULT_CAPACITY = 30;
-var entries = [];
-var capacity = DEFAULT_CAPACITY;
-var listeners5 = /* @__PURE__ */ new Set();
-function fanOut() {
-  for (const l of listeners5) {
-    try {
-      l();
-    } catch {
-    }
-  }
-}
-function captureSnapshot(snap, meta = {}) {
-  try {
-    Object.freeze(snap);
-    Object.freeze(snap.passes);
-  } catch {
-  }
-  const entry = Object.freeze({
-    snapshot: snap,
-    ts: meta.ts ?? snap.ts ?? Date.now(),
-    cycleCount: meta.cycleCount ?? null
-  });
-  entries.push(entry);
-  while (entries.length > capacity) {
-    entries.shift();
-  }
-  fanOut();
-}
-function getCaptureBuffer() {
-  return entries;
-}
-function subscribeCapture(l) {
-  listeners5.add(l);
-  return () => {
-    listeners5.delete(l);
-  };
-}
-function clearCapture() {
-  entries = [];
-  fanOut();
-}
-function getCaptureCapacity() {
-  return capacity;
-}
-function setCaptureCapacity(n) {
-  if (!Number.isFinite(n) || n < 1) return;
-  capacity = Math.floor(n);
-  if (entries.length > capacity) {
-    entries = entries.slice(-capacity);
-  }
-  fanOut();
-}
-
-// src/engine/irInspector.ts
-var current = null;
-var listeners6 = /* @__PURE__ */ new Set();
-function enrichWithLookups(snap) {
-  const idLookup = /* @__PURE__ */ new Map();
-  const locLookup = /* @__PURE__ */ new Map();
-  for (const e of snap.events) {
-    if (e.irNodeId) idLookup.set(e.irNodeId, e);
-    if (e.loc && e.loc.length > 0) {
-      const key = `${e.loc[0].start}:${e.loc[0].end}`;
-      const arr = locLookup.get(key);
-      if (arr) arr.push(e);
-      else locLookup.set(key, [e]);
-    }
-  }
-  return {
-    ...snap,
-    irNodeIdLookup: idLookup,
-    irNodeLocLookup: locLookup
-  };
-}
-function publishIRSnapshot(snap, meta) {
-  const enriched = enrichWithLookups(snap);
-  current = enriched;
-  captureSnapshot(enriched, {
-    ts: enriched.ts,
-    cycleCount: meta?.cycleCount ?? null
-  });
-  for (const l of listeners6) {
-    try {
-      l(enriched);
-    } catch {
-    }
-  }
-}
-function clearIRSnapshot() {
-  current = null;
-  for (const l of listeners6) {
-    try {
-      l(null);
-    } catch {
-    }
-  }
-}
-function getIRSnapshot() {
-  return current;
-}
-function subscribeIRSnapshot(fn) {
-  listeners6.add(fn);
-  return () => listeners6.delete(fn);
-}
-
-export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

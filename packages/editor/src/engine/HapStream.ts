@@ -59,6 +59,12 @@ export class HapStream {
    * onto the fan-out HapEvent. PV38 clause 2 onTrigger half. Single-
    * strategy match (P50) — same helper as the queryArc-side enrichment in
    * `normalizeStrudelHap`.
+   *
+   * Phase 20-07 (T-α-2) — returns the enriched HapEvent so the engine's
+   * wrappedOutput hit-check can read `event.irNodeId` in O(1) without
+   * re-running findMatchedEvent (P50 — single-strategy match preserved).
+   * Additive: 8 existing test callers + 1 production caller currently
+   * ignore the void return; widening void → HapEvent does not break them.
    */
   emit(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -68,7 +74,7 @@ export class HapStream {
     cps: number,
     audioCtxCurrentTime: number,
     lookup?: ReadonlyMap<string, IREvent[]>
-  ): void {
+  ): HapEvent {
     const scheduledAheadMs = (deadline - audioCtxCurrentTime) * 1000
     const audioDuration = duration
 
@@ -94,6 +100,7 @@ export class HapStream {
     }
 
     this.emitEvent(event)
+    return event
   }
 
   /**

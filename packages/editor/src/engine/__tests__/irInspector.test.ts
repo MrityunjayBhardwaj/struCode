@@ -8,6 +8,7 @@ import {
   type IRSnapshotInput,
 } from '../irInspector'
 import { IR } from '../../ir/PatternIR'
+import type { IREvent } from '../../ir/IREvent'
 
 const sample = (): IRSnapshotInput => {
   const ir = IR.play('c4')
@@ -145,5 +146,92 @@ describe('irInspector store', () => {
     expect(got).not.toBeNull()
     expect(got!.irNodeIdLookup).toBeInstanceOf(Map)
     expect(got!.irNodeLocLookup).toBeInstanceOf(Map)
+    expect(got!.irNodeIdsByLine).toBeInstanceOf(Map)
+  })
+
+  // -------------------------------------------------------------------
+  // 20-07 — irNodeIdsByLine substrate (PV38 clause 1; pre-substrate for
+  // BreakpointStore gutter-click resolver). Tests validate the publish-
+  // time line index built by enrichWithLookups: every event with both
+  // irNodeId and loc[0] contributes its id to the bucket keyed by the
+  // 1-based Monaco line number derived from snap.code.
+  // -------------------------------------------------------------------
+
+  describe('20-07 — irNodeIdsByLine substrate (PV38)', () => {
+    const stubIR = IR.play('c4')
+    const makeEvent = (id: string | undefined, start: number, end: number): IREvent => ({
+      irNodeId: id,
+      trackId: 't',
+      s: 'bd',
+      begin: 0,
+      end: 1,
+      endClipped: 1,
+      loc: [{ start, end }],
+      note: null,
+      freq: null,
+      gain: 1,
+      velocity: 1,
+      color: null,
+    })
+
+    it('groups irNodeIds by 1-based Monaco line number', () => {
+      const code = 'line1\nline2\nline3 with bd here'
+      // Newlines at offsets 5 and 11 → offsets 0..4 → line 1, 6..10 →
+      // line 2, 12+ → line 3. Pick a start on line 1 (offset 0) and
+      // line 3 (offset 18).
+      publishIRSnapshot({
+        ts: 1,
+        runtime: 'strudel',
+        code,
+        passes: [{ name: 'final', ir: stubIR }],
+        ir: stubIR,
+        events: [
+          makeEvent('id-line1', 0, 5),
+          makeEvent('id-line3', 18, 20),
+        ],
+      })
+      const snap = getIRSnapshot()!
+      expect(snap.irNodeIdsByLine.get(1)).toEqual(['id-line1'])
+      expect(snap.irNodeIdsByLine.get(3)).toEqual(['id-line3'])
+      expect(snap.irNodeIdsByLine.get(2)).toBeUndefined()
+    })
+
+    it('groups multiple ids on the same line into a single bucket', () => {
+      const code = 's("bd hh sd")'
+      publishIRSnapshot({
+        ts: 1,
+        runtime: 'strudel',
+        code,
+        passes: [{ name: 'final', ir: stubIR }],
+        ir: stubIR,
+        events: [
+          makeEvent('id-bd', 3, 5),
+          makeEvent('id-hh', 6, 8),
+          makeEvent('id-sd', 9, 11),
+        ],
+      })
+      const snap = getIRSnapshot()!
+      expect(snap.irNodeIdsByLine.get(1)).toEqual(['id-bd', 'id-hh', 'id-sd'])
+    })
+
+    it('omits events without irNodeId (PV37 alignment)', () => {
+      const code = 's("bd")'
+      publishIRSnapshot({
+        ts: 1,
+        runtime: 'strudel',
+        code,
+        passes: [{ name: 'final', ir: stubIR }],
+        ir: stubIR,
+        events: [makeEvent(undefined, 3, 5)],
+      })
+      const snap = getIRSnapshot()!
+      expect(snap.irNodeIdsByLine.size).toBe(0)
+    })
+
+    it('returns empty Map when snap has no events', () => {
+      publishIRSnapshot({ ...sample(), events: [] })
+      const snap = getIRSnapshot()!
+      expect(snap.irNodeIdsByLine.size).toBe(0)
+    })
   })
 })
