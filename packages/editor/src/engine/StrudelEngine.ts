@@ -1,4 +1,5 @@
 import { HapStream } from './HapStream'
+import { BreakpointStore } from './BreakpointStore'
 import { LiveRecorder } from './LiveRecorder'
 import { OfflineRenderer } from './OfflineRenderer'
 import { normalizeStrudelHap } from './NormalizedHap'
@@ -106,6 +107,17 @@ export class StrudelEngine implements LiveCodingEngine {
   // success, cleared on failure).
   private lastIRNodeLocLookup: ReadonlyMap<string, IREvent[]> | null = null
 
+  // Phase 20-07 (PK13 step 9) — engine-attached breakpoint registry.
+  // Per-engine scope (PV33). The hit-check in `wrappedOutput` reads
+  // `breakpointStore.has(irNodeId)` on the audio scheduler hot path.
+  private breakpointStore: BreakpointStore = new BreakpointStore()
+  // Phase 20-07 — engine-driven pause state. Mirrored to consumers via
+  // `onPausedChanged` listeners. Set when the hit-check pauses the
+  // scheduler (engine pauses ITSELF on hit) and via the public pause()
+  // method. Idempotence guarded by setPaused().
+  private isPausedState: boolean = false
+  private pauseChangedListeners: Set<(paused: boolean) => void> = new Set()
+
   async init(): Promise<void> {
     if (this.initialized) return
 
@@ -193,8 +205,23 @@ export class StrudelEngine implements LiveCodingEngine {
     //   t = current AudioContext.currentTime
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const wrappedOutput = async (hap: any, deadline: number, duration: number, cps: number, t: number) => {
-      // Emit to all visualizers / highlighters BEFORE triggering audio
-      hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime, this.lastIRNodeLocLookup ?? undefined)
+      // Phase 20-07 (T-α-2) — emit returns the enriched HapEvent so the
+      // breakpoint hit-check below reads `irNodeId` in O(1) without
+      // re-running findMatchedEvent. P50 single-strategy match preserved.
+      const enriched = hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime, this.lastIRNodeLocLookup ?? undefined)
+
+      // Phase 20-07 (PK13 step 9 / DEC-AMENDED-3) — breakpoint hit-check.
+      // PERF: O(1) Set.has() on the audio scheduler hot path; do NOT
+      // extend to predicate evaluation here (D-03 forbids).
+      // Order: emit fired ABOVE so the user SEES which row caused the
+      // break before the scheduler pauses (DEC-AMENDED-3). PV37 alignment
+      // — undefined `irNodeId` never hits.
+      if (enriched.irNodeId && this.breakpointStore.has(enriched.irNodeId)) {
+        this.repl?.scheduler?.pause()  // ← pause, NOT stop (DEC-AMENDED-1; cyclist.mjs:112-116 vs :117-122)
+        this.setPaused(true)
+        return  // skip audio dispatch — synchronous early return
+      }
+
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return await (webaudioOutput as any)(hap, deadline, duration, cps, t)
@@ -532,6 +559,74 @@ export class StrudelEngine implements LiveCodingEngine {
     this.repl?.scheduler?.stop()
   }
 
+  /**
+   * Phase 20-07 (DEC-AMENDED-1) — debugger pause. Calls
+   * `scheduler.pause()` (NOT `.stop()`) — pause preserves cycle position
+   * (cyclist.mjs:112-116), stop rewinds lastEnd to 0 (cyclist.mjs:117-122).
+   * Idempotent: setPaused() guards against double-fire of listeners (T17).
+   */
+  pause(): void {
+    this.repl?.scheduler?.pause?.()
+    this.setPaused(true)
+  }
+
+  /**
+   * Phase 20-07 — debugger resume. Calls `scheduler.start()` which uses
+   * the preserved lastEnd from pause (cyclist.mjs:101-111). Idempotent.
+   */
+  resume(): void {
+    this.repl?.scheduler?.start?.()
+    this.setPaused(false)
+  }
+
+  /** Current debugger pause state (true after a breakpoint hit). */
+  getPaused(): boolean {
+    return this.isPausedState
+  }
+
+  /**
+   * Subscribe to engine pause-state transitions. Mirrors the
+   * subscriber-set pattern used by `LiveCodingRuntime.onPlayingChanged`
+   * (RESEARCH Q3). Returns a disposer.
+   */
+  onPausedChanged(listener: (paused: boolean) => void): () => void {
+    this.pauseChangedListeners.add(listener)
+    let unsubscribed = false
+    return () => {
+      if (unsubscribed) return
+      unsubscribed = true
+      this.pauseChangedListeners.delete(listener)
+    }
+  }
+
+  /**
+   * Phase 20-07 — accessor onto the engine's BreakpointStore. The
+   * runtime exposes this through its own `getBreakpointStore()` so the
+   * editor's useBreakpoints hook (Wave β) and the Inspector (Wave γ)
+   * share a single store.
+   */
+  getBreakpointStore(): BreakpointStore {
+    return this.breakpointStore
+  }
+
+  /**
+   * Internal — flip pause state and fan out to subscribers, with an
+   * idempotence guard (T17): both Inspector + Monaco "Resume" surfaces
+   * may fire setPaused(false) simultaneously; this short-circuits the
+   * second call so listeners never see a redundant transition.
+   */
+  private setPaused(paused: boolean): void {
+    if (this.isPausedState === paused) return
+    this.isPausedState = paused
+    for (const l of this.pauseChangedListeners) {
+      try {
+        l(paused)
+      } catch {
+        /* listener errors don't break dispatch */
+      }
+    }
+  }
+
   async record(durationSeconds: number): Promise<Blob> {
     if (!this.analyserNode || !this.audioCtx) {
       throw new Error('StrudelEngine not initialized — call init() first')
@@ -656,6 +751,9 @@ export class StrudelEngine implements LiveCodingEngine {
     }
     this.trackAnalysers.clear()
     this.trackOrbit.clear()
+    // Phase 20-07 — clear breakpoint registry + pause listeners on dispose.
+    this.breakpointStore.dispose()
+    this.pauseChangedListeners.clear()
     this.initialized = false
     this.repl = null
   }

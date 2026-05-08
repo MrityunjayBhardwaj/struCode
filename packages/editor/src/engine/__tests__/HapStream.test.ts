@@ -76,6 +76,30 @@ describe('20-06 — HapStream.emit enriches HapEvent with irNodeId via lookup (P
     expect('irNodeId' in captured[0]).toBe(false)
   })
 
+  it('20-07 (T-α-2) — emit returns the enriched HapEvent (same object as fan-out)', () => {
+    // The engine's wrappedOutput hit-check reads `irNodeId` off this
+    // return value to avoid re-running findMatchedEvent. Object identity
+    // matters: subscribers + caller must see the SAME instance so any
+    // mutation discipline lands on a single object.
+    const irEvent: IREvent = {
+      begin: 0.5, end: 1.0, endClipped: 1.0,
+      note: 'c4', freq: null, s: null, gain: 1, velocity: 1, color: null,
+      loc: [{ start: 5, end: 10 }],
+      irNodeId: 'returnId01',
+    }
+    const lookup = new Map<string, IREvent[]>([['5:10', [irEvent]]])
+    const hs = new HapStream()
+    const captured: HapEvent[] = []
+    hs.on(e => captured.push(e))
+    const result = hs.emit(makeHap({ begin: 0.5 }), 0.1, 0.5, 1, 0, lookup)
+    // Return is the same object the subscriber received.
+    expect(captured).toHaveLength(1)
+    expect(result).toBe(captured[0])
+    // Enriched fields are populated on the returned event.
+    expect(result.irNodeId).toBe('returnId01')
+    expect(result.audioTime).toBe(0.1)
+  })
+
   it('fast(N) shared-id disambig — closest-by-begin picks the right IREvent', () => {
     // Two IR events at the same loc with begins 0.0 and 0.5 (distinct
     // irNodeIds — exercises that the helper returns the matched event,

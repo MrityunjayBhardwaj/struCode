@@ -100,6 +100,7 @@
 
 import type { LiveCodingEngine } from '../../engine/LiveCodingEngine'
 import type { HapStream } from '../../engine/HapStream'
+import type { BreakpointStore } from '../../engine/BreakpointStore'
 import { BufferedScheduler } from '../../engine/BufferedScheduler'
 import { workspaceAudioBus } from '../WorkspaceAudioBus'
 import type {
@@ -649,6 +650,54 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
    */
   getHapStream(): HapStream | null {
     return this.engine.components.streaming?.hapStream ?? null
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 20-07 — debugger pause/resume + BreakpointStore accessor.
+  //
+  // Mirror of the 20-06 `getHapStream` accessor pattern: the engine owns
+  // the state, the runtime is a thin pass-through. Optional-chained
+  // delegates via `?.()` so non-Strudel runtimes (DemoEngine, SonicPi)
+  // that don't implement these methods are no-ops, not exceptions
+  // (LiveCodingEngine interface keeps them unrequired in v1).
+  // -------------------------------------------------------------------------
+
+  /** Phase 20-07 — explicit user-driven pause. Engine pauses scheduler. */
+  pause(): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(this.engine as any).pause?.()
+  }
+
+  /** Phase 20-07 — resume after pause (or breakpoint hit). */
+  resume(): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(this.engine as any).resume?.()
+  }
+
+  /** Phase 20-07 — current debugger pause state (false on engines without pause). */
+  getPaused(): boolean {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this.engine as any).getPaused?.() ?? false
+  }
+
+  /**
+   * Phase 20-07 — subscribe to engine pause-state transitions. Returns a
+   * disposer. No-op disposer when the engine doesn't implement
+   * onPausedChanged (non-Strudel runtimes).
+   */
+  onPausedChanged(listener: (paused: boolean) => void): () => void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this.engine as any).onPausedChanged?.(listener) ?? (() => {})
+  }
+
+  /**
+   * Phase 20-07 — accessor onto the engine's BreakpointStore. Returns
+   * null when the engine doesn't expose one (non-Strudel runtimes / not
+   * yet initialized). Mirrors `getHapStream`'s shape.
+   */
+  getBreakpointStore(): BreakpointStore | null {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this.engine as any).getBreakpointStore?.() ?? null
   }
 
   // -------------------------------------------------------------------------
