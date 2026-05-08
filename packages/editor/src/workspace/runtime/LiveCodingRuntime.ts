@@ -347,6 +347,8 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
     // Step 6 — build the payload. Every slot is optional; consumers guard.
     // The `audio` slot is forwarded whole (not just the analyser) so the
     // EditorView can reach `audioCtx` for highlighting timing math.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const breakpointStore = (this.engine as any).getBreakpointStore?.() ?? undefined
     const payload: AudioPayload = {
       hapStream: streaming?.hapStream,
       analyser: audio?.analyser,
@@ -358,6 +360,9 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
       // audio.trackAnalysers, inlineViz.trackStreams — the flat fields
       // above don't carry per-track data.
       engineComponents: this.engine.components,
+      // Phase 20-07 — Monaco gutter breakpoint UI consumes via the bus.
+      breakpointStore,
+      onResume: breakpointStore ? () => { this.resume() } : undefined,
     }
 
     // Step 7 — publish to the bus BEFORE play. Subscribers fire SYNC.

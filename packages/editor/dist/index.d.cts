@@ -2186,6 +2186,19 @@ interface AudioPayload {
      * viz renderers must read from this field to get per-track data.
      */
     readonly engineComponents?: Partial<EngineComponents>;
+    /**
+     * Phase 20-07 — per-engine breakpoint registry. The Monaco gutter UI in
+     * EditorView reads this to subscribe + render glyphs; the gutter click
+     * handler calls `toggleSet` to register breakpoints. Absent for engines
+     * that don't support the breakpoint protocol.
+     */
+    readonly breakpointStore?: BreakpointStore;
+    /**
+     * Phase 20-07 — invoked when the user clicks "Debugger: Resume" via the
+     * Monaco command palette. Calls `runtime.resume()`. Absent for engines
+     * without scheduler-pause support.
+     */
+    readonly onResume?: () => void;
 }
 /**
  * Description of a single registered publisher, returned from

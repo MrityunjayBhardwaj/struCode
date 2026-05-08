@@ -15755,7 +15755,7 @@ function payloadForRef(ref) {
 }
 function payloadsEquivalent(prev, next) {
   if (!prev) return false;
-  return prev.hapStream === next.hapStream && prev.analyser === next.analyser && prev.scheduler === next.scheduler && prev.inlineViz === next.inlineViz && prev.audio === next.audio;
+  return prev.hapStream === next.hapStream && prev.analyser === next.analyser && prev.scheduler === next.scheduler && prev.inlineViz === next.inlineViz && prev.audio === next.audio && prev.breakpointStore === next.breakpointStore && prev.onResume === next.onResume;
 }
 function notifySourcesChanged() {
   if (sourcesChangedListeners.size === 0) return;
@@ -15995,6 +15995,265 @@ function useHighlighting(editor, hapStream) {
       teardown(timeoutIdsRef.current, hapCollectionsRef.current);
     };
   }, [editor, hapStream]);
+  return { clearAll };
+}
+
+// src/engine/timelineCapture.ts
+var DEFAULT_CAPACITY = 30;
+var entries = [];
+var capacity = DEFAULT_CAPACITY;
+var listeners2 = /* @__PURE__ */ new Set();
+function fanOut() {
+  for (const l of listeners2) {
+    try {
+      l();
+    } catch {
+    }
+  }
+}
+function captureSnapshot(snap, meta = {}) {
+  try {
+    Object.freeze(snap);
+    Object.freeze(snap.passes);
+  } catch {
+  }
+  const entry = Object.freeze({
+    snapshot: snap,
+    ts: meta.ts ?? snap.ts ?? Date.now(),
+    cycleCount: meta.cycleCount ?? null
+  });
+  entries.push(entry);
+  while (entries.length > capacity) {
+    entries.shift();
+  }
+  fanOut();
+}
+function getCaptureBuffer() {
+  return entries;
+}
+function subscribeCapture(l) {
+  listeners2.add(l);
+  return () => {
+    listeners2.delete(l);
+  };
+}
+function clearCapture() {
+  entries = [];
+  fanOut();
+}
+function getCaptureCapacity() {
+  return capacity;
+}
+function setCaptureCapacity(n) {
+  if (!Number.isFinite(n) || n < 1) return;
+  capacity = Math.floor(n);
+  if (entries.length > capacity) {
+    entries = entries.slice(-capacity);
+  }
+  fanOut();
+}
+
+// src/engine/irInspector.ts
+var current = null;
+var listeners3 = /* @__PURE__ */ new Set();
+function enrichWithLookups(snap) {
+  const idLookup = /* @__PURE__ */ new Map();
+  const locLookup = /* @__PURE__ */ new Map();
+  const lineLookup = /* @__PURE__ */ new Map();
+  for (const e of snap.events) {
+    if (e.irNodeId) idLookup.set(e.irNodeId, e);
+    if (e.loc && e.loc.length > 0) {
+      const key = `${e.loc[0].start}:${e.loc[0].end}`;
+      const arr = locLookup.get(key);
+      if (arr) arr.push(e);
+      else locLookup.set(key, [e]);
+      if (e.irNodeId) {
+        const line2 = countLines(snap.code, e.loc[0].start);
+        const ids = lineLookup.get(line2);
+        if (ids) {
+          if (!ids.includes(e.irNodeId)) ids.push(e.irNodeId);
+        } else {
+          lineLookup.set(line2, [e.irNodeId]);
+        }
+      }
+    }
+  }
+  return {
+    ...snap,
+    irNodeIdLookup: idLookup,
+    irNodeLocLookup: locLookup,
+    irNodeIdsByLine: lineLookup
+  };
+}
+function countLines(code, offset) {
+  let line2 = 1;
+  for (let i2 = 0; i2 < offset && i2 < code.length; i2++) {
+    if (code.charCodeAt(i2) === 10) line2++;
+  }
+  return line2;
+}
+function publishIRSnapshot(snap, meta) {
+  const enriched = enrichWithLookups(snap);
+  current = enriched;
+  captureSnapshot(enriched, {
+    ts: enriched.ts,
+    cycleCount: meta?.cycleCount ?? null
+  });
+  for (const l of listeners3) {
+    try {
+      l(enriched);
+    } catch {
+    }
+  }
+}
+function clearIRSnapshot() {
+  current = null;
+  for (const l of listeners3) {
+    try {
+      l(null);
+    } catch {
+    }
+  }
+}
+function getIRSnapshot() {
+  return current;
+}
+function subscribeIRSnapshot(fn) {
+  listeners3.add(fn);
+  return () => listeners3.delete(fn);
+}
+
+// src/monaco/useBreakpoints.ts
+var MOUSE_TARGET_GUTTER_GLYPH_MARGIN = 2;
+var baseStyleInjected2 = false;
+function ensureBaseBreakpointStyle() {
+  if (baseStyleInjected2 || typeof document === "undefined") return;
+  baseStyleInjected2 = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    .stave-bp-active {
+      background: radial-gradient(circle, #ef4444 30%, transparent 30%);
+      width: 14px !important;
+      margin-left: 4px;
+      cursor: pointer;
+    }
+    .stave-bp-orphaned {
+      background: radial-gradient(circle, #6b7280 30%, transparent 30%);
+      width: 14px !important;
+      margin-left: 4px;
+      opacity: 0.5;
+      cursor: pointer;
+    }
+    .stave-bp-hovered {
+      background: radial-gradient(circle, rgba(239, 68, 68, 0.4) 30%, transparent 30%);
+      width: 14px !important;
+      margin-left: 4px;
+      cursor: pointer;
+    }
+  `;
+  document.head.appendChild(style);
+}
+function useBreakpoints(editor, store, onResume) {
+  const collectionRef = useRef(null);
+  const clearAll = useCallback(() => {
+    collectionRef.current?.clear();
+    collectionRef.current = null;
+  }, []);
+  useEffect(() => {
+    if (!editor || !onResume) return;
+    const action = editor.addAction({
+      id: "stave.debugger.resume",
+      label: "Debugger: Resume",
+      keybindings: [],
+      contextMenuGroupId: "navigation",
+      run: () => {
+        onResume();
+      }
+    });
+    return () => {
+      action.dispose();
+    };
+  }, [editor, onResume]);
+  useEffect(() => {
+    if (!editor || !store) return;
+    ensureBaseBreakpointStyle();
+    let currentSnapshot = getIRSnapshot();
+    const render = () => {
+      const model = editor.getModel();
+      if (!model) return;
+      const entries2 = store.entries();
+      if (entries2.size === 0) {
+        collectionRef.current?.clear();
+        collectionRef.current = null;
+        return;
+      }
+      const lineState = /* @__PURE__ */ new Map();
+      const snap = currentSnapshot;
+      for (const [id, meta] of entries2) {
+        const event = snap?.irNodeIdLookup.get(id);
+        if (event && event.loc && event.loc.length > 0) {
+          let line2 = null;
+          for (const [lineKey, idsOnLine] of snap.irNodeIdsByLine) {
+            if (idsOnLine.includes(id)) {
+              line2 = lineKey;
+              break;
+            }
+          }
+          if (line2 == null) continue;
+          lineState.set(line2, "active");
+          continue;
+        }
+        const hint = meta.lineHint;
+        if (hint == null) continue;
+        const cur = lineState.get(hint);
+        if (cur !== "active") lineState.set(hint, "orphaned");
+      }
+      const decorations = [];
+      for (const [line2, state4] of lineState) {
+        decorations.push({
+          range: {
+            startLineNumber: line2,
+            startColumn: 1,
+            endLineNumber: line2,
+            endColumn: 1
+          },
+          options: {
+            isWholeLine: false,
+            glyphMarginClassName: state4 === "active" ? "stave-bp-active" : "stave-bp-orphaned",
+            stickiness: 1
+            // NeverGrowsWhenTypingAtEdges
+          }
+        });
+      }
+      if (collectionRef.current) {
+        collectionRef.current.set(decorations);
+      } else {
+        collectionRef.current = editor.createDecorationsCollection(decorations);
+      }
+    };
+    render();
+    const unsubStore = store.subscribe(render);
+    const unsubSnap = subscribeIRSnapshot((snap) => {
+      currentSnapshot = snap;
+      render();
+    });
+    const mouseDisposable = editor.onMouseDown((e) => {
+      if (e.target.type !== MOUSE_TARGET_GUTTER_GLYPH_MARGIN) return;
+      const line2 = e.target.position?.lineNumber;
+      if (line2 == null) return;
+      const snap = getIRSnapshot();
+      const ids = snap?.irNodeIdsByLine.get(line2);
+      if (!ids || ids.length === 0) return;
+      store.toggleSet(ids, { lineHint: line2 });
+    });
+    return () => {
+      unsubStore();
+      unsubSnap();
+      mouseDisposable.dispose();
+      collectionRef.current?.clear();
+      collectionRef.current = null;
+    };
+  }, [editor, store]);
   return { clearAll };
 }
 
@@ -16397,7 +16656,7 @@ function clearLineMarkers(monaco, model, owner) {
 
 // src/visualizers/namedVizRegistry.ts
 var registry = /* @__PURE__ */ new Map();
-var listeners2 = /* @__PURE__ */ new Set();
+var listeners4 = /* @__PURE__ */ new Set();
 function registerNamedViz(name2, descriptor) {
   const existing = registry.get(name2);
   if (existing === descriptor) return;
@@ -16419,17 +16678,17 @@ function listNamedVizEntries() {
   return Array.from(registry.entries());
 }
 function onNamedVizChanged(cb) {
-  listeners2.add(cb);
+  listeners4.add(cb);
   let unsubscribed = false;
   return () => {
     if (unsubscribed) return;
     unsubscribed = true;
-    listeners2.delete(cb);
+    listeners4.delete(cb);
   };
 }
 function notifyListeners() {
-  if (listeners2.size === 0) return;
-  const snapshot = Array.from(listeners2);
+  if (listeners4.size === 0) return;
+  const snapshot = Array.from(listeners4);
   for (const cb of snapshot) {
     try {
       cb();
@@ -17167,7 +17426,8 @@ var MONACO_OPTIONS = {
     useShadows: false
   },
   lineNumbersMinChars: 3,
-  glyphMargin: false,
+  glyphMargin: true,
+  // Phase 20-07 — gutter glyphs render breakpoint markers via useBreakpoints
   folding: false,
   renderLineHighlight: "line",
   cursorBlinking: "smooth",
@@ -17191,6 +17451,8 @@ function EditorView({
   const viewZoneHandleRef = useRef(null);
   const lastPayloadRef = useRef(null);
   const [hapStream, setHapStream] = useState(null);
+  const [breakpointStore, setBreakpointStore] = useState(null);
+  const [onResume, setOnResume] = useState(null);
   const [editorReady, setEditorReady] = useState(false);
   useEffect(() => {
     if (!containerRef.current) return;
@@ -17207,6 +17469,8 @@ function EditorView({
       { kind: "file", fileId },
       (payload) => {
         setHapStream(payload?.hapStream ?? null);
+        setBreakpointStore(payload?.breakpointStore ?? null);
+        setOnResume(() => payload?.onResume ?? null);
         lastPayloadRef.current = payload;
         if (payload?.inlineViz?.vizRequests?.size && editorRef.current) {
           viewZoneHandleRef.current?.cleanup();
@@ -17253,6 +17517,7 @@ function EditorView({
     };
   }, [fileId]);
   useHighlighting(editorRef.current, hapStream);
+  useBreakpoints(editorRef.current, breakpointStore, onResume ?? void 0);
   useEffect(() => {
     return () => {
       if (editorRef.current) unregisterEditor(fileId, editorRef.current);
@@ -17434,7 +17699,7 @@ function safeLocalStorage2() {
   }
 }
 var values = /* @__PURE__ */ new Map();
-var listeners3 = /* @__PURE__ */ new Map();
+var listeners5 = /* @__PURE__ */ new Map();
 function keyFor(fileId) {
   return `${STORAGE_PREFIX}${fileId}`;
 }
@@ -17452,22 +17717,22 @@ function setVizLive(fileId, on) {
   if (prev === on) return;
   values.set(fileId, on);
   safeLocalStorage2()?.setItem(keyFor(fileId), on ? "1" : "0");
-  const set = listeners3.get(fileId);
+  const set = listeners5.get(fileId);
   if (set) for (const cb of Array.from(set)) cb(on);
 }
 function toggleVizLive(fileId) {
   setVizLive(fileId, !getVizLive(fileId));
 }
 function onVizLiveChange(fileId, cb) {
-  let set = listeners3.get(fileId);
+  let set = listeners5.get(fileId);
   if (!set) {
     set = /* @__PURE__ */ new Set();
-    listeners3.set(fileId, set);
+    listeners5.set(fileId, set);
   }
   set.add(cb);
   return () => {
     set.delete(cb);
-    if (set.size === 0) listeners3.delete(fileId);
+    if (set.size === 0) listeners5.delete(fileId);
   };
 }
 function payloadKey(ref, payload) {
@@ -18463,9 +18728,9 @@ function findBuiltinExampleSource(sourceId) {
 
 // src/workspace/bottomPanel/bottomPanelRegistry.ts
 var tabs = /* @__PURE__ */ new Map();
-var listeners4 = /* @__PURE__ */ new Set();
+var listeners6 = /* @__PURE__ */ new Set();
 function notify2() {
-  for (const l of listeners4) {
+  for (const l of listeners6) {
     try {
       l();
     } catch {
@@ -18494,9 +18759,9 @@ function getBottomPanelTab(id) {
   return tabs.get(id);
 }
 function subscribeToBottomPanelTabs(cb) {
-  listeners4.add(cb);
+  listeners6.add(cb);
   return () => {
-    listeners4.delete(cb);
+    listeners6.delete(cb);
   };
 }
 
@@ -20636,6 +20901,7 @@ var LiveCodingRuntime = class {
       }
       scheduler = this.bufferedSchedulerRef;
     }
+    const breakpointStore = this.engine.getBreakpointStore?.() ?? void 0;
     const payload = {
       hapStream: streaming?.hapStream,
       analyser: audio?.analyser,
@@ -20646,7 +20912,12 @@ var LiveCodingRuntime = class {
       // shape. addInlineViewZones reads queryable.trackSchedulers,
       // audio.trackAnalysers, inlineViz.trackStreams — the flat fields
       // above don't carry per-track data.
-      engineComponents: this.engine.components
+      engineComponents: this.engine.components,
+      // Phase 20-07 — Monaco gutter breakpoint UI consumes via the bus.
+      breakpointStore,
+      onResume: breakpointStore ? () => {
+        this.resume();
+      } : void 0
     };
     workspaceAudioBus.publish(this.fileId, payload);
     try {
@@ -34379,131 +34650,6 @@ function emitFromGlobal(err2, _kind) {
     line: loc?.line,
     column: loc?.column
   });
-}
-
-// src/engine/timelineCapture.ts
-var DEFAULT_CAPACITY = 30;
-var entries = [];
-var capacity = DEFAULT_CAPACITY;
-var listeners5 = /* @__PURE__ */ new Set();
-function fanOut() {
-  for (const l of listeners5) {
-    try {
-      l();
-    } catch {
-    }
-  }
-}
-function captureSnapshot(snap, meta = {}) {
-  try {
-    Object.freeze(snap);
-    Object.freeze(snap.passes);
-  } catch {
-  }
-  const entry = Object.freeze({
-    snapshot: snap,
-    ts: meta.ts ?? snap.ts ?? Date.now(),
-    cycleCount: meta.cycleCount ?? null
-  });
-  entries.push(entry);
-  while (entries.length > capacity) {
-    entries.shift();
-  }
-  fanOut();
-}
-function getCaptureBuffer() {
-  return entries;
-}
-function subscribeCapture(l) {
-  listeners5.add(l);
-  return () => {
-    listeners5.delete(l);
-  };
-}
-function clearCapture() {
-  entries = [];
-  fanOut();
-}
-function getCaptureCapacity() {
-  return capacity;
-}
-function setCaptureCapacity(n) {
-  if (!Number.isFinite(n) || n < 1) return;
-  capacity = Math.floor(n);
-  if (entries.length > capacity) {
-    entries = entries.slice(-capacity);
-  }
-  fanOut();
-}
-
-// src/engine/irInspector.ts
-var current = null;
-var listeners6 = /* @__PURE__ */ new Set();
-function enrichWithLookups(snap) {
-  const idLookup = /* @__PURE__ */ new Map();
-  const locLookup = /* @__PURE__ */ new Map();
-  const lineLookup = /* @__PURE__ */ new Map();
-  for (const e of snap.events) {
-    if (e.irNodeId) idLookup.set(e.irNodeId, e);
-    if (e.loc && e.loc.length > 0) {
-      const key = `${e.loc[0].start}:${e.loc[0].end}`;
-      const arr = locLookup.get(key);
-      if (arr) arr.push(e);
-      else locLookup.set(key, [e]);
-      if (e.irNodeId) {
-        const line2 = countLines(snap.code, e.loc[0].start);
-        const ids = lineLookup.get(line2);
-        if (ids) {
-          if (!ids.includes(e.irNodeId)) ids.push(e.irNodeId);
-        } else {
-          lineLookup.set(line2, [e.irNodeId]);
-        }
-      }
-    }
-  }
-  return {
-    ...snap,
-    irNodeIdLookup: idLookup,
-    irNodeLocLookup: locLookup,
-    irNodeIdsByLine: lineLookup
-  };
-}
-function countLines(code, offset) {
-  let line2 = 1;
-  for (let i2 = 0; i2 < offset && i2 < code.length; i2++) {
-    if (code.charCodeAt(i2) === 10) line2++;
-  }
-  return line2;
-}
-function publishIRSnapshot(snap, meta) {
-  const enriched = enrichWithLookups(snap);
-  current = enriched;
-  captureSnapshot(enriched, {
-    ts: enriched.ts,
-    cycleCount: meta?.cycleCount ?? null
-  });
-  for (const l of listeners6) {
-    try {
-      l(enriched);
-    } catch {
-    }
-  }
-}
-function clearIRSnapshot() {
-  current = null;
-  for (const l of listeners6) {
-    try {
-      l(null);
-    } catch {
-    }
-  }
-}
-function getIRSnapshot() {
-  return current;
-}
-function subscribeIRSnapshot(fn) {
-  listeners6.add(fn);
-  return () => listeners6.delete(fn);
 }
 
 export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };

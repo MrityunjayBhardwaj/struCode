@@ -182,7 +182,9 @@ function payloadsEquivalent(
     prev.analyser === next.analyser &&
     prev.scheduler === next.scheduler &&
     prev.inlineViz === next.inlineViz &&
-    prev.audio === next.audio
+    prev.audio === next.audio &&
+    prev.breakpointStore === next.breakpointStore &&
+    prev.onResume === next.onResume
   )
 }
 

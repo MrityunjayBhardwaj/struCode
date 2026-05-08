@@ -38,6 +38,7 @@ import { useWorkspaceFile } from './useWorkspaceFile'
 import { ensureWorkspaceLanguages, toMonacoLanguage } from './languages'
 import { workspaceAudioBus } from './WorkspaceAudioBus'
 import { useHighlighting } from '../monaco/useHighlighting'
+import { useBreakpoints } from '../monaco/useBreakpoints'
 import { registerEditor, unregisterEditor, applyPersistedEditorOptions, registerMonacoNamespace } from './editorRegistry'
 import { setEvalError, clearEvalErrors } from '../monaco/diagnostics'
 import { addInlineViewZones } from '../visualizers/viewZones'
@@ -48,6 +49,7 @@ import type { EditorViewProps } from './types'
 import type { AudioPayload } from './types'
 import type { InlineZoneHandle } from '../visualizers/viewZones'
 import type { HapStream } from '../engine/HapStream'
+import type { BreakpointStore } from '../engine/BreakpointStore'
 
 /**
  * Resolve the EditorView `theme` prop to the matching Monaco theme name.
@@ -87,7 +89,7 @@ const MONACO_OPTIONS = {
     useShadows: false,
   },
   lineNumbersMinChars: 3,
-  glyphMargin: false,
+  glyphMargin: true,  // Phase 20-07 — gutter glyphs render breakpoint markers via useBreakpoints
   folding: false,
   renderLineHighlight: 'line' as const,
   cursorBlinking: 'smooth' as const,
@@ -123,6 +125,11 @@ export function EditorView({
 
   // HapStream from the bus payload — drives useHighlighting.
   const [hapStream, setHapStream] = useState<HapStream | null>(null)
+
+  // Phase 20-07 — BreakpointStore + onResume from the bus payload —
+  // drives useBreakpoints. Both null when no engine is publishing.
+  const [breakpointStore, setBreakpointStore] = useState<BreakpointStore | null>(null)
+  const [onResume, setOnResume] = useState<(() => void) | null>(null)
 
   // Flipped in `handleMonacoMount`; included in the bus-subscribe deps so a
   // split editor group re-subscribes AFTER `editorRef.current` is populated
@@ -169,6 +176,11 @@ export function EditorView({
       (payload: AudioPayload | null) => {
         // Drive highlighting via hapStream state.
         setHapStream(payload?.hapStream ?? null)
+        // Phase 20-07 — drive breakpoint UI via the same bus subscription.
+        setBreakpointStore(payload?.breakpointStore ?? null)
+        // useState's functional setter would invoke the callback; wrap to
+        // store the function as a value, not a state-update.
+        setOnResume(() => payload?.onResume ?? null)
         lastPayloadRef.current = payload
 
         if (
@@ -240,6 +252,13 @@ export function EditorView({
 
   // Active highlighting (S5) — driven by hapStream from bus subscription.
   useHighlighting(editorRef.current, hapStream)
+
+  // Phase 20-07 — Monaco gutter breakpoints. Reads BreakpointStore + onResume
+  // from the bus payload (LiveCodingRuntime publishes when the engine
+  // implements getBreakpointStore). Renders glyph decorations on store
+  // changes; gutter-click toggles via snap.irNodeIdsByLine; "Debugger:
+  // Resume" command registered when onResume is non-null.
+  useBreakpoints(editorRef.current, breakpointStore, onResume ?? undefined)
 
   // Unregister from the cross-file editor registry on unmount so
   // revealLineInFile doesn't reference a dead editor instance.
