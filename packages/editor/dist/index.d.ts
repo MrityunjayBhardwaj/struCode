@@ -44,6 +44,12 @@ interface IREvent {
     color: string | null;
     /** Source code ranges for highlighting */
     loc?: SourceLocation[];
+    /** Stable content-addressed id of the IR node that produced this event.
+     *  REQUIRED-by-convention for collect-produced events at the leaf arm
+     *  (PV38 clause 1; assigned by collect.ts:assignNodeId at the Play leaf).
+     *  Absent for hap-derived events with no IR-side match
+     *  (PV37-aligned runtime-only path). */
+    irNodeId?: string;
     /** Which track/loop produced this event */
     trackId?: string;
     /** Engine-specific extended parameters */
@@ -603,6 +609,13 @@ interface HapEvent {
         start: number;
         end: number;
     }> | null;
+    /**
+     * Set when the hap's structural loc matches an IR-published node
+     * (PV38 clause 2). Absent for runtime-only haps — same semantics as
+     * IREvent.irNodeId. Populated by HapStream.emit when a lookup is
+     * supplied (Phase 20-06).
+     */
+    irNodeId?: string;
 }
 type HapHandler$1 = (event: HapEvent) => void;
 /**
@@ -619,8 +632,15 @@ declare class HapStream {
      *
      * Parameters match Strudel's onTrigger signature:
      *   (hap, deadline, duration, cps, t)
+     *
+     * Optional 6th positional `lookup` (Phase 20-06) — when supplied AND the
+     * hap carries a structural loc, the published IR-side match is resolved
+     * via `findMatchedEvent` and the matched event's `irNodeId` is populated
+     * onto the fan-out HapEvent. PV38 clause 2 onTrigger half. Single-
+     * strategy match (P50) — same helper as the queryArc-side enrichment in
+     * `normalizeStrudelHap`.
      */
-    emit(hap: any, deadline: number, duration: number, cps: number, audioCtxCurrentTime: number): void;
+    emit(hap: any, deadline: number, duration: number, cps: number, audioCtxCurrentTime: number, lookup?: ReadonlyMap<string, IREvent[]>): void;
     /**
      * Emit a pre-constructed HapEvent directly.
      * Preferred API for non-Strudel engines that don't have raw hap objects.
@@ -807,6 +827,7 @@ declare class StrudelEngine implements LiveCodingEngine {
     private lastEvaluatedCode;
     private lastPatternIR;
     private lastIREvents;
+    private lastIRNodeLocLookup;
     init(): Promise<void>;
     evaluate(code: string): Promise<{
         error?: Error;
@@ -1031,8 +1052,12 @@ type NormalizedHap = IREvent;
  * but per-track schedulers (`$:` blocks) know their id and pass it
  * through so downstream consumers (DAW view, transform debugger) can
  * attribute every event to a producer.
+ *
+ * `irNodeLocLookup` is caller-supplied — engine threads the published
+ * snapshot's loc map so each hap can be enriched with its `irNodeId`
+ * by structural match (PV38 clause 2). Both optional — additive widening.
  */
-declare function normalizeStrudelHap(hap: any, trackId?: string): NormalizedHap;
+declare function normalizeStrudelHap(hap: any, trackId?: string, irNodeLocLookup?: ReadonlyMap<string, IREvent[]>): NormalizedHap;
 
 /**
  * Engine-agnostic IRPattern built from a live HapStream.
@@ -3952,6 +3977,17 @@ declare class LiveCodingRuntime implements LiveCodingRuntime$1 {
      * Phase 19-08 (#85). RESEARCH §2.
      */
     getCurrentCycle(): number | null;
+    /**
+     * Engine-owned HapStream, or `null` when the engine doesn't expose one
+     * (non-Strudel runtimes / not yet initialized). Mirrors `getCurrentCycle`'s
+     * shape — read-through accessor over the engine's components.
+     *
+     * Phase 20-06 — consumed by MusicalTimeline (closure-bound accessor pattern
+     * via StrudelEditorClient → StaveApp's `getHapStreamRef`) so the timeline
+     * can subscribe to live hap dispatch and glow rows on real fires
+     * (PV38 / PK13 step 8 — musician half).
+     */
+    getHapStream(): HapStream | null;
     private fireOnError;
     private firePlayingChanged;
     private fireEvaluateSuccess;
@@ -4623,7 +4659,19 @@ interface IRSnapshot {
     ir: PatternIR;
     /** Collected events for one cycle window starting at t=0. */
     events: IREvent[];
+    /** Lookup: irNodeId → IREvent. PV38 clause 1.
+     *  Built at publish time by enrichWithLookups; ReadonlyMap enforces
+     *  PV33 (snapshot immutability post-publish). */
+    irNodeIdLookup: ReadonlyMap<string, IREvent>;
+    /** Lookup: `${loc[0].start}:${loc[0].end}` → IREvent[]. Used by
+     *  engine-side hap matching (normalizeStrudelHap); haps don't carry
+     *  the hash, only the loc. ReadonlyMap enforces PV33. */
+    irNodeLocLookup: ReadonlyMap<string, IREvent[]>;
 }
+/** Input shape for publishIRSnapshot — caller does not construct lookups;
+ *  the publisher enriches via enrichWithLookups. Type-system enforces
+ *  this contract (Trap 9 mitigation — caller cannot bypass the publisher). */
+type IRSnapshotInput = Omit<IRSnapshot, 'irNodeIdLookup' | 'irNodeLocLookup'>;
 type Listener$2 = (snap: IRSnapshot | null) => void;
 /**
  * Publish a snapshot. Two parallel side-effects fire on every publish
@@ -4638,7 +4686,7 @@ type Listener$2 = (snap: IRSnapshot | null) => void;
  * Existing callers pass no `meta` and continue to compile; capture
  * defaults `cycleCount` to `null` in that case.
  */
-declare function publishIRSnapshot(snap: IRSnapshot, meta?: {
+declare function publishIRSnapshot(snap: IRSnapshotInput, meta?: {
     cycleCount?: number | null;
 }): void;
 declare function clearIRSnapshot(): void;

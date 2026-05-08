@@ -34,10 +34,12 @@
 'use client'
 
 import * as React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   type IRSnapshot,
   type IREvent,
+  type HapStream,
+  type HapEvent,
   getIRSnapshot,
   subscribeIRSnapshot,
   revealLineInFile,
@@ -67,6 +69,13 @@ export interface MusicalTimelineProps {
   /** Current cycles-per-second from the active runtime, or null. Used
    *  for the BPM segment of the status line. */
   readonly getCps: () => number | null
+  /**
+   * Phase 20-06 (PV38, PK13 step 7+8) — closure-bound accessor onto the
+   * active runtime's HapStream. Returns null when the engine isn't
+   * running or the runtime is non-Strudel. The timeline subscribes to
+   * this stream to drive activeKeys (D-01: real-hap REPLACES cycle-derived).
+   */
+  readonly getHapStream: () => HapStream | null
   /** Drawer open state — gates the rAF loop (Trap NEW-1). */
   readonly getDrawerOpen: () => boolean
   /** Active tab id — must equal `'musical-timeline'` for the rAF loop
@@ -264,27 +273,110 @@ export function MusicalTimeline(
       events: groups.find((g) => g.trackId === trackId)?.events ?? [],
     }))
 
-  // DV-12: Active-event derivation — memoized to avoid thrash on rAF ticks.
-  // Half-open interval [begin, endClipped). When currentCycle is null (paused
-  // or non-Strudel runtime), short-circuits to EMPTY_SET (Trap 8).
-  const activeKeys = useMemo<ReadonlySet<string>>(() => {
-    if (currentCycle == null || !Number.isFinite(currentCycle)) {
-      return EMPTY_SET
-    }
-    const out = new Set<string>()
-    for (const { trackId, events } of orderedTracks) {
-      for (let i = 0; i < events.length; i++) {
-        const e = events[i]
-        if (e.begin <= currentCycle && currentCycle < e.endClipped) {
-          out.add(`${trackId}-${i}`)
+  // ── Phase 20-06: HapStream subscription drives activeKeys (D-01 / DEC-NEW-1)
+  // ────────────────────────────────────────────────────────────────────────
+  //
+  // PV38 / PK13 step 8 — the cycle-derived `useMemo` (20-02 DV-12) is gone.
+  // Active-event derivation now mirrors the firing of actual haps: glow on
+  // hap fire, clear after audioDuration. Mirrors useHighlighting.ts:174-175
+  // arithmetic exactly.
+  //
+  // Resolve the live HapStream reactively. The accessor returns a different
+  // instance after a runtime swap (file-switch). Snapshot publish triggers
+  // re-render; a `useEffect` keyed on snapshot identity picks up the new
+  // HapStream (RESEARCH DEC-NEW-1 — snapshot is the reactive seam, not a
+  // 250ms poll). The accessor itself is closure-stable (StaveApp routes
+  // through a ref), so deps suppression is sound.
+  const [resolvedHapStream, setResolvedHapStream] = useState<HapStream | null>(
+    () => props.getHapStream(),
+  )
+  useEffect(() => {
+    const next = props.getHapStream()
+    setResolvedHapStream((prev) => (prev === next ? prev : next))
+    // Including snapshot in deps is the explicit reactive seam (DEC-NEW-1).
+    // props.getHapStream is closure-stable (ref-routed at StaveApp); not a
+    // missing dep but exhaustive-deps can't see through that, hence:
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot])
+
+  const [activeKeys, setActiveKeys] = useState<ReadonlySet<string>>(EMPTY_SET)
+  const timeoutIdsRef = useRef<number[]>([])
+
+  // orderedTracks is recomputed on every render (new array reference). If we
+  // depend on it directly in the subscription's deps array, every state
+  // update triggers cleanup → re-subscribe → setActiveKeys(EMPTY_SET) →
+  // re-render → infinite cleanup loop. Reading through a ref breaks the
+  // dep cycle while still letting the handler see the latest events.
+  const orderedTracksRef = useRef(orderedTracks)
+  orderedTracksRef.current = orderedTracks
+
+  useEffect(() => {
+    const hapStream = resolvedHapStream
+    if (!hapStream) return
+
+    const handler = (event: HapEvent): void => {
+      // Skip runtime-only haps (PV37 alignment — no IR identity, no glow).
+      if (!event.irNodeId) return
+      // Disambig within the irNodeId-group via FP-tolerant begin compare
+      // (RESEARCH DEC-NEW-2). hap-side begin via Number() to unwrap
+      // Strudel's Fraction objects.
+      const hapBegin = Number(event.hap?.whole?.begin ?? 0)
+
+      // Find the (trackId, eventIndex) row that fired. Read latest tracks
+      // through the ref so the handler always sees the current snapshot.
+      let matchedKey: string | null = null
+      for (const { trackId, events } of orderedTracksRef.current) {
+        const idx = events.findIndex(
+          (e) =>
+            e.irNodeId === event.irNodeId &&
+            Math.abs(e.begin - hapBegin) < 1e-9,
+        )
+        if (idx >= 0) {
+          matchedKey = `${trackId}-${idx}`
+          break
         }
       }
+      // PV37 — silently skip the no-match path; no fallback ladder per P50.
+      if (!matchedKey) return
+
+      // Mirror useHighlighting.ts:174-175 timing arithmetic exactly.
+      const showDelay = Math.max(0, event.scheduledAheadMs)
+      const clearDelay = showDelay + event.audioDuration * 1000
+
+      const showId = window.setTimeout(() => {
+        setActiveKeys((prev) => {
+          const next = new Set(prev)
+          next.add(matchedKey!)
+          return next
+        })
+      }, showDelay)
+
+      const clearId = window.setTimeout(() => {
+        setActiveKeys((prev) => {
+          if (!prev.has(matchedKey!)) return prev
+          const next = new Set(prev)
+          next.delete(matchedKey!)
+          return next
+        })
+      }, clearDelay)
+
+      timeoutIdsRef.current.push(showId, clearId)
     }
-    return out
-    // orderedTracks identity is stable across rAF ticks (only changes on
-    // snapshot-driven slot-map updates). Including it in deps doesn't
-    // trigger spurious recomputes on cycle-only changes.
-  }, [orderedTracks, currentCycle])
+
+    hapStream.on(handler)
+    return () => {
+      hapStream.off(handler)
+      // Bulk-clear pending show/clear timeouts so stale fires don't mutate
+      // activeKeys after the subscription is gone (Trap T8).
+      for (const id of timeoutIdsRef.current) clearTimeout(id)
+      timeoutIdsRef.current = []
+      setActiveKeys(EMPTY_SET)
+    }
+    // Only rebind on HapStream identity change. orderedTracks read through
+    // a ref above so re-renders from setActiveKeys don't churn the
+    // subscription (which would otherwise loop: cleanup → setActiveKeys →
+    // re-render → orderedTracks new ref → cleanup again).
+  }, [resolvedHapStream])
 
   const playheadX = cycleToPlayheadX(currentCycle, { gridContentWidth })
 

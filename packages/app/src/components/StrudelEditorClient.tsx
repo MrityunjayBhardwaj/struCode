@@ -47,6 +47,7 @@ import {
   type ChromeContext,
   type VizPreset,
   type PreviewProvider,
+  type HapStream,
 } from "@stave/editor";
 import { PIANOROLL_P5_CODE, PIANOROLL_HYDRA_CODE, seedMissingPresetFiles } from "../templates";
 
@@ -105,6 +106,13 @@ interface StrudelEditorClientProps {
      */
     getCycle: () => number | null;
     getCps: () => number | null;
+    /**
+     * Phase 20-06 (PV38, PK13 step 7+8) — accessor onto the engine's
+     * HapStream so the MusicalTimeline subscriber can resolve to a live
+     * stream through the same closure-bound pattern. Returns null when
+     * the engine isn't running or the runtime is non-Strudel.
+     */
+    getHapStream: () => HapStream | null;
   } | null) => void;
   onTabContextMenu?: (tab: WorkspaceTab, x: number, y: number) => void;
   /** Navigate to a viz file when the user clicks the edit icon on an inline viz. */
@@ -606,6 +614,8 @@ export default function StrudelEditorClient({
         // cps = bpm / (60 sec/min * 4 beats/cycle).
         return bpm != null && Number.isFinite(bpm) ? bpm / 240 : null;
       },
+      getHapStream: () =>
+        runtimesRef.current.get(accessorFid)?.getHapStream?.() ?? null,
     });
   }, [runtimeStates, onActiveRuntimeStateChange]);
 
@@ -662,6 +672,10 @@ export default function StrudelEditorClient({
               ?.getBpm?.();
             return bpm != null && Number.isFinite(bpm) ? bpm / 240 : null;
           },
+          getHapStream: () =>
+            runtimesRef.current
+              .get(accessorFid)
+              ?.getHapStream?.() ?? null,
         });
       }}
     />

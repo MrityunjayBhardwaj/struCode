@@ -25,6 +25,7 @@ import {
   type ProjectMeta,
   type SnapshotMeta,
   type WorkspaceShellHandle,
+  type HapStream,
 } from "@stave/editor";
 import { seedProjectFromTemplate } from "../templates";
 import { exportProjectAsZip } from "../exportProject";
@@ -490,6 +491,9 @@ export function StaveApp({ initialProject }: StaveAppProps) {
   // gates the cost of those reads (DB-08).
   const getCycleRef = useRef<() => number | null>(() => null);
   const getCpsRef = useRef<() => number | null>(() => null);
+  // Phase 20-06 (PV38, PK13 step 7+8) — closure-bound accessor onto the
+  // active runtime's HapStream for the MusicalTimeline subscriber.
+  const getHapStreamRef = useRef<() => HapStream | null>(() => null);
 
   const handleRuntimeStateChange = useCallback(
     (
@@ -500,6 +504,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
             error: string | null;
             getCycle?: () => number | null;
             getCps?: () => number | null;
+            getHapStream?: () => HapStream | null;
           }
         | null,
     ) => {
@@ -509,6 +514,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
       // no-op accessors so the rAF loop reads `null` and goes idle.
       getCycleRef.current = s?.getCycle ?? (() => null);
       getCpsRef.current = s?.getCps ?? (() => null);
+      getHapStreamRef.current = s?.getHapStream ?? (() => null);
       setActiveRuntime((prev) => {
         if (!s) return prev === null ? prev : null;
         if (
@@ -539,6 +545,7 @@ export function StaveApp({ initialProject }: StaveAppProps) {
         <MusicalTimeline
           getCycle={() => getCycleRef.current()}
           getCps={() => getCpsRef.current()}
+          getHapStream={() => getHapStreamRef.current()}
           getDrawerOpen={() => readPersistedOpen()}
           getActiveTabId={() => readPersistedActiveTabId()}
         />

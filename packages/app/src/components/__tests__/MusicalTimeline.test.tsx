@@ -24,7 +24,24 @@ import {
 } from 'vitest'
 import * as React from 'react'
 import { act, render, cleanup } from '@testing-library/react'
-import type { IRSnapshot, IREvent, PatternIR } from '@stave/editor'
+import type {
+  IRSnapshot,
+  IREvent,
+  PatternIR,
+  HapEvent,
+  HapStream as HapStreamType,
+} from '@stave/editor'
+// Phase 20-06 — import HapStream from the engine source path directly so the
+// `vi.mock('@stave/editor', ...)` factory below doesn't intercept it. We
+// need the REAL class to construct streams + emit synthetic HapEvents in
+// the P51 hap-driven rewrites. `vi.importActual` would also work but pulls
+// in transitive CJS deps (gifenc) that break vitest's module loader.
+// The runtime class is structurally identical to the one in @stave/editor
+// (same file under the hood after the editor package is built); we cast
+// constructed instances to HapStreamType so MusicalTimelineProps' typing
+// (which imports HapStream from @stave/editor's dist) lines up.
+import { HapStream as HapStreamRuntime } from '../../../../editor/src/engine/HapStream'
+const HapStream = HapStreamRuntime as unknown as new () => HapStreamType
 
 import { MusicalTimeline } from '../MusicalTimeline'
 import {
@@ -75,6 +92,28 @@ function evt(partial: Partial<IREvent>): IREvent {
   }
 }
 
+/**
+ * Phase 20-06 — synthetic HapEvent builder for hap-driven activation tests.
+ * `partial.irNodeId` and `partial.hapBegin` are required (no defaults — they
+ * disambiguate the matched row); other fields default to "single fire,
+ * 0.5s duration, no scheduling lookahead" which is the simplest case.
+ */
+function hapEvt(
+  partial: Partial<HapEvent> & { irNodeId: string; hapBegin: number },
+): HapEvent {
+  return {
+    hap: { whole: { begin: partial.hapBegin } },
+    audioTime: 0,
+    audioDuration: partial.audioDuration ?? 0.5,
+    scheduledAheadMs: partial.scheduledAheadMs ?? 0,
+    midiNote: null,
+    s: partial.s ?? null,
+    color: null,
+    loc: null,
+    irNodeId: partial.irNodeId,
+  }
+}
+
 function makeSnapshot({
   events,
   source,
@@ -93,6 +132,10 @@ function makeSnapshot({
     passes: [{ name: 'final', ir: stubIR }],
     ir: stubIR,
     events: (events ?? []).slice() as IREvent[],
+    // PV38 lookups (20-05) — empty maps suffice; the component reads
+    // irNodeId off events directly, not through these tables.
+    irNodeIdLookup: new Map(),
+    irNodeLocLookup: new Map(),
   }
 }
 
@@ -150,12 +193,14 @@ afterEach(() => {
 function defaultProps(overrides?: {
   getCycle?: () => number | null
   getCps?: () => number | null
+  getHapStream?: () => HapStreamType | null
   getDrawerOpen?: () => boolean
   getActiveTabId?: () => string | null
 }) {
   return {
     getCycle: overrides?.getCycle ?? (() => null),
     getCps: overrides?.getCps ?? (() => null),
+    getHapStream: overrides?.getHapStream ?? (() => null),
     getDrawerOpen: overrides?.getDrawerOpen ?? (() => true),
     getActiveTabId:
       overrides?.getActiveTabId ?? (() => 'musical-timeline'),
@@ -546,36 +591,54 @@ describe('MusicalTimeline status line (Trap 1 + Trap NEW-3 wrap math)', () => {
   })
 })
 
-describe('MusicalTimeline active-event glow (Phase 20-02 DV-05 / DV-07 / DV-15)', () => {
-  it('marks ONLY events where begin <= currentCycle < endClipped as active', async () => {
+// PV38 — irNodeId-driven hap activation; was cycle-derived per Phase 20-02
+// (replaces 20-02 DV-05 contract; P51 audit during Phase 20-06 — see
+// .anvi/hetvabhasa.md P51 for the rewrite protocol).
+describe('20-06 — MusicalTimeline hap-driven glow (replaces 20-02 cycle-derived per P51)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('marks ONLY the row whose (irNodeId, begin) matches a fired hap (irNodeId + begin disambig)', async () => {
+    const hapStream = new HapStream()
     const { container } = await renderSettled(
       <MusicalTimeline
-        {...defaultProps({ getCycle: () => 1.2 })}
+        {...defaultProps({ getHapStream: () => hapStream })}
       />,
     )
     await act(async () => {
       pushSnapshot(
         makeSnapshot({
           events: [
-            // Event 0: ends before 1.2 — NOT active.
-            evt({ trackId: 'a', s: 'a', begin: 0.0, end: 0.5, endClipped: 0.5 }),
-            // Event 1: begin=1.0 <= 1.2 < endClipped=1.5 — ACTIVE.
-            evt({ trackId: 'b', s: 'b', begin: 1.0, end: 1.5, endClipped: 1.5 }),
-            // Event 2: begin=1.5 > 1.2 — NOT active.
-            evt({ trackId: 'c', s: 'c', begin: 1.5, end: 1.8, endClipped: 1.8 }),
+            evt({ trackId: 'a', s: 'a', begin: 0.0, end: 0.5, endClipped: 0.5, irNodeId: 'idA' }),
+            evt({ trackId: 'b', s: 'b', begin: 0.5, end: 1.0, endClipped: 1.0, irNodeId: 'idB' }),
+            evt({ trackId: 'c', s: 'c', begin: 0.5, end: 1.0, endClipped: 1.0, irNodeId: 'idC' }),
           ],
         }),
       )
       await Promise.resolve()
-      await Promise.resolve()
-      await new Promise((r) => setTimeout(r, 50))
     })
 
-    const blockB = container.querySelector(
-      '[data-musical-timeline-track-row="b"] [data-musical-timeline-note]',
-    )
+    // Fire a hap matching event B only.
+    act(() => {
+      hapStream.emitEvent(
+        hapEvt({ irNodeId: 'idB', hapBegin: 0.5, audioDuration: 0.5, scheduledAheadMs: 0 }),
+      )
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(0) // showDelay = 0
+      await Promise.resolve()
+    })
+
     const blockA = container.querySelector(
       '[data-musical-timeline-track-row="a"] [data-musical-timeline-note]',
+    )
+    const blockB = container.querySelector(
+      '[data-musical-timeline-track-row="b"] [data-musical-timeline-note]',
     )
     const blockC = container.querySelector(
       '[data-musical-timeline-track-row="c"] [data-musical-timeline-note]',
@@ -583,22 +646,31 @@ describe('MusicalTimeline active-event glow (Phase 20-02 DV-05 / DV-07 / DV-15)'
     expect(blockA?.getAttribute('data-musical-timeline-active')).toBeNull()
     expect(blockB?.getAttribute('data-musical-timeline-active')).toBe('true')
     expect(blockC?.getAttribute('data-musical-timeline-active')).toBeNull()
+
+    // Glow clears at scheduledAheadMs + audioDuration*1000 = 500ms.
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+      await Promise.resolve()
+    })
+    expect(blockB?.getAttribute('data-musical-timeline-active')).toBeNull()
   })
 
-  it('marks no event active when currentCycle is null (Trap 8)', async () => {
+  it('keeps the active set empty when no haps emit (truthful representation per D-01)', async () => {
+    const hapStream = new HapStream()
     const { container } = await renderSettled(
-      <MusicalTimeline {...defaultProps({ getCycle: () => null })} />,
+      <MusicalTimeline {...defaultProps({ getHapStream: () => hapStream })} />,
     )
     await act(async () => {
       pushSnapshot(
         makeSnapshot({
           events: [
-            evt({ trackId: 'a', s: 'a', begin: 0.0, end: 0.5, endClipped: 0.5 }),
-            evt({ trackId: 'b', s: 'b', begin: 1.0, end: 1.5, endClipped: 1.5 }),
+            evt({ trackId: 'a', s: 'a', begin: 0.0, end: 0.5, endClipped: 0.5, irNodeId: 'idA' }),
+            evt({ trackId: 'b', s: 'b', begin: 1.0, end: 1.5, endClipped: 1.5, irNodeId: 'idB' }),
           ],
         }),
       )
       await Promise.resolve()
+      vi.advanceTimersByTime(1000)
     })
     const actives = container.querySelectorAll(
       '[data-musical-timeline-active="true"]',
@@ -606,26 +678,157 @@ describe('MusicalTimeline active-event glow (Phase 20-02 DV-05 / DV-07 / DV-15)'
     expect(actives.length).toBe(0)
   })
 
-  it('respects endClipped, not end (DV-05)', async () => {
+  it('clears glow at scheduledAheadMs + audioDuration*1000 ms after audioTime (mirrors useHighlighting HIGH-03)', async () => {
+    const hapStream = new HapStream()
     const { container } = await renderSettled(
-      <MusicalTimeline {...defaultProps({ getCycle: () => 1.2 })} />,
+      <MusicalTimeline {...defaultProps({ getHapStream: () => hapStream })} />,
     )
     await act(async () => {
       pushSnapshot(
         makeSnapshot({
           events: [
-            // end=2.0 looks like it would extend past 1.2, but
-            // endClipped=1.0 means the event already ended.
-            evt({ trackId: 'a', s: 'a', begin: 0.0, end: 2.0, endClipped: 1.0 }),
+            evt({ trackId: 'a', s: 'a', begin: 0.0, end: 0.5, endClipped: 0.5, irNodeId: 'idA' }),
           ],
         }),
       )
       await Promise.resolve()
-      await Promise.resolve()
-      await new Promise((r) => setTimeout(r, 50))
     })
-    const block = container.querySelector('[data-musical-timeline-note]')
+
+    act(() => {
+      hapStream.emitEvent(
+        hapEvt({ irNodeId: 'idA', hapBegin: 0.0, audioDuration: 0.5, scheduledAheadMs: 100 }),
+      )
+    })
+    const block = () =>
+      container.querySelector(
+        '[data-musical-timeline-track-row="a"] [data-musical-timeline-note]',
+      )
+
+    // At t=50ms: showDelay = 100ms — not yet active.
+    await act(async () => {
+      vi.advanceTimersByTime(50)
+      await Promise.resolve()
+    })
+    expect(block()?.getAttribute('data-musical-timeline-active')).toBeNull()
+
+    // At t=100ms: showDelay reached — active.
+    await act(async () => {
+      vi.advanceTimersByTime(50)
+      await Promise.resolve()
+    })
+    expect(block()?.getAttribute('data-musical-timeline-active')).toBe('true')
+
+    // At t=600ms (showDelay + audioDuration*1000 = 100 + 500): cleared.
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+      await Promise.resolve()
+    })
+    expect(block()?.getAttribute('data-musical-timeline-active')).toBeNull()
+  })
+
+  it('disambiguates fast(N) duplicate-id events by closest whole.begin within FP tolerance (Trap T2 / DEC-NEW-2)', async () => {
+    const hapStream = new HapStream()
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps({ getHapStream: () => hapStream })} />,
+    )
+    await act(async () => {
+      // 4 events sharing one irNodeId — fast(4) on s("hh"):
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 't', s: 'hh', begin: 0.0, end: 0.25, endClipped: 0.25, irNodeId: 'leafA' }),
+            evt({ trackId: 't', s: 'hh', begin: 0.25, end: 0.5, endClipped: 0.5, irNodeId: 'leafA' }),
+            evt({ trackId: 't', s: 'hh', begin: 0.5, end: 0.75, endClipped: 0.75, irNodeId: 'leafA' }),
+            evt({ trackId: 't', s: 'hh', begin: 0.75, end: 1.0, endClipped: 1.0, irNodeId: 'leafA' }),
+          ],
+        }),
+      )
+      await Promise.resolve()
+    })
+
+    // Simulate FP drift from Strudel's cycle arithmetic.
+    act(() => {
+      hapStream.emitEvent(
+        hapEvt({ irNodeId: 'leafA', hapBegin: 0.5 + 1e-12, audioDuration: 0.25, scheduledAheadMs: 0 }),
+      )
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+      await Promise.resolve()
+    })
+
+    // Only the third row (begin = 0.5) should be active.
+    const rows = container.querySelectorAll(
+      '[data-musical-timeline-track-row="t"] [data-musical-timeline-note]',
+    )
+    expect(rows.length).toBe(4)
+    expect(rows[0]?.getAttribute('data-musical-timeline-active')).toBeNull()
+    expect(rows[1]?.getAttribute('data-musical-timeline-active')).toBeNull()
+    expect(rows[2]?.getAttribute('data-musical-timeline-active')).toBe('true')
+    expect(rows[3]?.getAttribute('data-musical-timeline-active')).toBeNull()
+  })
+
+  it('detaches subscription on HapStream swap and rebinds to the new stream (Trap T4 / DEC-NEW-1)', async () => {
+    const hapStreamA = new HapStream()
+    const hapStreamB = new HapStream()
+    const accessor = { current: () => hapStreamA as HapStreamType | null }
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps({ getHapStream: () => accessor.current() })} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'a', s: 'a', begin: 0.0, end: 0.5, endClipped: 0.5, irNodeId: 'idA' }),
+          ],
+        }),
+      )
+      await Promise.resolve()
+    })
+
+    // Swap to stream B; trigger a snapshot publish to drive re-resolution.
+    accessor.current = () => hapStreamB
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'a', s: 'a', begin: 0.0, end: 0.5, endClipped: 0.5, irNodeId: 'idA' }),
+          ],
+        }),
+      )
+      await Promise.resolve()
+    })
+
+    // Fire on the OLD stream — should NOT affect activeKeys.
+    act(() => {
+      hapStreamA.emitEvent(
+        hapEvt({ irNodeId: 'idA', hapBegin: 0, audioDuration: 0.5, scheduledAheadMs: 0 }),
+      )
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+      await Promise.resolve()
+    })
+    let block = container.querySelector(
+      '[data-musical-timeline-track-row="a"] [data-musical-timeline-note]',
+    )
     expect(block?.getAttribute('data-musical-timeline-active')).toBeNull()
+
+    // Fire on the NEW stream — SHOULD activate.
+    act(() => {
+      hapStreamB.emitEvent(
+        hapEvt({ irNodeId: 'idA', hapBegin: 0, audioDuration: 0.5, scheduledAheadMs: 0 }),
+      )
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+      await Promise.resolve()
+    })
+    block = container.querySelector(
+      '[data-musical-timeline-track-row="a"] [data-musical-timeline-note]',
+    )
+    expect(block?.getAttribute('data-musical-timeline-active')).toBe('true')
   })
 })
 
@@ -676,6 +879,8 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         code,
         passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
         ir: { tag: 'Pure' } as PatternIR,
+        irNodeIdLookup: new Map(),
+        irNodeLocLookup: new Map(),
         events: [
           evt({
             trackId: 'note',
@@ -711,6 +916,8 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         code,
         passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
         ir: { tag: 'Pure' } as PatternIR,
+        irNodeIdLookup: new Map(),
+        irNodeLocLookup: new Map(),
         events: [
           evt({
             trackId: 'note',
@@ -763,6 +970,8 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         code,
         passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
         ir: { tag: 'Pure' } as PatternIR,
+        irNodeIdLookup: new Map(),
+        irNodeLocLookup: new Map(),
         events: [
           evt({
             trackId: 'note',
@@ -799,6 +1008,8 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         code,
         passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
         ir: { tag: 'Pure' } as PatternIR,
+        irNodeIdLookup: new Map(),
+        irNodeLocLookup: new Map(),
         events: [
           evt({
             trackId: 'note',
@@ -831,6 +1042,8 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
         code,
         passes: [{ name: 'final', ir: { tag: 'Pure' } as PatternIR }],
         ir: { tag: 'Pure' } as PatternIR,
+        irNodeIdLookup: new Map(),
+        irNodeLocLookup: new Map(),
         events: [
           evt({
             trackId: 'note',
