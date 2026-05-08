@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import MonacoEditorRaw, { type OnMount } from '@monaco-editor/react'
 // @monaco-editor/react types are against React 18; cast to any to satisfy React 19 JSX
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -8,6 +8,8 @@ import { defineStrudelMonacoTheme } from '../theme/monacoTheme'
 import { registerStrudelLanguage, registerSonicPiLanguage } from './language'
 import { registerStrudelHover } from './strudelDocs'
 import { registerStrudelDotCompletions, registerStrudelNoteCompletions } from './strudelCompletions'
+import { useBreakpoints } from './useBreakpoints'
+import type { BreakpointStore } from '../engine/BreakpointStore'
 
 // Register static language providers once per Monaco instance (module-level guard).
 // Dot completions, note completions, and hover docs are global to the strudel language —
@@ -38,6 +40,14 @@ interface StrudelMonacoProps {
   soundNames?: string[]
   /** Monaco language ID. Defaults to 'strudel'. Use 'sonicpi' for Sonic Pi code. */
   language?: string
+  /**
+   * Phase 20-07 (PK13 step 9 / wave β) — engine breakpoint registry.
+   * When provided, `useBreakpoints` renders gutter glyph markers and
+   * registers a gutter click handler. The actual wiring from runtime
+   * to this prop lands in T-γ-3a (StaveApp plumbing); for wave β the
+   * prop is accepted and forwarded to the hook.
+   */
+  readonly breakpointStore?: BreakpointStore | null
 }
 
 export function StrudelMonaco({
@@ -49,13 +59,23 @@ export function StrudelMonaco({
   onMount,
   soundNames = [],
   language = 'strudel',
+  breakpointStore = null,
 }: StrudelMonacoProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
+  // Phase 20-07 — re-render after Monaco mounts so `useBreakpoints` (which
+  // reads from state, not ref) picks up the editor instance. Mirrors how
+  // editor consumers outside the onMount closure must wait for mount.
+  const [mountedEditor, setMountedEditor] = useState<Monaco.editor.IStandaloneCodeEditor | null>(null)
+
+  // Phase 20-07 (PK13 step 9 / wave β) — Monaco gutter breakpoints. The
+  // hook is a no-op until both `editor` and `breakpointStore` are non-null.
+  useBreakpoints(mountedEditor, breakpointStore)
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
+    setMountedEditor(editor)
     defineStrudelMonacoTheme(monaco)
     registerStrudelLanguage(monaco)
     registerSonicPiLanguage(monaco)
@@ -240,7 +260,8 @@ export function StrudelMonaco({
           useShadows: false,
         },
         lineNumbersMinChars: 3,
-        glyphMargin: false,
+        // 20-07 — gutter glyphs render breakpoint markers via useBreakpoints
+        glyphMargin: true,
         folding: false,
         renderLineHighlight: 'line',
         cursorBlinking: 'smooth',
