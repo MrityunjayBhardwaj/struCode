@@ -4667,11 +4667,19 @@ interface IRSnapshot {
      *  engine-side hap matching (normalizeStrudelHap); haps don't carry
      *  the hash, only the loc. ReadonlyMap enforces PV33. */
     irNodeLocLookup: ReadonlyMap<string, IREvent[]>;
+    /** Lookup: 1-based Monaco line number → leaf irNodeIds whose
+     *  loc[0] starts on that line. PV38 phase-20-07 use; built once
+     *  at publish time by enrichWithLookups; ReadonlyMap enforces PV33.
+     *  Empty map when no events carry both irNodeId and loc. Used by
+     *  Monaco gutter click → leaf-set resolver for breakpoint
+     *  registration (Phase 20-07). PV37 alignment: events without
+     *  irNodeId never appear in this index. */
+    irNodeIdsByLine: ReadonlyMap<number, readonly string[]>;
 }
 /** Input shape for publishIRSnapshot — caller does not construct lookups;
  *  the publisher enriches via enrichWithLookups. Type-system enforces
  *  this contract (Trap 9 mitigation — caller cannot bypass the publisher). */
-type IRSnapshotInput = Omit<IRSnapshot, 'irNodeIdLookup' | 'irNodeLocLookup'>;
+type IRSnapshotInput = Omit<IRSnapshot, 'irNodeIdLookup' | 'irNodeLocLookup' | 'irNodeIdsByLine'>;
 type Listener$2 = (snap: IRSnapshot | null) => void;
 /**
  * Publish a snapshot. Two parallel side-effects fire on every publish

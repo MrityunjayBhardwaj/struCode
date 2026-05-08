@@ -16,6 +16,8 @@ import { IR } from '../../ir/PatternIR'
 // Phase 20-05: IRSnapshot grew two ReadonlyMap lookup fields (PV38 clause 1)
 // — empty Maps are fine here since captureSnapshot is called directly,
 // bypassing the publisher's enrichWithLookups.
+// Phase 20-07 wave α0: third lookup `irNodeIdsByLine` added — same
+// bypass rationale, empty Map is the natural fixture.
 function sample(label: string = 'a'): IRSnapshot {
   const ir = IR.play('c4')
   return {
@@ -28,6 +30,7 @@ function sample(label: string = 'a'): IRSnapshot {
     events: [],
     irNodeIdLookup: new Map(),
     irNodeLocLookup: new Map(),
+    irNodeIdsByLine: new Map(),
   }
 }
 

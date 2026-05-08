@@ -36,12 +36,20 @@ export interface IRSnapshot {
    *  engine-side hap matching (normalizeStrudelHap); haps don't carry
    *  the hash, only the loc. ReadonlyMap enforces PV33. */
   irNodeLocLookup: ReadonlyMap<string, IREvent[]>
+  /** Lookup: 1-based Monaco line number → leaf irNodeIds whose
+   *  loc[0] starts on that line. PV38 phase-20-07 use; built once
+   *  at publish time by enrichWithLookups; ReadonlyMap enforces PV33.
+   *  Empty map when no events carry both irNodeId and loc. Used by
+   *  Monaco gutter click → leaf-set resolver for breakpoint
+   *  registration (Phase 20-07). PV37 alignment: events without
+   *  irNodeId never appear in this index. */
+  irNodeIdsByLine: ReadonlyMap<number, readonly string[]>
 }
 
 /** Input shape for publishIRSnapshot — caller does not construct lookups;
  *  the publisher enriches via enrichWithLookups. Type-system enforces
  *  this contract (Trap 9 mitigation — caller cannot bypass the publisher). */
-export type IRSnapshotInput = Omit<IRSnapshot, 'irNodeIdLookup' | 'irNodeLocLookup'>
+export type IRSnapshotInput = Omit<IRSnapshot, 'irNodeIdLookup' | 'irNodeLocLookup' | 'irNodeIdsByLine'>
 
 type Listener = (snap: IRSnapshot | null) => void
 
@@ -54,6 +62,7 @@ const listeners = new Set<Listener>()
 function enrichWithLookups(snap: IRSnapshotInput): IRSnapshot {
   const idLookup = new Map<string, IREvent>()
   const locLookup = new Map<string, IREvent[]>()
+  const lineLookup = new Map<number, string[]>()
   for (const e of snap.events) {
     if (e.irNodeId) idLookup.set(e.irNodeId, e)
     if (e.loc && e.loc.length > 0) {
@@ -61,13 +70,39 @@ function enrichWithLookups(snap: IRSnapshotInput): IRSnapshot {
       const arr = locLookup.get(key)
       if (arr) arr.push(e)
       else locLookup.set(key, [e])
+      // Phase 20-07 (PV38) — line index for Monaco gutter click resolver.
+      // Same single pass over snap.events; no extra walk. PV37 alignment:
+      // only events carrying an irNodeId enter this index.
+      if (e.irNodeId) {
+        const line = countLines(snap.code, e.loc[0].start)
+        const ids = lineLookup.get(line)
+        if (ids) {
+          if (!ids.includes(e.irNodeId)) ids.push(e.irNodeId)
+        } else {
+          lineLookup.set(line, [e.irNodeId])
+        }
+      }
     }
   }
   return {
     ...snap,
     irNodeIdLookup: idLookup,
     irNodeLocLookup: locLookup,
+    irNodeIdsByLine: lineLookup,
   }
+}
+
+/** Count 1-based Monaco line number for a 0-based byte offset in source
+ *  code. Iterates '\n' (charCode 10) between [0, offset). Mirrors
+ *  Monaco's `model.getPositionAt(offset).lineNumber`. Duplicated from
+ *  IRInspectorPanel.tsx:336-342 — 4 lines, no other callers in editor
+ *  package; keeping enrichWithLookups self-contained. */
+function countLines(code: string, offset: number): number {
+  let line = 1
+  for (let i = 0; i < offset && i < code.length; i++) {
+    if (code.charCodeAt(i) === 10) line++
+  }
+  return line
 }
 
 /**

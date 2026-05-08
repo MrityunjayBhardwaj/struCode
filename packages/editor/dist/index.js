@@ -34206,6 +34206,7 @@ var listeners6 = /* @__PURE__ */ new Set();
 function enrichWithLookups(snap) {
   const idLookup = /* @__PURE__ */ new Map();
   const locLookup = /* @__PURE__ */ new Map();
+  const lineLookup = /* @__PURE__ */ new Map();
   for (const e of snap.events) {
     if (e.irNodeId) idLookup.set(e.irNodeId, e);
     if (e.loc && e.loc.length > 0) {
@@ -34213,13 +34214,30 @@ function enrichWithLookups(snap) {
       const arr = locLookup.get(key);
       if (arr) arr.push(e);
       else locLookup.set(key, [e]);
+      if (e.irNodeId) {
+        const line2 = countLines(snap.code, e.loc[0].start);
+        const ids = lineLookup.get(line2);
+        if (ids) {
+          if (!ids.includes(e.irNodeId)) ids.push(e.irNodeId);
+        } else {
+          lineLookup.set(line2, [e.irNodeId]);
+        }
+      }
     }
   }
   return {
     ...snap,
     irNodeIdLookup: idLookup,
-    irNodeLocLookup: locLookup
+    irNodeLocLookup: locLookup,
+    irNodeIdsByLine: lineLookup
   };
+}
+function countLines(code, offset) {
+  let line2 = 1;
+  for (let i2 = 0; i2 < offset && i2 < code.length; i2++) {
+    if (code.charCodeAt(i2) === 10) line2++;
+  }
+  return line2;
 }
 function publishIRSnapshot(snap, meta) {
   const enriched = enrichWithLookups(snap);
