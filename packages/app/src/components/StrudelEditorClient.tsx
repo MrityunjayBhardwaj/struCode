@@ -48,6 +48,7 @@ import {
   type VizPreset,
   type PreviewProvider,
   type HapStream,
+  type BreakpointStore,
 } from "@stave/editor";
 import { PIANOROLL_P5_CODE, PIANOROLL_HYDRA_CODE, seedMissingPresetFiles } from "../templates";
 
@@ -113,6 +114,17 @@ interface StrudelEditorClientProps {
      * the engine isn't running or the runtime is non-Strudel.
      */
     getHapStream: () => HapStream | null;
+    /**
+     * Phase 20-07 wave γ (R-2) — debugger accessors. Mirror the
+     * `getHapStream` shape: closure-bound reads through `runtimesRef`
+     * so the closures stay valid across active-tab swaps. Non-Strudel
+     * runtimes return null/false/no-op disposers (LiveCodingRuntime
+     * delegates with optional chaining).
+     */
+    getBreakpointStore: () => BreakpointStore | null;
+    getIsPaused: () => boolean;
+    onResume: () => void;
+    onPauseChanged: (cb: (paused: boolean) => void) => () => void;
   } | null) => void;
   onTabContextMenu?: (tab: WorkspaceTab, x: number, y: number) => void;
   /** Navigate to a viz file when the user clicks the edit icon on an inline viz. */
@@ -616,6 +628,18 @@ export default function StrudelEditorClient({
       },
       getHapStream: () =>
         runtimesRef.current.get(accessorFid)?.getHapStream?.() ?? null,
+      // Phase 20-07 wave γ (R-2) — Inspector accessors. Mirror getHapStream's
+      // closure shape so they read through runtimesRef on every invocation.
+      getBreakpointStore: () =>
+        runtimesRef.current.get(accessorFid)?.getBreakpointStore?.() ?? null,
+      getIsPaused: () =>
+        runtimesRef.current.get(accessorFid)?.getPaused?.() ?? false,
+      onResume: () => {
+        runtimesRef.current.get(accessorFid)?.resume?.();
+      },
+      onPauseChanged: (cb) =>
+        runtimesRef.current.get(accessorFid)?.onPausedChanged?.(cb) ??
+        (() => {}),
     });
   }, [runtimeStates, onActiveRuntimeStateChange]);
 
@@ -676,6 +700,26 @@ export default function StrudelEditorClient({
             runtimesRef.current
               .get(accessorFid)
               ?.getHapStream?.() ?? null,
+          // Phase 20-07 wave γ (R-2) — Inspector accessors. Mirrors the
+          // useEffect closure builder above; both push the same shape to
+          // the parent on every active-tab transition.
+          getBreakpointStore: () =>
+            runtimesRef.current
+              .get(accessorFid)
+              ?.getBreakpointStore?.() ?? null,
+          getIsPaused: () =>
+            runtimesRef.current
+              .get(accessorFid)
+              ?.getPaused?.() ?? false,
+          onResume: () => {
+            runtimesRef.current
+              .get(accessorFid)
+              ?.resume?.();
+          },
+          onPauseChanged: (cb) =>
+            runtimesRef.current
+              .get(accessorFid)
+              ?.onPausedChanged?.(cb) ?? (() => {}),
         });
       }}
     />

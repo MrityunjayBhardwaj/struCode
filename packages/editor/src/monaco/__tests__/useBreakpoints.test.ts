@@ -43,6 +43,12 @@ function makeModel() {
 function makeEditor() {
   const collections: MockCollection[] = []
   let mouseDownHandler: ((e: { target: { type: number; position?: { lineNumber: number } } }) => void) | null = null
+  const registeredActions: Array<{
+    id: string
+    label: string
+    run: (...args: unknown[]) => void
+    dispose: ReturnType<typeof vi.fn>
+  }> = []
   const editor = {
     createDecorationsCollection: vi.fn(() => {
       const c = makeCollection()
@@ -54,7 +60,16 @@ function makeEditor() {
       mouseDownHandler = handler
       return { dispose: vi.fn() }
     }),
+    addAction: vi.fn(
+      (descriptor: { id: string; label: string; run: (...args: unknown[]) => void }) => {
+        const dispose = vi.fn()
+        const entry = { id: descriptor.id, label: descriptor.label, run: descriptor.run, dispose }
+        registeredActions.push(entry)
+        return { dispose }
+      },
+    ),
     collections,
+    actions: registeredActions,
     fireMouseDown: (target: { type: number; position?: { lineNumber: number } }) => {
       if (mouseDownHandler) mouseDownHandler({ target })
     },
@@ -243,5 +258,32 @@ describe('20-07 — useBreakpoints (Monaco gutter)', () => {
       editor.fireMouseDown({ type: 6, position: { lineNumber: 4 } })
     })
     expect(toggleSetSpy).not.toHaveBeenCalled()
+  })
+
+  it('(BP-07 / R-1) registers stave.debugger.resume action when onResume provided; run() invokes onResume', () => {
+    const editor = makeEditor()
+    const store = new BreakpointStore()
+    const onResume = vi.fn()
+
+    renderHook(() => useBreakpoints(editor as never, store, onResume))
+
+    expect(editor.addAction).toHaveBeenCalledTimes(1)
+    const entry = editor.actions.find((a) => a.id === 'stave.debugger.resume')
+    expect(entry).toBeDefined()
+    expect(entry!.label).toBe('Debugger: Resume')
+
+    // Invoking the action's run() must call the supplied onResume closure.
+    entry!.run()
+    expect(onResume).toHaveBeenCalledTimes(1)
+  })
+
+  it('(BP-07b) does NOT register the resume action when onResume is omitted', () => {
+    const editor = makeEditor()
+    const store = new BreakpointStore()
+
+    renderHook(() => useBreakpoints(editor as never, store))
+
+    // No action registered — keeps the hook a no-op for non-debugger editors.
+    expect(editor.addAction).not.toHaveBeenCalled()
   })
 })

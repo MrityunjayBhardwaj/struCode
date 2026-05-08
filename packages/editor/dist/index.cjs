@@ -4944,6 +4944,12 @@ var HapStream = class {
    * onto the fan-out HapEvent. PV38 clause 2 onTrigger half. Single-
    * strategy match (P50) — same helper as the queryArc-side enrichment in
    * `normalizeStrudelHap`.
+   *
+   * Phase 20-07 (T-α-2) — returns the enriched HapEvent so the engine's
+   * wrappedOutput hit-check can read `event.irNodeId` in O(1) without
+   * re-running findMatchedEvent (P50 — single-strategy match preserved).
+   * Additive: 8 existing test callers + 1 production caller currently
+   * ignore the void return; widening void → HapEvent does not break them.
    */
   emit(hap, deadline, duration, cps, audioCtxCurrentTime, lookup) {
     const scheduledAheadMs = (deadline - audioCtxCurrentTime) * 1e3;
@@ -4964,6 +4970,7 @@ var HapStream = class {
       if (matched?.irNodeId) event.irNodeId = matched.irNodeId;
     }
     this.emitEvent(event);
+    return event;
   }
   /**
    * Emit a pre-constructed HapEvent directly.
@@ -4979,6 +4986,119 @@ var HapStream = class {
   }
   dispose() {
     this.handlers.clear();
+  }
+};
+
+// src/engine/BreakpointStore.ts
+var BreakpointStore = class {
+  constructor() {
+    this.ids = /* @__PURE__ */ new Map();
+    this.listeners = /* @__PURE__ */ new Set();
+  }
+  has(id) {
+    return this.ids.has(id);
+  }
+  size() {
+    return this.ids.size;
+  }
+  /** Phase 20-07 (R-3) — read the optional lineHint for orphan rendering. */
+  getMeta(id) {
+    return this.ids.get(id);
+  }
+  add(id, meta = {}) {
+    if (this.ids.has(id)) return;
+    this.ids.set(id, meta);
+    this.fireChanged();
+  }
+  remove(id) {
+    if (!this.ids.delete(id)) return;
+    this.fireChanged();
+  }
+  toggle(id, meta = {}) {
+    if (this.ids.has(id)) this.ids.delete(id);
+    else this.ids.set(id, meta);
+    this.fireChanged();
+  }
+  /**
+   * Add every id in `ids` to the store. Existing ids keep their meta —
+   * `meta` is applied to NEWLY added ids only. This is the discipline that
+   * lets a gutter-click set lineHint without clobbering a hint set by an
+   * earlier Inspector registration (CONTEXT T5 / R-3).
+   */
+  addSet(ids, meta = {}) {
+    let changed = false;
+    for (const id of ids) {
+      if (!this.ids.has(id)) {
+        this.ids.set(id, meta);
+        changed = true;
+      }
+    }
+    if (changed) this.fireChanged();
+  }
+  removeSet(ids) {
+    let changed = false;
+    for (const id of ids) {
+      if (this.ids.delete(id)) changed = true;
+    }
+    if (changed) this.fireChanged();
+  }
+  /**
+   * Toggle a SET semantically: if every id is already present, remove all;
+   * else add all (treating the set as one breakpoint). The "any missing →
+   * add all" rule resolves the gutter-vs-Inspector desync case (CONTEXT
+   * T5) — gutter click on a line where Inspector removed individual ids
+   * re-adds the full set.
+   *
+   * `meta` is applied to ids being ADDED in this call only; ids already
+   * present keep their existing meta (don't clobber a lineHint set by an
+   * earlier registration path).
+   */
+  toggleSet(ids, meta = {}) {
+    if (ids.length === 0) return;
+    const allPresent = ids.every((id) => this.ids.has(id));
+    if (allPresent) {
+      for (const id of ids) this.ids.delete(id);
+    } else {
+      for (const id of ids) {
+        if (!this.ids.has(id)) this.ids.set(id, meta);
+      }
+    }
+    this.fireChanged();
+  }
+  /** Read-only iteration — for orphan detection + UI rendering. */
+  entries() {
+    return this.ids;
+  }
+  /** Convenience: just the ids without metadata. */
+  idSet() {
+    return new Set(this.ids.keys());
+  }
+  /**
+   * Subscribe to mutate events. Returns a disposer mirroring
+   * `LiveCodingRuntime.onPlayingChanged` (RESEARCH Q3 / S3).
+   */
+  subscribe(cb) {
+    this.listeners.add(cb);
+    let unsubscribed = false;
+    return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      this.listeners.delete(cb);
+    };
+  }
+  dispose() {
+    this.ids.clear();
+    this.listeners.clear();
+  }
+  fireChanged() {
+    if (this.listeners.size === 0) return;
+    const snapshot = Array.from(this.listeners);
+    for (const cb of snapshot) {
+      try {
+        cb();
+      } catch {
+      }
+    }
   }
 };
 
@@ -5206,6 +5326,16 @@ var StrudelEngine = class {
     // `irNodeId`. Mirrors the lifecycle of lastIREvents (built on eval
     // success, cleared on failure).
     this.lastIRNodeLocLookup = null;
+    // Phase 20-07 (PK13 step 9) — engine-attached breakpoint registry.
+    // Per-engine scope (PV33). The hit-check in `wrappedOutput` reads
+    // `breakpointStore.has(irNodeId)` on the audio scheduler hot path.
+    this.breakpointStore = new BreakpointStore();
+    // Phase 20-07 — engine-driven pause state. Mirrored to consumers via
+    // `onPausedChanged` listeners. Set when the hit-check pauses the
+    // scheduler (engine pauses ITSELF on hit) and via the public pause()
+    // method. Idempotence guarded by setPaused().
+    this.isPausedState = false;
+    this.pauseChangedListeners = /* @__PURE__ */ new Set();
   }
   async init() {
     if (this.initialized) return;
@@ -5240,7 +5370,12 @@ var StrudelEngine = class {
     const hapStream = this.hapStream;
     const audioCtxRef = audioCtx;
     const wrappedOutput = async (hap, deadline, duration, cps, t) => {
-      hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime, this.lastIRNodeLocLookup ?? void 0);
+      const enriched = hapStream.emit(hap, deadline, duration, cps, audioCtxRef.currentTime, this.lastIRNodeLocLookup ?? void 0);
+      if (enriched.irNodeId && this.breakpointStore.has(enriched.irNodeId)) {
+        this.repl?.scheduler?.pause();
+        this.setPaused(true);
+        return;
+      }
       try {
         return await webaudioOutput(hap, deadline, duration, cps, t);
       } catch (err2) {
@@ -5479,6 +5614,67 @@ var StrudelEngine = class {
   stop() {
     this.repl?.scheduler?.stop();
   }
+  /**
+   * Phase 20-07 (DEC-AMENDED-1) — debugger pause. Calls
+   * `scheduler.pause()` (NOT `.stop()`) — pause preserves cycle position
+   * (cyclist.mjs:112-116), stop rewinds lastEnd to 0 (cyclist.mjs:117-122).
+   * Idempotent: setPaused() guards against double-fire of listeners (T17).
+   */
+  pause() {
+    this.repl?.scheduler?.pause?.();
+    this.setPaused(true);
+  }
+  /**
+   * Phase 20-07 — debugger resume. Calls `scheduler.start()` which uses
+   * the preserved lastEnd from pause (cyclist.mjs:101-111). Idempotent.
+   */
+  resume() {
+    this.repl?.scheduler?.start?.();
+    this.setPaused(false);
+  }
+  /** Current debugger pause state (true after a breakpoint hit). */
+  getPaused() {
+    return this.isPausedState;
+  }
+  /**
+   * Subscribe to engine pause-state transitions. Mirrors the
+   * subscriber-set pattern used by `LiveCodingRuntime.onPlayingChanged`
+   * (RESEARCH Q3). Returns a disposer.
+   */
+  onPausedChanged(listener) {
+    this.pauseChangedListeners.add(listener);
+    let unsubscribed = false;
+    return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      this.pauseChangedListeners.delete(listener);
+    };
+  }
+  /**
+   * Phase 20-07 — accessor onto the engine's BreakpointStore. The
+   * runtime exposes this through its own `getBreakpointStore()` so the
+   * editor's useBreakpoints hook (Wave β) and the Inspector (Wave γ)
+   * share a single store.
+   */
+  getBreakpointStore() {
+    return this.breakpointStore;
+  }
+  /**
+   * Internal — flip pause state and fan out to subscribers, with an
+   * idempotence guard (T17): both Inspector + Monaco "Resume" surfaces
+   * may fire setPaused(false) simultaneously; this short-circuits the
+   * second call so listeners never see a redundant transition.
+   */
+  setPaused(paused) {
+    if (this.isPausedState === paused) return;
+    this.isPausedState = paused;
+    for (const l of this.pauseChangedListeners) {
+      try {
+        l(paused);
+      } catch {
+      }
+    }
+  }
   async record(durationSeconds) {
     if (!this.analyserNode || !this.audioCtx) {
       throw new Error("StrudelEngine not initialized \u2014 call init() first");
@@ -5578,6 +5774,8 @@ var StrudelEngine = class {
     }
     this.trackAnalysers.clear();
     this.trackOrbit.clear();
+    this.breakpointStore.dispose();
+    this.pauseChangedListeners.clear();
     this.initialized = false;
     this.repl = null;
   }
@@ -20692,6 +20890,44 @@ var LiveCodingRuntime = class {
     return this.engine.components.streaming?.hapStream ?? null;
   }
   // -------------------------------------------------------------------------
+  // Phase 20-07 — debugger pause/resume + BreakpointStore accessor.
+  //
+  // Mirror of the 20-06 `getHapStream` accessor pattern: the engine owns
+  // the state, the runtime is a thin pass-through. Optional-chained
+  // delegates via `?.()` so non-Strudel runtimes (DemoEngine, SonicPi)
+  // that don't implement these methods are no-ops, not exceptions
+  // (LiveCodingEngine interface keeps them unrequired in v1).
+  // -------------------------------------------------------------------------
+  /** Phase 20-07 — explicit user-driven pause. Engine pauses scheduler. */
+  pause() {
+    this.engine.pause?.();
+  }
+  /** Phase 20-07 — resume after pause (or breakpoint hit). */
+  resume() {
+    this.engine.resume?.();
+  }
+  /** Phase 20-07 — current debugger pause state (false on engines without pause). */
+  getPaused() {
+    return this.engine.getPaused?.() ?? false;
+  }
+  /**
+   * Phase 20-07 — subscribe to engine pause-state transitions. Returns a
+   * disposer. No-op disposer when the engine doesn't implement
+   * onPausedChanged (non-Strudel runtimes).
+   */
+  onPausedChanged(listener) {
+    return this.engine.onPausedChanged?.(listener) ?? (() => {
+    });
+  }
+  /**
+   * Phase 20-07 — accessor onto the engine's BreakpointStore. Returns
+   * null when the engine doesn't expose one (non-Strudel runtimes / not
+   * yet initialized). Mirrors `getHapStream`'s shape.
+   */
+  getBreakpointStore() {
+    return this.engine.getBreakpointStore?.() ?? null;
+  }
+  // -------------------------------------------------------------------------
   // Internal listener dispatchers — snapshot-then-iterate so a listener
   // that unsubscribes itself during the callback doesn't break the loop.
   // -------------------------------------------------------------------------
@@ -34306,6 +34542,7 @@ exports.BOTTOM_PANEL_HEIGHT_MIN = BOTTOM_PANEL_HEIGHT_MIN;
 exports.BOTTOM_PANEL_OPEN_KEY = BOTTOM_PANEL_OPEN_KEY;
 exports.BUNDLED_PREFIX = BUNDLED_PREFIX;
 exports.BottomPanel = BottomPanel;
+exports.BreakpointStore = BreakpointStore;
 exports.BufferedScheduler = BufferedScheduler;
 exports.DARK_THEME_TOKENS = DARK_THEME_TOKENS;
 exports.DEFAULT_VIZ_CONFIG = DEFAULT_VIZ_CONFIG;

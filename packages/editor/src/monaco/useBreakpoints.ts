@@ -83,6 +83,16 @@ export interface UseBreakpointsReturn {
 export function useBreakpoints(
   editor: Monaco.editor.IStandaloneCodeEditor | null,
   store: BreakpointStore | null,
+  /**
+   * Phase 20-07 wave γ (T-γ-6 / R-1) — optional Resume callback. When
+   * provided, the hook registers a Monaco editor action with id
+   * `stave.debugger.resume` reachable via the command palette
+   * (Cmd/Ctrl-Shift-P → "Debugger: Resume"). Same closure as the
+   * Inspector header button so the runtime.resume() call is idempotent
+   * (T17). When omitted, no command is registered — keeps the hook a
+   * no-op for non-debugger editors.
+   */
+  onResume?: () => void,
 ): UseBreakpointsReturn {
   const collectionRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
 
@@ -90,6 +100,26 @@ export function useBreakpoints(
     collectionRef.current?.clear()
     collectionRef.current = null
   }, [])
+
+  // Phase 20-07 wave γ (T-γ-6 / R-1) — Monaco "Debugger: Resume" command.
+  // Lives in its own useEffect so the action lifecycle (mount/dispose) is
+  // driven solely by [editor, onResume] — independent of breakpoint
+  // store / snapshot churn that re-runs the gutter useEffect below.
+  useEffect(() => {
+    if (!editor || !onResume) return
+    const action = editor.addAction({
+      id: 'stave.debugger.resume',
+      label: 'Debugger: Resume',
+      keybindings: [],
+      contextMenuGroupId: 'navigation',
+      run: () => {
+        onResume()
+      },
+    })
+    return () => {
+      action.dispose()
+    }
+  }, [editor, onResume])
 
   useEffect(() => {
     if (!editor || !store) return

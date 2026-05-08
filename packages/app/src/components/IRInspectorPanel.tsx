@@ -17,6 +17,9 @@ import {
   type IREvent,
   type PatternIR,
   type SourceLocation,
+  type HapStream,
+  type HapEvent,
+  type BreakpointStore,
   getIRSnapshot,
   subscribeIRSnapshot,
   revealLineInFile,
@@ -30,6 +33,7 @@ import {
 import { summarize, children } from "./IRInspectorChrome";
 export { summarize, children } from "./IRInspectorChrome";   // re-export for callers
 import { IRInspectorTimeline } from "./IRInspectorTimeline";
+import { collectLeafIrNodeIds } from "./collectLeafIrNodeIds";
 
 // Phase 19-08 PR-B — localStorage keys for the timeline UI.
 // Convention matches `stave:inspector.irMode` at irProjection.ts:37.
@@ -38,6 +42,47 @@ const TIMELINE_CAPACITY_KEY = "stave:inspector.timeline.capacity";
 const TIMELINE_CAPACITY_DEFAULT = 30;
 const TIMELINE_CAPACITY_MIN = 1;
 const TIMELINE_CAPACITY_MAX = 500;
+
+// Phase 20-07 wave γ — stable empty set reference. State subscribers default
+// to this when no store is attached so React's identity check on the
+// previous-vs-next state value short-circuits and avoids spurious renders.
+const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set<string>()) as ReadonlySet<string>;
+
+// Phase 20-07 wave γ — module-level CSS injection guard for breakpoint +
+// pulse decoration classes. Mirrors `injectHighlightStyles` at
+// StrudelMonaco.tsx:253-268. Idempotent across multiple panel mounts.
+let inspectorBreakpointStylesInjected = false;
+function ensureInspectorBreakpointStyles(): void {
+  if (inspectorBreakpointStylesInjected || typeof document === "undefined") return;
+  inspectorBreakpointStylesInjected = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    [data-irinspector-pulsed="true"] {
+      background: rgba(74, 158, 255, 0.25) !important;
+      outline: 1px solid rgba(74, 158, 255, 0.6);
+      border-radius: 2px;
+      transition: background 80ms ease-out;
+    }
+    [data-breakpoint-active="true"] {
+      border-left: 3px solid #ef4444;
+      padding-left: 9px;
+    }
+    .stave-debugger-resume {
+      background: #ef4444;
+      color: #fff;
+      border: 0;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .stave-debugger-resume:hover {
+      background: #dc2626;
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 // ----- Color tokens by IR tag — keep close to the design system -----------
 
@@ -116,6 +161,10 @@ function IRNodeRow({
   depth,
   irMode,
   highlightedLoc,
+  snap,
+  pulsedIds,
+  breakpointIds,
+  onRowClick,
 }: {
   node: PatternIR;
   depth: number;
@@ -129,6 +178,32 @@ function IRNodeRow({
    * — graceful fallback per PV24).
    */
   highlightedLoc?: SourceLocation | null;
+  /**
+   * Phase 20-07 wave γ — current snapshot used for the leaf-id resolution
+   * walker (collectLeafIrNodeIds). Optional for backward compat — when null
+   * the row renders without breakpoint / pulse decoration.
+   */
+  snap?: IRSnapshot | null;
+  /**
+   * Phase 20-07 wave γ — set of irNodeIds currently firing (transient
+   * audioDuration-bounded glow). The row matches when any of its leaf
+   * descendants' irNodeIds is in this set.
+   */
+  pulsedIds?: ReadonlySet<string>;
+  /**
+   * Phase 20-07 wave γ — set of irNodeIds currently registered as
+   * breakpoints. The row marks `data-breakpoint-active="true"` when ANY
+   * leaf descendant's irNodeId is in this set (per DEC-AMENDED-2 / R-A
+   * inner-row aggregation).
+   */
+  breakpointIds?: ReadonlySet<string>;
+  /**
+   * Phase 20-07 wave γ — invoked on row click with the row's PatternIR
+   * node. Panel resolves the leaf-id set + lineHint and calls
+   * BreakpointStore.toggleSet. Optional — null disables the click path
+   * entirely (test harness / no-store mount).
+   */
+  onRowClick?: (node: PatternIR) => void;
 }): React.ReactElement | null {
   let label: string;
   let kids: readonly PatternIR[];
@@ -168,11 +243,41 @@ function IRNodeRow({
     node.loc[0].start === highlightedLoc.start;
   const highlightClass = isHighlighted ? "ir-node-highlight" : undefined;
 
+  // Phase 20-07 wave γ — pulse + breakpoint state. Leaf rows resolve their
+  // own irNodeId via the snap loc lookup (mirrors the engine's join). Inner
+  // rows aggregate over their descendant leaf-set per DEC-AMENDED-2 / R-A.
+  // Both flags are silent no-ops when snap is null (initial mount before
+  // first eval) or when the leaf-set is empty (graceful PV24 fallback).
+  const leafIrNodeIds: readonly string[] = snap ? collectLeafIrNodeIds(node, snap) : [];
+  const isPulsed: boolean =
+    pulsedIds != null &&
+    pulsedIds.size > 0 &&
+    leafIrNodeIds.some((id) => pulsedIds.has(id));
+  const hasBreakpoint: boolean =
+    breakpointIds != null &&
+    breakpointIds.size > 0 &&
+    leafIrNodeIds.some((id) => breakpointIds.has(id));
+
+  // Click handler — only attach when both onRowClick and a non-empty
+  // leaf-set exist. PV37 alignment: if leafIrNodeIds is empty we render no
+  // cursor + no handler (the row is not registrable).
+  const handleClick: React.MouseEventHandler<HTMLElement> | undefined =
+    onRowClick && leafIrNodeIds.length > 0
+      ? (ev) => {
+          ev.stopPropagation();
+          onRowClick(node);
+        }
+      : undefined;
+
   if (kids.length === 0) {
     return (
       <div
         className={highlightClass}
         data-ir-node-highlight={isHighlighted ? "true" : undefined}
+        data-irinspector-pulsed={isPulsed ? "true" : undefined}
+        data-breakpoint-active={hasBreakpoint ? "true" : undefined}
+        data-irinspector-row={leafIrNodeIds.length > 0 ? "true" : undefined}
+        onClick={handleClick}
         style={{
           display: "flex",
           gap: 6,
@@ -180,6 +285,7 @@ function IRNodeRow({
           paddingLeft: depth * 12,
           paddingTop: 2,
           paddingBottom: 2,
+          cursor: handleClick ? "pointer" : "default",
           ...(isHighlighted
             ? {
                 outline: "2px solid var(--accent, #4a9eff)",
@@ -211,6 +317,9 @@ function IRNodeRow({
       open={depth < 2}
       className={highlightClass}
       data-ir-node-highlight={isHighlighted ? "true" : undefined}
+      data-irinspector-pulsed={isPulsed ? "true" : undefined}
+      data-breakpoint-active={hasBreakpoint ? "true" : undefined}
+      data-irinspector-row={leafIrNodeIds.length > 0 ? "true" : undefined}
       style={{
         paddingLeft: depth * 12,
         ...(isHighlighted
@@ -222,7 +331,10 @@ function IRNodeRow({
           : null),
       }}
     >
-      <summary style={{ cursor: "pointer", padding: "2px 0", listStyle: "none" }}>
+      <summary
+        onClick={handleClick}
+        style={{ cursor: handleClick ? "pointer" : "pointer", padding: "2px 0", listStyle: "none" }}
+      >
         <span style={{ color: tagColor, fontWeight: 600, fontSize: "0.85em" }}>
           {label}
         </span>
@@ -239,6 +351,10 @@ function IRNodeRow({
           depth={depth + 1}
           irMode={irMode}
           highlightedLoc={highlightedLoc}
+          snap={snap}
+          pulsedIds={pulsedIds}
+          breakpointIds={breakpointIds}
+          onRowClick={onRowClick}
         />
       ))}
     </details>
@@ -343,8 +459,40 @@ function countLines(src: string, offset: number): number {
 
 // ----- Main panel ---------------------------------------------------------
 
-export function IRInspectorPanel(): React.ReactElement {
+/**
+ * Phase 20-07 wave γ — Inspector accessors threaded from StaveApp via the
+ * `getHapStreamRef` / `getBreakpointStoreRef` / `getIsPausedRef` /
+ * `onResumeRef` / `onPauseChangedRef` ref pattern (mirrors 20-06's
+ * established shape at StaveApp.tsx:491-526).
+ *
+ * All props are optional — back-compat with existing callers and tests
+ * that mount the panel without a runtime context. When absent, the panel
+ * renders without breakpoint / pulse / Resume affordances (the legacy
+ * 20-04 + 19-08 surface stays exactly identical).
+ */
+export interface IRInspectorPanelProps {
+  readonly getHapStream?: () => HapStream | null;
+  readonly getBreakpointStore?: () => BreakpointStore | null;
+  readonly getIsPaused?: () => boolean;
+  readonly onResume?: () => void;
+  readonly onPauseChanged?: (cb: (paused: boolean) => void) => () => void;
+}
+
+export function IRInspectorPanel(
+  props: IRInspectorPanelProps = {},
+): React.ReactElement {
   const [snap, setSnap] = useState<IRSnapshot | null>(getIRSnapshot);
+
+  // Phase 20-07 wave γ — pulse + breakpoint + pause state. EMPTY_SET is the
+  // module-level frozen reference so the initial state value carries a
+  // stable identity across renders (avoids the "every render is a new
+  // empty Set" trap that breaks identity comparisons in subscribers).
+  const [pulsedIds, setPulsedIds] = useState<ReadonlySet<string>>(EMPTY_SET);
+  const [breakpointIds, setBreakpointIds] = useState<ReadonlySet<string>>(EMPTY_SET);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+  const pulseTimeoutsRef = useRef<number[]>([]);
+  // Inject the breakpoint + pulse + Resume CSS once per page load. Idempotent.
+  ensureInspectorBreakpointStyles();
   // Persisted by name so the selection survives re-evals when the new
   // snapshot still has that pass. Falls back to the last pass otherwise.
   const [selectedTabName, setSelectedTabName] = useState<string | null>(null);
@@ -435,6 +583,84 @@ export function IRInspectorPanel(): React.ReactElement {
     return subscribeIRSnapshot((s) => setSnap(s));
   }, []);
 
+  // Phase 20-07 wave γ — HapStream subscription drives the transient
+  // row-pulse decoration. Mirrors useHighlighting.ts:174-195 timing:
+  //   showDelay  = max(0, scheduledAheadMs)
+  //   clearDelay = showDelay + audioDuration*1000
+  // and MusicalTimeline.tsx:332's disambig-via-irNodeId pattern (PV37).
+  // Re-resolves the HapStream on every snapshot publish per 20-06
+  // DEC-NEW-1 (snapshot-driven re-resolution) — when the active runtime
+  // swaps, the next eval republishes the snapshot and the effect
+  // re-attaches to the new stream.
+  const getHapStream = props.getHapStream;
+  useEffect(() => {
+    if (!getHapStream) return;
+    const stream = getHapStream();
+    if (!stream) return;
+    const handler = (event: HapEvent): void => {
+      if (!event.irNodeId) return; // PV37 — no fallback ladder
+      const id = event.irNodeId;
+      const showDelay = Math.max(0, event.scheduledAheadMs);
+      const clearDelay = showDelay + event.audioDuration * 1000;
+      const showTimer = window.setTimeout(() => {
+        setPulsedIds((prev) => {
+          if (prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
+      }, showDelay);
+      const clearTimer = window.setTimeout(() => {
+        setPulsedIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next.size === 0 ? EMPTY_SET : next;
+        });
+      }, clearDelay);
+      pulseTimeoutsRef.current.push(showTimer, clearTimer);
+    };
+    stream.on(handler);
+    return () => {
+      stream.off(handler);
+      for (const t of pulseTimeoutsRef.current) window.clearTimeout(t);
+      pulseTimeoutsRef.current = [];
+      setPulsedIds(EMPTY_SET);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot-driven re-resolution per 20-06 DEC-NEW-1
+  }, [snap, getHapStream]);
+
+  // Phase 20-07 wave γ — BreakpointStore subscription. The store fires its
+  // listener on every add/remove/toggle; we mirror the id set into React
+  // state so the row render reads through a stable React-managed value.
+  // Snapshot-driven re-resolution mirrors HapStream above.
+  const getBreakpointStore = props.getBreakpointStore;
+  useEffect(() => {
+    if (!getBreakpointStore) return;
+    const store = getBreakpointStore();
+    if (!store) return;
+    const sync = (): void => {
+      const ids = store.idSet();
+      setBreakpointIds(ids.size === 0 ? EMPTY_SET : ids);
+    };
+    sync();
+    return store.subscribe(sync);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot-driven re-resolution per 20-06 DEC-NEW-1
+  }, [snap, getBreakpointStore]);
+
+  // Phase 20-07 wave γ — pause-state subscription. Mirrors LiveCodingRuntime's
+  // `onPlayingChanged` listener-bus shape (RESEARCH §1 Q3). The disposer
+  // returned from onPauseChanged is the useEffect cleanup. Initial value
+  // read is critical so a panel mounting AFTER a breakpoint hit shows the
+  // Resume button immediately (T17 / R-1).
+  const getIsPaused = props.getIsPaused;
+  const onPauseChanged = props.onPauseChanged;
+  useEffect(() => {
+    if (getIsPaused) setIsPaused(getIsPaused());
+    if (!onPauseChanged) return;
+    return onPauseChanged((paused) => setIsPaused(paused));
+  }, [getIsPaused, onPauseChanged]);
+
   // Phase 19-08 — display gating. When pinnedSnapshot is set, the four
   // pass-tabs derive from it. Live `snap` continues to update in the
   // background; we just don't read it. PV27 alias contract holds against
@@ -522,6 +748,37 @@ export function IRInspectorPanel(): React.ReactElement {
     return evt.loc[0];
   }, [pinnedSnapshot, displaySnapshot, playheadIndex]);
 
+  // Phase 20-07 wave γ — chain-row click → BreakpointStore.toggleSet.
+  // R-3 lineHint: derive from snap.irNodeIdsByLine reverse lookup so an
+  // Inspector-registered breakpoint can still render a muted glyph on the
+  // gutter when the id later orphans (user edits the s-string). When no
+  // line resolves, pass `{}` — orphan becomes Inspector-side-only
+  // (documented v1 limit; cleared via Inspector right-click in
+  // 20-07-follow-up). PV37 alignment: empty leaf-set → silent skip.
+  const handleRowClick = React.useCallback(
+    (node: PatternIR): void => {
+      if (!getBreakpointStore) return;
+      const store = getBreakpointStore();
+      if (!store) return;
+      const live = displaySnapshot;
+      if (!live) return;
+      const ids = collectLeafIrNodeIds(node, live);
+      if (ids.length === 0) return;
+      let lineHint: number | undefined;
+      for (const id of ids) {
+        for (const [line, idsOnLine] of live.irNodeIdsByLine) {
+          if (idsOnLine.includes(id)) {
+            lineHint = line;
+            break;
+          }
+        }
+        if (lineHint != null) break;
+      }
+      store.toggleSet(ids, lineHint != null ? { lineHint } : {});
+    },
+    [getBreakpointStore, displaySnapshot],
+  );
+
   if (!displaySnapshot) {
     return (
       <div
@@ -563,7 +820,25 @@ export function IRInspectorPanel(): React.ReactElement {
         }}
       >
         <div style={{ fontWeight: 600 }}>IR INSPECTOR</div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {/* Phase 20-07 wave γ — Resume affordance. Visible only when
+              the active runtime reports paused. Clicking calls onResume
+              which threads to runtime.resume() in StaveApp; idempotent
+              on the runtime side (T17). The same onResume closure is
+              wired into Monaco via `useBreakpoints` (T-γ-6) so the user
+              can resume from the command palette when the Inspector is
+              collapsed (R-1). */}
+          {isPaused && props.onResume && (
+            <button
+              type="button"
+              className="stave-debugger-resume"
+              onClick={props.onResume}
+              aria-label="Resume from breakpoint"
+              data-testid="stave-debugger-resume"
+            >
+              ▶ Resume
+            </button>
+          )}
           <div style={{ fontSize: "0.8em", opacity: 0.6 }}>
             {displaySnapshot.runtime} · {displaySnapshot.events.length} events · {ageLabel}
           </div>
@@ -697,6 +972,10 @@ export function IRInspectorPanel(): React.ReactElement {
                 depth={0}
                 irMode={irMode}
                 highlightedLoc={highlightedLoc}
+                snap={displaySnapshot}
+                pulsedIds={pulsedIds}
+                breakpointIds={breakpointIds}
+                onRowClick={handleRowClick}
               />
             )}
           </div>

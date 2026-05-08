@@ -48,6 +48,14 @@ interface StrudelMonacoProps {
    * prop is accepted and forwarded to the hook.
    */
   readonly breakpointStore?: BreakpointStore | null
+  /**
+   * Phase 20-07 wave γ (T-γ-6 / R-1) — optional Resume closure. When
+   * provided, `useBreakpoints` registers a Monaco editor action
+   * `stave.debugger.resume` reachable via the command palette. Same
+   * closure as the Inspector header button → runtime.resume() is
+   * idempotent (T17), so the dual-entry race is a no-op.
+   */
+  readonly onResume?: () => void
 }
 
 export function StrudelMonaco({
@@ -60,6 +68,7 @@ export function StrudelMonaco({
   soundNames = [],
   language = 'strudel',
   breakpointStore = null,
+  onResume,
 }: StrudelMonacoProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
@@ -68,9 +77,11 @@ export function StrudelMonaco({
   // editor consumers outside the onMount closure must wait for mount.
   const [mountedEditor, setMountedEditor] = useState<Monaco.editor.IStandaloneCodeEditor | null>(null)
 
-  // Phase 20-07 (PK13 step 9 / wave β) — Monaco gutter breakpoints. The
-  // hook is a no-op until both `editor` and `breakpointStore` are non-null.
-  useBreakpoints(mountedEditor, breakpointStore)
+  // Phase 20-07 (PK13 step 9 / wave β + γ) — Monaco gutter breakpoints +
+  // Resume command. The hook is a no-op until `editor` is non-null;
+  // breakpointStore is required for gutter glyphs, onResume for the
+  // command palette. Both can be omitted independently.
+  useBreakpoints(mountedEditor, breakpointStore, onResume)
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
