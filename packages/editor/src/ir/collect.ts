@@ -354,6 +354,11 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // sees an atom; nodes built by hand via IR.play() without loc
       // produce events with loc undefined.
       if (ir.loc && ir.loc.length > 0) event.loc = ir.loc
+      // PV38 clause 1 / PK13 step 4 / D-02 — assign content-addressed
+      // identity at the Play leaf. Wrapper arms preserve via existing
+      // {...e, ...} spread semantics (see withWrapperLoc, line 106-116).
+      // Position is 0: Play emits exactly one event per execution.
+      event.irNodeId = assignNodeId(ir, 0)
       return [event]
     }
 
