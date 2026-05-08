@@ -1788,6 +1788,73 @@ describe('20-03 — PV36 loc-completeness across collect arms', () => {
 
 
 // ---------------------------------------------------------------------------
+// Phase 20-05 wave β — irNodeId determinism + corpus uniqueness/lookup
+// (PV38 clause 1 / PK13 step 4 / D-02). Pairs with the Play-arm
+// assignNodeId wiring in collect.ts. Wrapper arms preserve irNodeId via
+// existing {...e, ...} spread semantics — no per-arm wiring needed
+// (RESEARCH DEC-NEW-1: leaf-only assignment).
+// ---------------------------------------------------------------------------
+
+describe('20-05 — irNodeId determinism + lookup-resolution (PV38 / D-02)', () => {
+  it('same code parsed twice yields identical irNodeIds for every event', () => {
+    const code = 'note("c d e f").fast(2)'
+    const events1 = collect(parseStrudel(code))
+    const events2 = collect(parseStrudel(code))
+    expect(events1.length).toBe(events2.length)
+    for (let i = 0; i < events1.length; i++) {
+      expect(events1[i].irNodeId).toBeTruthy()
+      expect(events1[i].irNodeId).toBe(events2[i].irNodeId)
+    }
+  })
+})
+
+describe('20-05 — irNodeId set per event + resolves in id→event map (PV38 / D-02)', () => {
+  // CORPUS reused from line 1749 (PV36 loc-completeness contract).
+  const CORPUS: ReadonlyArray<string> = [
+    'note("c d e f")',
+    'note("c d").fast(2)',
+    'note("c d").slow(2)',
+    'note("c d e f").late(0.125)',
+    's("bd hh sd cp").ply(3)',
+    'mini("<0 1>").pick(["c","e"]).note()',
+    'note("c d").layer(x => x.fast(2))',
+    'note("c d").off(0.125, x => x.gain(0.5))',
+    'note("c d").every(2, x => x.fast(2))',
+    's("bd hh").chop(4)',
+    'note("c d e f").shuffle(4)',
+    'note("c d e f g h").scramble(4)',
+    's("bd").struct("1 0 1 1")',
+    'note("c d").mask("1 0 1 1")',
+    'note("c d").gain(0.5).lpf(2400).slow(2)',
+  ]
+  for (const code of CORPUS) {
+    it(`every event has a truthy irNodeId; the id resolves to an event in id→event map — ${JSON.stringify(code).slice(0, 60)}`, () => {
+      let totalEvents = 0
+      // Build a synthesised id→event map across all cycles
+      const idMap = new Map<string, IREvent>()
+      for (let c = 0; c < 4; c++) {
+        const events = collect(parseStrudel(code), { cycle: c } as CollectContext)
+        totalEvents += events.length
+        for (const e of events) {
+          expect(e.irNodeId, `code=${code} cycle=${c} event=${JSON.stringify(e)}`).toBeTruthy()
+          // Lookup resolves: same id → same leaf-loc (the underlying contract)
+          const existing = idMap.get(e.irNodeId!)
+          if (existing) {
+            // Duplicates from fast/ply/chunk are EXPECTED — assert they share leaf-loc
+            expect(existing.loc?.[0]).toEqual(e.loc?.[0])
+          } else {
+            idMap.set(e.irNodeId!, e)
+          }
+        }
+      }
+      expect(totalEvents).toBeGreaterThan(0)
+      expect(idMap.size).toBeGreaterThan(0)
+    })
+  }
+})
+
+
+// ---------------------------------------------------------------------------
 // Phase 20-04 wave β — parser-side wrap probes (D-03 / P33 / PV37).
 // ---------------------------------------------------------------------------
 

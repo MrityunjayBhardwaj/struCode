@@ -13,6 +13,9 @@ import { IR } from '../../ir/PatternIR'
 
 // Mirror irInspector.test.ts:11-22 sample shape; freshen each call so
 // Object.freeze in captureSnapshot doesn't poison cross-test references.
+// Phase 20-05: IRSnapshot grew two ReadonlyMap lookup fields (PV38 clause 1)
+// — empty Maps are fine here since captureSnapshot is called directly,
+// bypassing the publisher's enrichWithLookups.
 function sample(label: string = 'a'): IRSnapshot {
   const ir = IR.play('c4')
   return {
@@ -23,6 +26,8 @@ function sample(label: string = 'a'): IRSnapshot {
     passes: [{ name: 'Parsed', ir }],
     ir, // alias of passes[last].ir per IRSnapshot contract
     events: [],
+    irNodeIdLookup: new Map(),
+    irNodeLocLookup: new Map(),
   }
 }
 
