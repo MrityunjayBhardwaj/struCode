@@ -57,3 +57,53 @@ describe('20-04 — IR Inspector developer chrome (PV35 / D-05)', () => {
     expect(innermost.tag).toBe('Play')
   })
 })
+
+// Phase 20-10 wave β-2 — Param developer chrome (PV35 / D-05).
+describe('20-10 — Param developer chrome (sample-bucket / track-defining)', () => {
+  it('summarize(Param) with string value emits key="value" (JSON.stringify quotes)', () => {
+    const ir = parseStrudel('note("c").s("sawtooth")')
+    expect(ir.tag).toBe('Param')
+    expect(summarize(ir)).toBe('s="sawtooth"')
+  })
+
+  it('summarize(Param) with numeric value emits key=value (no quotes — matches Strudel arg)', () => {
+    const ir = parseStrudel('note("c").gain(0.3)')
+    expect(ir.tag).toBe('Param')
+    expect(summarize(ir)).toBe('gain=0.3')
+  })
+
+  it('summarize(Param) with PatternIR sub-IR value emits key=[pattern]', () => {
+    // .s("<bd cp>") — value is a parsed Cycle IR (sub-IR), not a literal.
+    const ir = parseStrudel('note("c").s("<bd cp>")')
+    expect(ir.tag).toBe('Param')
+    expect(typeof (ir as { value: unknown }).value).toBe('object')
+    expect(summarize(ir)).toBe('s=[pattern]')
+  })
+
+  it('children(Param) with literal value returns [body] only', () => {
+    const ir = parseStrudel('note("c").s("sawtooth")')
+    const kids = children(ir)
+    expect(kids.length).toBe(1)
+    expect(kids[0].tag).toBe('Play')   // body is the note("c") Play
+  })
+
+  it('children(Param) with PatternIR sub-IR returns [value, body] (drillable sub-IR)', () => {
+    // The pattern-arg `<bd cp>` is a structural sub-tree the developer
+    // must be able to drill into. Order: value first, body second.
+    const ir = parseStrudel('note("c").s("<bd cp>")')
+    const kids = children(ir)
+    expect(kids.length).toBe(2)
+    expect(kids[0].tag).toBe('Cycle')   // <bd cp> is parsed as a Cycle
+    expect(kids[1].tag).toBe('Play')    // body
+  })
+
+  it('Param-wrapping-Param: developer chrome stacks chained chips', () => {
+    // .s(...).gain(...) parses as Param(gain, body=Param(s, body=Play)).
+    const outer = parseStrudel('note("c").s("sawtooth").gain(0.3)')
+    expect(outer.tag).toBe('Param')
+    expect(summarize(outer)).toBe('gain=0.3')
+    const inner = children(outer)[0]
+    expect(inner.tag).toBe('Param')
+    expect(summarize(inner)).toBe('s="sawtooth"')
+  })
+})

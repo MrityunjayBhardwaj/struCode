@@ -287,6 +287,68 @@ describe('20-04 — wrapper chrome (PV35 audience split)', () => {
   })
 })
 
+// Phase 20-10 wave β-2 — Param musician chrome (PV35 / PV32 — userMethod-first).
+describe('20-10 — Param musician chrome (userMethod short-circuit)', () => {
+  it('projectedLabel(Param) returns "s" via userMethod short-circuit (NOT "Param")', () => {
+    // PV32 / Trap "Param-as-label leak". The short-circuit at irProjection
+    // lines 59-61 returns userMethod ('s') for every parser-constructed
+    // Param. The `case 'Param':` defensive arm never fires in the normal
+    // path; if this test ever shows 'Param', the short-circuit broke.
+    const ir = parseStrudel('note("c").s("sawtooth")')
+    expect(ir.tag).toBe('Param')
+    expect(projectedLabel(ir)).toBe('s')
+    expect(projectedLabel(ir)).not.toBe('Param')
+  })
+
+  it('projectedLabel(Param) for chained Params returns the typed token at each level', () => {
+    // .s("sawtooth").gain(0.3) → Param(gain, Param(s, Play))
+    // Outer label is 'gain'; inner label is 's' — both via userMethod.
+    const outer = parseStrudel('note("c").s("sawtooth").gain(0.3)')
+    expect(projectedLabel(outer)).toBe('gain')
+    const inner = projectedChildren(outer).find(
+      n => n.tag === 'Param',
+    )
+    expect(inner).toBeDefined()
+    expect(projectedLabel(inner!)).toBe('s')
+  })
+
+  it('projectedChildren(Param) with literal value returns [body] only', () => {
+    const ir = parseStrudel('note("c").s("sawtooth")')
+    const kids = projectedChildren(ir)
+    expect(kids.length).toBe(1)
+    expect(kids[0].tag).toBe('Play')   // body is the note("c") Play
+  })
+
+  it('projectedChildren(Param) with PatternIR sub-IR drills into the sub-IR', () => {
+    // .s("<bd cp>") — value is a Cycle IR. The musician must be able to
+    // drill into it (set breakpoints on bd / cp atoms, inspect the
+    // pattern-arg structure). Order: [value, body] — value first because
+    // it is the structural sub-tree the user typed.
+    const ir = parseStrudel('note("c").s("<bd cp>")')
+    expect(ir.tag).toBe('Param')
+    const kids = projectedChildren(ir)
+    expect(kids.length).toBe(2)
+    expect(kids[0].tag).toBe('Cycle')   // pattern-arg drillable
+    expect(kids[1].tag).toBe('Play')    // body
+  })
+
+  it('hand-constructed Param without userMethod falls through to tag (defensive — debugging-visible)', () => {
+    // Defensive fail-safe path. NOT a normal-path PV32 violation — the
+    // parser ALWAYS sets userMethod via tagMeta. This test documents that
+    // a future code path forgetting tagMeta produces a visible 'Param'
+    // label, not a silent undefined hide.
+    const param: PatternIR = {
+      tag: 'Param',
+      key: 's',
+      value: 'sawtooth',
+      rawArgs: '"sawtooth"',
+      body: IR.play('c'),
+      // userMethod intentionally omitted
+    }
+    expect(projectedLabel(param)).toBe('Param')
+  })
+})
+
 describe('projectedLabel — synthetic intermediates hidden (D-02)', () => {
   it('Late inside .off() (userMethod undefined) returns undefined', () => {
     const ir = parseRoot('s("bd").off(0.125, x => x.gain(0.5))')
