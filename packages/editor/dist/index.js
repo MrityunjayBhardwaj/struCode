@@ -3057,7 +3057,12 @@ function makeEvent(ctx, note2, params) {
     gain: merged.gain ?? 1,
     velocity: merged.velocity ?? 1,
     color: merged.color ?? null,
-    params: merged
+    params: merged,
+    // Phase 20-11 — conditional spread: omits the field entirely when
+    // ctx.trackId is undefined (hand-built IR without Track wrapper).
+    // Avoids polluting IREvent with enumerable `trackId: undefined`
+    // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
+    ...ctx.trackId !== void 0 ? { trackId: ctx.trackId } : {}
   };
 }
 function _collectRearrange(selector, n, body2, ctx, wrapperLoc) {
@@ -3107,7 +3112,8 @@ function walk(ir, ctx) {
     case "Pure":
       return [];
     case "Track": {
-      return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+      const childCtx = { ...ctx, trackId: ir.trackId };
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Code": {
       if (ir.via) {
@@ -3443,8 +3449,12 @@ function gen(ir) {
   switch (ir.tag) {
     case "Pure":
       return '""';
-    case "Track":
+    case "Track": {
+      if (ir.userMethod === "p") {
+        return `${gen(ir.body)}.p("${ir.trackId}")`;
+      }
       return gen(ir.body);
+    }
     case "Code":
       if (ir.via) {
         return `${gen(ir.via.inner)}.${ir.via.method}(${ir.via.args})`;
@@ -4257,7 +4267,8 @@ function parseStrudel(code) {
     const tracks = extractTracks(code);
     if (tracks.length === 0) {
       const trimStart = code.search(/\S/);
-      return parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0);
+      const inner = parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0);
+      return IR.track("d1", inner);
     }
     if (tracks.length === 1) {
       const t = tracks[0];
@@ -4578,6 +4589,7 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "bank":
     case "scale":
     case "color":
+    case "freq":
     case "gain":
     case "velocity":
     case "pan":
@@ -4894,7 +4906,7 @@ function runChainAppliedStage(input) {
       })
     );
   }
-  return applyOnTrack(input);
+  return IR.track("d1", applyOnTrack(input));
 }
 function applyOnTrack(node) {
   const m = node;
@@ -7931,6 +7943,62 @@ function subscribeToZoneOverrides(fileId, cb) {
     if (set.size === 0) zoneOverrideSubscribers.delete(fileId);
   };
 }
+var EMPTY_TRACK_META = Object.freeze({});
+var trackMetaSubscribers = /* @__PURE__ */ new Map();
+var wiredTrackMetaObservers = /* @__PURE__ */ new Set();
+function ensureTrackMetaMap(fileId) {
+  const filesMap = getFilesMap();
+  const fileMap = filesMap.get(fileId);
+  if (!fileMap) return null;
+  let meta = fileMap.get("trackMeta");
+  if (!meta) {
+    meta = new Y3.Map();
+    fileMap.set("trackMeta", meta);
+  }
+  if (!wiredTrackMetaObservers.has(fileId)) {
+    meta.observeDeep(() => {
+      const subs = trackMetaSubscribers.get(fileId);
+      if (subs) for (const cb of subs) cb();
+    });
+    wiredTrackMetaObservers.add(fileId);
+  }
+  return meta;
+}
+function getTrackMeta(fileId, trackId) {
+  ensureDoc();
+  const meta = ensureTrackMetaMap(fileId);
+  if (!meta) return EMPTY_TRACK_META;
+  return meta.get(trackId) ?? EMPTY_TRACK_META;
+}
+function setTrackMeta(fileId, trackId, partial) {
+  ensureDoc();
+  const meta = ensureTrackMetaMap(fileId);
+  if (!meta) return;
+  const doc = ensureDoc();
+  doc.transact(() => {
+    const existing = meta.get(trackId) ?? {};
+    const merged = { ...existing, ...partial };
+    if (merged.color === void 0 && merged.collapsed === void 0) {
+      meta.delete(trackId);
+    } else {
+      meta.set(trackId, merged);
+    }
+  }, STRUCT_ORIGIN);
+}
+function subscribeToTrackMeta(fileId, cb) {
+  ensureDoc();
+  ensureTrackMetaMap(fileId);
+  let set = trackMetaSubscribers.get(fileId);
+  if (!set) {
+    set = /* @__PURE__ */ new Set();
+    trackMetaSubscribers.set(fileId, set);
+  }
+  set.add(cb);
+  return () => {
+    set.delete(cb);
+    if (set.size === 0) trackMetaSubscribers.delete(fileId);
+  };
+}
 function resetFileStore() {
   for (const [id] of textObservers) {
     unwireTextObserver(id);
@@ -7942,6 +8010,8 @@ function resetFileStore() {
   folderOrderObserverWired = false;
   zoneOverrideSubscribers.clear();
   wiredZoneObservers.clear();
+  trackMetaSubscribers.clear();
+  wiredTrackMetaObservers.clear();
   resetUndoManager();
   notifyFileList();
   notifyFolderOrder();
@@ -31427,10 +31497,13 @@ var SonicPiEngine = class {
       return { error: new Error("SonicPiEngine not initialized \u2014 call init() first") };
     }
     try {
+      const isReEvaluate = this.scheduler !== null && this.playing;
+      if (isReEvaluate && code === this.currentCode) {
+        return {};
+      }
       this.currentCode = code;
       this.currentStratum = detectStratum(code);
       this.warnDedup.clear();
-      const isReEvaluate = this.scheduler !== null && this.playing;
       if (!isReEvaluate) {
         if (this.scheduler) {
           this.scheduler.dispose();
@@ -32469,6 +32542,13 @@ var SonicPiEngine = class {
         const oldLoops = scheduler.getRunningLoopNames();
         const removedLoops = oldLoops.filter((name2) => !pendingLoops.has(name2));
         const hasNewLoops = [...pendingLoops.keys()].some((name2) => !oldLoops.includes(name2));
+        for (const name2 of removedLoops) {
+          this.loopBuilders.delete(name2);
+          this.loopSeeds.delete(name2);
+          this.loopTicks.delete(name2);
+          this.loopBeats.delete(name2);
+          this.loopSynced.delete(name2);
+        }
         scheduler.pauseTick();
         if (this.bridge) {
           this.bridge.freeAllNodes();
@@ -33823,6 +33903,30 @@ function compilePreset(preset) {
   }
   throw new Error(`Unknown renderer: ${renderer}`);
 }
+var EMPTY_META = Object.freeze({});
+function useTrackMeta(fileId, trackId) {
+  const subscribe3 = useCallback(
+    (onStoreChange) => {
+      if (!fileId) return () => {
+      };
+      return subscribeToTrackMeta(fileId, onStoreChange);
+    },
+    [fileId]
+  );
+  const getSnapshot = useCallback(() => {
+    if (!fileId) return EMPTY_META;
+    return getTrackMeta(fileId, trackId);
+  }, [fileId, trackId]);
+  const meta = useSyncExternalStore(subscribe3, getSnapshot, getSnapshot);
+  const set = useCallback(
+    (partial) => {
+      if (!fileId) return;
+      setTrackMeta(fileId, trackId, partial);
+    },
+    [fileId, trackId]
+  );
+  return { meta, set };
+}
 var DB_NAME3 = "stave-snapshots";
 var DB_VERSION3 = 1;
 var STORE_NAME3 = "snapshots";
@@ -34863,6 +34967,6 @@ function emitFromGlobal(err2, _kind) {
   });
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getTrackMeta, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setTrackMeta, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useTrackMeta, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

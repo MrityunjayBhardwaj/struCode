@@ -56,7 +56,74 @@ let mockCurrent: IRSnapshot | null = null
 const mockListeners = new Set<(s: IRSnapshot | null) => void>()
 const revealLineInFileMock = vi.fn<[string, number], void>()
 
-vi.mock('@stave/editor', () => {
+// Phase 20-12 β-1 — useTrackMeta backing store, mock-side. Each (fileId, trackId)
+// pair gets a stable record reference; setTrackMeta merges + notifies listeners.
+// Mirrors the real store's ref-stable contract (EMPTY_TRACK_META frozen sentinel).
+type MockTrackMeta = { color?: string; collapsed?: boolean }
+const EMPTY_MOCK_META: MockTrackMeta = Object.freeze({})
+const mockTrackMetaStore = new Map<string, MockTrackMeta>()
+const mockTrackMetaListeners = new Map<string, Set<() => void>>()
+function trackMetaKey(fileId: string, trackId: string): string {
+  return `${fileId}::${trackId}`
+}
+function mockGetTrackMeta(fileId: string, trackId: string): MockTrackMeta {
+  return mockTrackMetaStore.get(trackMetaKey(fileId, trackId)) ?? EMPTY_MOCK_META
+}
+function mockSetTrackMeta(
+  fileId: string,
+  trackId: string,
+  partial: Partial<MockTrackMeta>,
+): void {
+  const key = trackMetaKey(fileId, trackId)
+  const existing = mockTrackMetaStore.get(key) ?? {}
+  const merged: MockTrackMeta = { ...existing, ...partial }
+  if (merged.color === undefined && merged.collapsed === undefined) {
+    mockTrackMetaStore.delete(key)
+  } else {
+    mockTrackMetaStore.set(key, merged)
+  }
+  const subs = mockTrackMetaListeners.get(fileId)
+  if (subs) for (const cb of subs) cb()
+}
+function mockSubscribeToTrackMeta(fileId: string, cb: () => void): () => void {
+  let set = mockTrackMetaListeners.get(fileId)
+  if (!set) {
+    set = new Set()
+    mockTrackMetaListeners.set(fileId, set)
+  }
+  set.add(cb)
+  return () => {
+    set!.delete(cb)
+    if (set!.size === 0) mockTrackMetaListeners.delete(fileId)
+  }
+}
+
+vi.mock('@stave/editor', async () => {
+  // React imported via dynamic to avoid the test mock loading multiple React
+  // copies (vitest hoists vi.mock above ES imports).
+  const React = await import('react')
+  function useTrackMeta(fileId: string | undefined, trackId: string) {
+    const subscribe = React.useCallback(
+      (onChange: () => void) => {
+        if (!fileId) return () => {}
+        return mockSubscribeToTrackMeta(fileId, onChange)
+      },
+      [fileId],
+    )
+    const getSnapshot = React.useCallback(() => {
+      if (!fileId) return EMPTY_MOCK_META
+      return mockGetTrackMeta(fileId, trackId)
+    }, [fileId, trackId])
+    const meta = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+    const set = React.useCallback(
+      (partial: Partial<MockTrackMeta>) => {
+        if (!fileId) return
+        mockSetTrackMeta(fileId, trackId, partial)
+      },
+      [fileId, trackId],
+    )
+    return { meta, set }
+  }
   return {
     getIRSnapshot: () => mockCurrent,
     subscribeIRSnapshot: (cb: (s: IRSnapshot | null) => void) => {
@@ -67,6 +134,7 @@ vi.mock('@stave/editor', () => {
     },
     revealLineInFile: (source: string, line: number) =>
       revealLineInFileMock(source, line),
+    useTrackMeta,
   }
 })
 
@@ -180,6 +248,8 @@ class MockResizeObserver {
 beforeEach(() => {
   mockCurrent = null
   mockListeners.clear()
+  mockTrackMetaStore.clear()
+  mockTrackMetaListeners.clear()
   mockGridWidth = 800
   revealLineInFileMock.mockClear()
   globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver
@@ -1186,5 +1256,103 @@ describe('20-12 α-4 — silent-prefix geometry contract (D-04)', () => {
     // Distance from cycle 1 start to event = 0; distance from cycle 0 start
     // to event = 0. Therefore x1 - x0 = pxPerCycle = 400.
     expect(Math.round(x1 - x0)).toBe(400)
+  })
+})
+
+// ─── Phase 20-12 β-1 — track header rail (chevron + swatch + name) ──────────
+
+describe('20-12 β-1 — track header rail', () => {
+  it('renders chevron + swatch + name for each track', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:test.strudel',
+          events: [
+            evt({ trackId: 'd1', s: 'bd' }),
+            evt({ trackId: 'd2', s: 'hh' }),
+          ],
+        }),
+      )
+    })
+    const headers = container.querySelectorAll(
+      '[data-musical-timeline="track-header"]',
+    )
+    expect(headers).toHaveLength(2)
+    for (const h of headers) {
+      expect(h.querySelector('[data-musical-timeline="track-chevron"]')).not
+        .toBeNull()
+      expect(h.querySelector('[data-musical-timeline="track-swatch"]')).not
+        .toBeNull()
+      expect(h.querySelector('[data-musical-timeline="track-name"]')).not
+        .toBeNull()
+    }
+    // First row's name reflects the trackId.
+    expect(
+      headers[0].querySelector('[data-musical-timeline="track-name"]')
+        ?.textContent,
+    ).toBe('d1')
+  })
+
+  it('chevron click toggles useTrackMeta.set({ collapsed: ... })', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:test.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevron = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevron).not.toBeNull()
+    expect(chevron!.getAttribute('data-collapsed')).toBe('false')
+
+    await act(async () => {
+      chevron!.click()
+    })
+    expect(
+      mockGetTrackMeta('file:test.strudel', 'd1').collapsed,
+    ).toBe(true)
+    // Re-read the chevron after the state change.
+    const chevron2 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevron2!.getAttribute('data-collapsed')).toBe('true')
+  })
+
+  it('swatch click captures the dot rect (popover anchor available)', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:test.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const swatch = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-swatch"]',
+    )
+    expect(swatch).not.toBeNull()
+    // Stub getBoundingClientRect — jsdom returns all-zero by default; that's
+    // fine for the click-handler-fires assertion. The popover render path is
+    // β-6's domain.
+    swatch!.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 12, left: 0, right: 12, width: 12, height: 12, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    await act(async () => {
+      swatch!.click()
+    })
+    // No throw + button remains in DOM is the proof of contract; the popover
+    // appearance is asserted separately in TrackSwatchPopover.test.tsx.
+    expect(swatch!.isConnected).toBe(true)
   })
 })

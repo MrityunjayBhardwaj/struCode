@@ -132,7 +132,15 @@ export {
   setZoneHeightOverride,
   pruneZoneOverrides,
   subscribeToZoneOverrides,
+  // Phase 20-12 α-2 — per-track UI metadata (color override + collapsed)
+  getTrackMeta,
+  setTrackMeta,
+  subscribeToTrackMeta,
 } from './workspace/WorkspaceFile'
+export type { TrackMeta } from './workspace/WorkspaceFile'
+// Phase 20-12 α-3 — React hook for trackMeta
+export { useTrackMeta } from './workspace/useTrackMeta'
+export type { UseTrackMetaResult } from './workspace/useTrackMeta'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady, subscribeToDocUpdate } from './workspace/projectDoc'
 export {
   undo,

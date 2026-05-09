@@ -34,15 +34,17 @@
 'use client'
 
 import * as React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   type IRSnapshot,
   type IREvent,
   type HapStream,
   type HapEvent,
+  type TrackMeta,
   getIRSnapshot,
   subscribeIRSnapshot,
   revealLineInFile,
+  useTrackMeta,
 } from '@stave/editor'
 import { groupEventsByTrack } from './musicalTimeline/groupEventsByTrack'
 import { stableTrackOrder } from './musicalTimeline/stableTrackOrder'
@@ -125,6 +127,126 @@ function formatNoteTooltip(event: IREvent, fallbackTrackId: string): string {
   return [sample, noteSegment, barBeat, velocitySegment]
     .filter((s): s is string => typeof s === 'string' && s.length > 0)
     .join(' · ')
+}
+
+/**
+ * Phase 20-12 β-1 — Row header rail (chevron + swatch + name).
+ *
+ * Per-row component so `useTrackMeta` is called from a stable component (not
+ * from inside a `.map()` in the parent) — rules-of-hooks compliant. The
+ * parent (`MusicalTimeline`) passes `fileId` derived from `IRSnapshot.source`;
+ * this component reads/writes meta through `useTrackMeta` keyed on
+ * (fileId, trackId).
+ *
+ * Width budget (RESEARCH §B.5): chevron 12 + gap 4 + swatch 12 + gap 4 +
+ * name fills the remainder. Total = TRACK_LABEL_WIDTH (90px). aria-labels
+ * on both buttons keep the rail screen-reader navigable.
+ */
+interface TrackHeaderRowProps {
+  fileId: string | undefined
+  trackId: string
+  autoColor: string
+  top: number
+  height: number
+  onOpenSwatch: (trackId: string, anchor: DOMRect) => void
+}
+
+function TrackHeaderRow({
+  fileId,
+  trackId,
+  autoColor,
+  top,
+  height,
+  onOpenSwatch,
+}: TrackHeaderRowProps): React.ReactElement {
+  const { meta, set } = useTrackMeta(fileId, trackId)
+  const swatchRef = useRef<HTMLButtonElement>(null)
+  const color = meta.color ?? autoColor
+  const collapsed = meta.collapsed ?? false
+  const handleToggle = useCallback(() => {
+    set({ collapsed: !collapsed })
+  }, [collapsed, set])
+  const handleOpenSwatch = useCallback(() => {
+    if (swatchRef.current) {
+      onOpenSwatch(trackId, swatchRef.current.getBoundingClientRect())
+    }
+  }, [onOpenSwatch, trackId])
+  return (
+    <div
+      data-musical-timeline="track-header"
+      data-musical-timeline-track-label={trackId}
+      data-track-id={trackId}
+      title={trackId}
+      style={{
+        position: 'absolute',
+        top,
+        height,
+        width: TRACK_LABEL_WIDTH,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+        paddingLeft: 4,
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        boxSizing: 'border-box',
+      }}
+    >
+      <button
+        type="button"
+        data-musical-timeline="track-chevron"
+        data-collapsed={collapsed ? 'true' : 'false'}
+        aria-label={collapsed ? `Expand ${trackId}` : `Collapse ${trackId}`}
+        aria-expanded={!collapsed}
+        onClick={handleToggle}
+        style={{
+          width: 12,
+          height: 12,
+          border: 'none',
+          background: 'transparent',
+          color: 'rgba(255,255,255,0.6)',
+          cursor: 'pointer',
+          padding: 0,
+          fontSize: 10,
+          lineHeight: '12px',
+          transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+          transition: 'transform 100ms',
+          flexShrink: 0,
+        }}
+      >
+        ▾
+      </button>
+      <button
+        ref={swatchRef}
+        type="button"
+        data-musical-timeline="track-swatch"
+        aria-label={`Pick color for ${trackId}`}
+        onClick={handleOpenSwatch}
+        style={{
+          width: 12,
+          height: 12,
+          padding: 0,
+          border: 'none',
+          background: color,
+          borderRadius: 6,
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      />
+      <span
+        data-musical-timeline="track-name"
+        style={{
+          fontSize: 10,
+          lineHeight: '12px',
+          color: 'rgba(255,255,255,0.4)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          flex: 1,
+        }}
+      >
+        {trackId}
+      </span>
+    </div>
+  )
 }
 
 /**
@@ -378,6 +500,21 @@ export function MusicalTimeline(
     // re-render → orderedTracks new ref → cleanup again).
   }, [resolvedHapStream])
 
+  // ── Phase 20-12 β-1 — swatch popover anchor state ──────────────────────
+  // Single shared anchor for the row-header swatch popover; β-6 renders the
+  // popover at the parent level so it floats above all rows. `null` = closed.
+  // The anchor rect is captured at click-time from the swatch button's
+  // bounding rect (mirrors BackdropPopover.tsx anchor convention).
+  const [swatchAnchor, setSwatchAnchor] = useState<{
+    trackId: string
+    rect: DOMRect
+  } | null>(null)
+  const handleOpenSwatch = useCallback((trackId: string, rect: DOMRect) => {
+    setSwatchAnchor({ trackId, rect })
+  }, [])
+
+  const fileId = snapshot?.source
+
   const playheadX = cycleToPlayheadX(currentCycle, { gridContentWidth })
 
   // Click-to-source — single contract per PV36 / D-02. evt.loc[0] is the
@@ -431,7 +568,10 @@ export function MusicalTimeline(
       </div>
       <Ruler currentCycle={currentCycle} gridContentWidth={gridContentWidth} />
       <div style={styles.body}>
-        <div data-musical-timeline="track-labels" style={styles.labels}>
+        <div
+          data-musical-timeline="track-labels"
+          style={{ ...styles.labels, position: 'relative' }}
+        >
           {empty ? (
             <div
               data-musical-timeline="empty-label"
@@ -440,27 +580,22 @@ export function MusicalTimeline(
               {EMPTY_STATE_COPY}
             </div>
           ) : (
-            orderedTracks.map(({ trackId, events }) => {
+            orderedTracks.map(({ trackId, events }, slotIndex) => {
               const firstEventSample = events[0]?.s ?? undefined
-              const dotColor = paletteForTrack(trackIndexOf(trackId), firstEventSample)
+              const autoColor = paletteForTrack(
+                trackIndexOf(trackId),
+                firstEventSample,
+              )
               return (
-                <div
+                <TrackHeaderRow
                   key={trackId}
-                  data-musical-timeline-track-label={trackId}
-                  title={trackId}
-                  style={styles.trackLabel}
-                >
-                  <span
-                    data-musical-timeline="track-dot"
-                    style={{ ...styles.trackDot, background: dotColor }}
-                  />
-                  <span
-                    data-musical-timeline="track-name"
-                    style={styles.trackName}
-                  >
-                    {trackId}
-                  </span>
-                </div>
+                  fileId={fileId}
+                  trackId={trackId}
+                  autoColor={autoColor}
+                  top={slotIndex * ROW_HEIGHT}
+                  height={ROW_HEIGHT}
+                  onOpenSwatch={handleOpenSwatch}
+                />
               )
             })
           )}

@@ -3083,7 +3083,12 @@ function makeEvent(ctx, note2, params) {
     gain: merged.gain ?? 1,
     velocity: merged.velocity ?? 1,
     color: merged.color ?? null,
-    params: merged
+    params: merged,
+    // Phase 20-11 — conditional spread: omits the field entirely when
+    // ctx.trackId is undefined (hand-built IR without Track wrapper).
+    // Avoids polluting IREvent with enumerable `trackId: undefined`
+    // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
+    ...ctx.trackId !== void 0 ? { trackId: ctx.trackId } : {}
   };
 }
 function _collectRearrange(selector, n, body2, ctx, wrapperLoc) {
@@ -3133,7 +3138,8 @@ function walk(ir, ctx) {
     case "Pure":
       return [];
     case "Track": {
-      return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+      const childCtx = { ...ctx, trackId: ir.trackId };
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Code": {
       if (ir.via) {
@@ -3469,8 +3475,12 @@ function gen(ir) {
   switch (ir.tag) {
     case "Pure":
       return '""';
-    case "Track":
+    case "Track": {
+      if (ir.userMethod === "p") {
+        return `${gen(ir.body)}.p("${ir.trackId}")`;
+      }
       return gen(ir.body);
+    }
     case "Code":
       if (ir.via) {
         return `${gen(ir.via.inner)}.${ir.via.method}(${ir.via.args})`;
@@ -4283,7 +4293,8 @@ function parseStrudel(code) {
     const tracks = extractTracks(code);
     if (tracks.length === 0) {
       const trimStart = code.search(/\S/);
-      return parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0);
+      const inner = parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0);
+      return IR.track("d1", inner);
     }
     if (tracks.length === 1) {
       const t = tracks[0];
@@ -4604,6 +4615,7 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "bank":
     case "scale":
     case "color":
+    case "freq":
     case "gain":
     case "velocity":
     case "pan":
@@ -4920,7 +4932,7 @@ function runChainAppliedStage(input) {
       })
     );
   }
-  return applyOnTrack(input);
+  return IR.track("d1", applyOnTrack(input));
 }
 function applyOnTrack(node) {
   const m = node;
@@ -7957,6 +7969,62 @@ function subscribeToZoneOverrides(fileId, cb) {
     if (set.size === 0) zoneOverrideSubscribers.delete(fileId);
   };
 }
+var EMPTY_TRACK_META = Object.freeze({});
+var trackMetaSubscribers = /* @__PURE__ */ new Map();
+var wiredTrackMetaObservers = /* @__PURE__ */ new Set();
+function ensureTrackMetaMap(fileId) {
+  const filesMap = getFilesMap();
+  const fileMap = filesMap.get(fileId);
+  if (!fileMap) return null;
+  let meta = fileMap.get("trackMeta");
+  if (!meta) {
+    meta = new Y3__namespace.Map();
+    fileMap.set("trackMeta", meta);
+  }
+  if (!wiredTrackMetaObservers.has(fileId)) {
+    meta.observeDeep(() => {
+      const subs = trackMetaSubscribers.get(fileId);
+      if (subs) for (const cb of subs) cb();
+    });
+    wiredTrackMetaObservers.add(fileId);
+  }
+  return meta;
+}
+function getTrackMeta(fileId, trackId) {
+  ensureDoc();
+  const meta = ensureTrackMetaMap(fileId);
+  if (!meta) return EMPTY_TRACK_META;
+  return meta.get(trackId) ?? EMPTY_TRACK_META;
+}
+function setTrackMeta(fileId, trackId, partial) {
+  ensureDoc();
+  const meta = ensureTrackMetaMap(fileId);
+  if (!meta) return;
+  const doc = ensureDoc();
+  doc.transact(() => {
+    const existing = meta.get(trackId) ?? {};
+    const merged = { ...existing, ...partial };
+    if (merged.color === void 0 && merged.collapsed === void 0) {
+      meta.delete(trackId);
+    } else {
+      meta.set(trackId, merged);
+    }
+  }, STRUCT_ORIGIN);
+}
+function subscribeToTrackMeta(fileId, cb) {
+  ensureDoc();
+  ensureTrackMetaMap(fileId);
+  let set = trackMetaSubscribers.get(fileId);
+  if (!set) {
+    set = /* @__PURE__ */ new Set();
+    trackMetaSubscribers.set(fileId, set);
+  }
+  set.add(cb);
+  return () => {
+    set.delete(cb);
+    if (set.size === 0) trackMetaSubscribers.delete(fileId);
+  };
+}
 function resetFileStore() {
   for (const [id] of textObservers) {
     unwireTextObserver(id);
@@ -7968,6 +8036,8 @@ function resetFileStore() {
   folderOrderObserverWired = false;
   zoneOverrideSubscribers.clear();
   wiredZoneObservers.clear();
+  trackMetaSubscribers.clear();
+  wiredTrackMetaObservers.clear();
   resetUndoManager();
   notifyFileList();
   notifyFolderOrder();
@@ -31453,10 +31523,13 @@ var SonicPiEngine = class {
       return { error: new Error("SonicPiEngine not initialized \u2014 call init() first") };
     }
     try {
+      const isReEvaluate = this.scheduler !== null && this.playing;
+      if (isReEvaluate && code === this.currentCode) {
+        return {};
+      }
       this.currentCode = code;
       this.currentStratum = detectStratum(code);
       this.warnDedup.clear();
-      const isReEvaluate = this.scheduler !== null && this.playing;
       if (!isReEvaluate) {
         if (this.scheduler) {
           this.scheduler.dispose();
@@ -32495,6 +32568,13 @@ var SonicPiEngine = class {
         const oldLoops = scheduler.getRunningLoopNames();
         const removedLoops = oldLoops.filter((name2) => !pendingLoops.has(name2));
         const hasNewLoops = [...pendingLoops.keys()].some((name2) => !oldLoops.includes(name2));
+        for (const name2 of removedLoops) {
+          this.loopBuilders.delete(name2);
+          this.loopSeeds.delete(name2);
+          this.loopTicks.delete(name2);
+          this.loopBeats.delete(name2);
+          this.loopSynced.delete(name2);
+        }
         scheduler.pauseTick();
         if (this.bridge) {
           this.bridge.freeAllNodes();
@@ -33849,6 +33929,30 @@ function compilePreset(preset) {
   }
   throw new Error(`Unknown renderer: ${renderer}`);
 }
+var EMPTY_META = Object.freeze({});
+function useTrackMeta(fileId, trackId) {
+  const subscribe3 = React6.useCallback(
+    (onStoreChange) => {
+      if (!fileId) return () => {
+      };
+      return subscribeToTrackMeta(fileId, onStoreChange);
+    },
+    [fileId]
+  );
+  const getSnapshot = React6.useCallback(() => {
+    if (!fileId) return EMPTY_META;
+    return getTrackMeta(fileId, trackId);
+  }, [fileId, trackId]);
+  const meta = React6.useSyncExternalStore(subscribe3, getSnapshot, getSnapshot);
+  const set = React6.useCallback(
+    (partial) => {
+      if (!fileId) return;
+      setTrackMeta(fileId, trackId, partial);
+    },
+    [fileId, trackId]
+  );
+  return { meta, set };
+}
 var DB_NAME3 = "stave-snapshots";
 var DB_VERSION3 = 1;
 var STORE_NAME3 = "snapshots";
@@ -35008,6 +35112,7 @@ exports.getResolvedTheme = getResolvedTheme;
 exports.getRuntimeProviderForExtension = getRuntimeProviderForExtension;
 exports.getRuntimeProviderForLanguage = getRuntimeProviderForLanguage;
 exports.getSubfolderOrder = getSubfolderOrder;
+exports.getTrackMeta = getTrackMeta;
 exports.getVizConfig = getVizConfig;
 exports.getZoneCropOverride = getZoneCropOverride;
 exports.getZoneHeightOverride = getZoneHeightOverride;
@@ -35089,6 +35194,7 @@ exports.setInlineVizActionSize = setInlineVizActionSize;
 exports.setProjectBackgroundCrop = setProjectBackgroundCrop;
 exports.setProjectBackgroundFileId = setProjectBackgroundFileId;
 exports.setSubfolderOrder = setSubfolderOrder;
+exports.setTrackMeta = setTrackMeta;
 exports.setVizConfig = setVizConfig;
 exports.setZoneCropOverride = setZoneCropOverride;
 exports.setZoneHeightOverride = setZoneHeightOverride;
@@ -35102,6 +35208,7 @@ exports.subscribeToBottomPanelTabs = subscribeToBottomPanelTabs;
 exports.subscribeToDocUpdate = subscribeToDocUpdate;
 exports.subscribeToFileList = subscribeToFileList;
 exports.subscribeToFolderOrder = subscribeToFolderOrder;
+exports.subscribeToTrackMeta = subscribeToTrackMeta;
 exports.subscribeToUndoState = subscribeToUndoState;
 exports.subscribeToWorkspaceFile = subscribe;
 exports.subscribeToZoneOverrides = subscribeToZoneOverrides;
@@ -35114,6 +35221,7 @@ exports.transpose = transpose;
 exports.undo = undo;
 exports.unregisterBottomPanelTab = unregisterBottomPanelTab;
 exports.unregisterNamedViz = unregisterNamedViz;
+exports.useTrackMeta = useTrackMeta;
 exports.useWorkspaceFile = useWorkspaceFile;
 exports.withStructBatch = withStructBatch;
 exports.workspaceAudioBus = workspaceAudioBus;
