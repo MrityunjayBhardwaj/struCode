@@ -1572,3 +1572,135 @@ describe('20-12 γ-1 — collapse persistence', () => {
     expect(chevronB2!.getAttribute('data-collapsed')).toBe('false')
   })
 })
+
+// ─── Phase 20-12 γ-2 — color persistence + 3-source precedence ─────────────
+
+describe('20-12 γ-2 — color persistence', () => {
+  it('setTrackMeta({ color }) persists and propagates to the bar background', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+
+    // Pre-write baseline: bar uses auto palette.
+    const barBefore = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    const autoBg = barBefore!.style.background
+    expect(autoBg).not.toBe('')
+
+    // User picks an explicit override (mirrors β-6 popover onPick path).
+    await act(async () => {
+      mockSetTrackMeta('file:gamma2.strudel', 'd1', { color: '#ff8800' })
+    })
+
+    const barAfter = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(barAfter!.style.background).toBe('rgb(255, 136, 0)')
+    // Header swatch dot also reflects the override.
+    const swatch = container.querySelector<HTMLElement>(
+      '[data-musical-timeline="track-swatch"]',
+    )
+    expect(swatch!.style.background).toBe('rgb(255, 136, 0)')
+  })
+
+  it('every event in the row reflects the override (not just the first bar)', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [
+            evt({ trackId: 'd1', s: 'bd', begin: 0, end: 0.1 }),
+            evt({ trackId: 'd1', s: 'bd', begin: 0.25, end: 0.35 }),
+            evt({ trackId: 'd1', s: 'bd', begin: 0.5, end: 0.6 }),
+          ],
+        }),
+      )
+    })
+    await act(async () => {
+      mockSetTrackMeta('file:gamma2.strudel', 'd1', { color: '#00aa44' })
+    })
+
+    const bars = container.querySelectorAll<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(bars).toHaveLength(3)
+    for (const b of bars) {
+      expect(b.style.background).toBe('rgb(0, 170, 68)')
+    }
+  })
+
+  it('reload restores the custom color (auto palette is overridden post-remount)', async () => {
+    mockSetTrackMeta('file:gamma2.strudel', 'd1', { color: '#123456' })
+
+    const { unmount } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    unmount()
+
+    const { container: c2 } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const bar = c2.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(bar!.style.background).toBe('rgb(18, 52, 86)')
+  })
+
+  it('precedence: evt.color wins over meta.color wins over auto palette', async () => {
+    // Set meta.color so we can test event-level wins over it.
+    mockSetTrackMeta('file:gamma2.strudel', 'd1', { color: '#222222' })
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [
+            // Event-level color takes precedence over both meta and palette.
+            evt({ trackId: 'd1', s: 'bd', begin: 0, end: 0.1, color: '#ffffff' }),
+            // No event color → meta.color wins over palette.
+            evt({ trackId: 'd1', s: 'bd', begin: 0.25, end: 0.35 }),
+          ],
+        }),
+      )
+    })
+    const bars = container.querySelectorAll<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(bars).toHaveLength(2)
+    // Bar 0: evt.color === white — wins.
+    expect(bars[0].style.background).toBe('rgb(255, 255, 255)')
+    // Bar 1: no evt.color → meta.color (dark grey) — wins over auto palette.
+    expect(bars[1].style.background).toBe('rgb(34, 34, 34)')
+  })
+})
