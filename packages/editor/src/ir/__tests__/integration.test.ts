@@ -1353,6 +1353,73 @@ describe('20-10 wave γ — Param sub-IR slot-table semantics', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Phase 20-11 wave β — Track collect arm (β-1).
+// CollectContext.trackId? slot, propagated by `case 'Track':` walk arm,
+// consumed by makeEvent's conditional spread → IREvent.trackId.
+// ---------------------------------------------------------------------------
+
+describe('20-11 wave β — Track collect arm', () => {
+  it('collect on Track-wrapped IR populates evt.trackId', () => {
+    const ir = IR.track('d1', IR.play('c4'))
+    const evs = collect(ir)
+    expect(evs.length).toBeGreaterThan(0)
+    expect(evs[0].trackId).toBe('d1')
+  })
+
+  it('collect on hand-built IR (no Track wrapper) leaves evt.trackId absent (conditional spread)', () => {
+    const evs = collect(IR.play('c4'))
+    expect(evs.length).toBeGreaterThan(0)
+    // Conditional spread → field absent, not present-with-undefined.
+    expect('trackId' in evs[0]).toBe(false)
+  })
+
+  it('nested Track — innermost wrapper wins (simple-spread override at each childCtx)', () => {
+    // Hand-built IR shape: outer='d1' wraps inner='lead' wraps Play.
+    // Walk: outer sets ctx.trackId='d1'; inner walks with childCtx
+    // {...ctx, trackId:'lead'} → 'lead' overrides for inner's subtree.
+    // Play under inner gets 'lead'. Simple spread → INNER wins.
+    //
+    // Source-order semantics for `.p(a).p(b)` are governed by parser
+    // wrap-direction, NOT by collect-arm spread. (Parser places
+    // last-typed-method as OUTER wrapper; with simple spread, the
+    // FIRST-typed `.p()` wins because it sits inside as inner. If
+    // last-typed-source-wins is desired, the fix lives at the parser
+    // shape, not the spread direction. β-1 ships simple-spread + pins
+    // hand-built shape.)
+    const ir = IR.track('d1', IR.track('lead', IR.play('c4'), { userMethod: 'p' }))
+    const evs = collect(ir)
+    expect(evs[0].trackId).toBe('lead')
+  })
+
+  it('parseStrudel + collect on duplicate $: blocks produces distinct trackIds (the 20-10 γ-4 fix)', () => {
+    const code = '$: s("hh*8")\n$: s("hh*8")'
+    const evs = collect(parseStrudel(code))
+    const trackIds = new Set(evs.map(e => e.trackId))
+    expect(trackIds.has('d1')).toBe(true)
+    expect(trackIds.has('d2')).toBe(true)
+    expect(trackIds.size).toBe(2)
+  })
+
+  it('Track wrapper preserves loc + irNodeId on body events (PV36 + PV38)', () => {
+    const code = '$: note("c4 e4")'
+    const evs = collect(parseStrudel(code))
+    expect(evs.length).toBeGreaterThan(0)
+    evs.forEach(e => {
+      expect(e.loc).toBeDefined()
+      expect(e.loc!.length).toBeGreaterThan(0)
+      expect(e.irNodeId).toBeDefined()
+    })
+  })
+
+  it('user .p("custom") via parseStrudel propagates trackId="custom" to events', () => {
+    const ir = parseStrudel('note("c").p("custom")')
+    const evs = collect(ir)
+    expect(evs.length).toBeGreaterThan(0)
+    expect(evs[0].trackId).toBe('custom')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
