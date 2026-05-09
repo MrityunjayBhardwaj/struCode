@@ -734,6 +734,13 @@ export interface TrackMeta {
   collapsed?: boolean
 }
 
+/** Frozen empty sentinel — `getTrackMeta` returns this for absent records so
+ *  every read sees the same reference. Required by `useSyncExternalStore`'s
+ *  ref-stability contract (allocating `{}` per read tears in StrictMode).
+ *  Safe to share: TrackMeta is read-only at consumers; writes go through
+ *  `setTrackMeta`. */
+const EMPTY_TRACK_META: TrackMeta = Object.freeze({})
+
 const trackMetaSubscribers = new Map<string, Set<Subscriber>>()
 const wiredTrackMetaObservers = new Set<string>()
 
@@ -764,8 +771,13 @@ function ensureTrackMetaMap(fileId: string): Y.Map<unknown> | null {
 export function getTrackMeta(fileId: string, trackId: string): TrackMeta {
   ensureDoc()
   const meta = ensureTrackMetaMap(fileId)
-  if (!meta) return {}
-  return ((meta.get(trackId) as TrackMeta | undefined) ?? {})
+  if (!meta) return EMPTY_TRACK_META
+  // useSyncExternalStore-safe: return the EXACT stored ref when present,
+  // else the shared frozen sentinel. Allocating a new `{}` per read would
+  // make `meta.get(...) === meta.get(...)` false and tear React's
+  // tearing-detection in StrictMode (feedback_useeffect_per_render_dep.md
+  // analogue at the snapshot-identity level).
+  return (meta.get(trackId) as TrackMeta | undefined) ?? EMPTY_TRACK_META
 }
 
 /**
