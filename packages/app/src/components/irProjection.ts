@@ -121,6 +121,11 @@ export function projectedLabel(node: PatternIR): string | undefined {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    case 'Param':
+      // Phase 20-10 — Param ALWAYS carries userMethod (set by parser via
+      // tagMeta). Fail-safe tag name only fires for hand-constructed nodes
+      // without meta. Wave β-2 lands the full musician chrome that special-
+      // cases Param vs FX rendering.
       return node.tag
     default: {
       // Exhaustiveness check — TS error if a tag is missing.
@@ -192,6 +197,13 @@ export function projectedChildren(node: PatternIR): readonly PatternIR[] {
     case 'Chop':
     case 'Loop':
       return [node.body]
+    case 'Param':
+      // Phase 20-10 — Param wraps a receiver (`body`). The optional sub-IR
+      // `value` (pattern-arg form) is NOT a child of the projection tree —
+      // it's a value provider, not part of the musical structure (β-2 may
+      // surface it differently in chrome). For now treat Param like FX in
+      // child-walking semantics.
+      return [node.body]
     case 'Chunk':
       return [node.body, node.transform]
     case 'Pick':
@@ -238,6 +250,7 @@ export function stripInnerLate(node: PatternIR): PatternIR {
   // Single-body wrappers: recurse into body.
   switch (node.tag) {
     case 'FX':
+    case 'Param':         // Phase 20-10 — same single-body shape as FX.
     case 'Ramp':
     case 'Fast':
     case 'Slow':

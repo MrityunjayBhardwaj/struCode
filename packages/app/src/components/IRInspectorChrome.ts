@@ -49,6 +49,13 @@ export function summarize(node: PatternIR): string {
       // Parse-failure case (no via): render the source code as before.
       if (node.via) return `[opaque: .${node.via.method}(${node.via.args})]`
       return JSON.stringify(node.code).slice(0, 60)
+    case 'Param':
+      // Phase 20-10 (developer chrome). Render the typed semantic — key +
+      // (literal value | sub-IR placeholder). Wave β-2 swaps in the full
+      // designed chrome; this is a minimal Param-aware summary.
+      return typeof node.value === 'object' && node.value !== null
+        ? `${node.key}=<pattern>`
+        : `${node.key}=${JSON.stringify(node.value)}`
   }
 }
 
@@ -61,6 +68,7 @@ export function children(node: PatternIR): readonly PatternIR[] {
     case 'Every': return node.default_ ? [node.body, node.default_] : [node.body]
     case 'When':  return [node.body]
     case 'FX':
+    case 'Param':         // Phase 20-10 — single-body wrapper like FX.
     case 'Ramp':
     case 'Fast':
     case 'Slow':

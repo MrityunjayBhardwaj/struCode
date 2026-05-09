@@ -120,6 +120,12 @@ const TAG_COLOR: Record<PatternIR["tag"], string> = {
   Chop:     "var(--ir-chop, #c084fc)",
   Loop:     "var(--ir-loop, #6366f1)",
   Code:     "var(--ir-code, #ef4444)",
+  // Phase 20-10 — Param tag (sample-bucket / track-defining params:
+  // s/n/note/gain/velocity/color/pan/speed/bank/scale). Distinct hue
+  // from FX (#ec4899 / pink) at musician chrome — wave β-2 finalises
+  // the design-system token. For wave α a single placeholder colour is
+  // sufficient; the chrome distinction lands in β.
+  Param:    "var(--ir-param, #f472b6)",
 };
 
 // summarize / children moved to IRInspectorChrome.ts (Phase 20-04 wave δ)

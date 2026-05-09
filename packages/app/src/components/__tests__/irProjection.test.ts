@@ -69,6 +69,12 @@ function rawChildren(node: PatternIR): readonly PatternIR[] {
     case 'Chop':
     case 'Loop':
       return [node.body]
+    case 'Param': {
+      // Phase 20-10 — Param has body + (optionally) sub-IR value.
+      const v = node.value
+      if (typeof v === 'object' && v !== null) return [node.body, v as PatternIR]
+      return [node.body]
+    }
     case 'Chunk': return [node.body, node.transform]
     case 'Pick':  return [node.selector, ...node.lookup]
     default:      return []

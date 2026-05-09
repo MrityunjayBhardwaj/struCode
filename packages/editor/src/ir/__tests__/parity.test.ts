@@ -2092,3 +2092,50 @@ describe('20-04 wave δ — PV37 opaque-fragment wrapper end-to-end corpus', () 
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 wave α — issue #108 regression (collect-level gate).
+// ---------------------------------------------------------------------------
+
+describe('20-10 wave α — issue #108 regression', () => {
+  const FIXTURE = `$: stack(
+  note("c4 e4 g4 b4 c5 b4 g4 e4").s("sawtooth").gain(0.3).lpf(2400).release(0.12),
+  note("e3 g3 b3 e4").s("sine").gain(0.15).release(0.3)
+).viz("pianoroll")
+
+$: note("<c2 [g2 c2] f2 [g2 eb2]>").s("square").gain(0.4).lpf(500).release(0.2).viz("pitchwheel")
+
+$: stack(
+  s("hh*8").gain(0.3),
+  s("bd [~ bd] ~ bd").gain(0.5),
+  s("~ sd ~ [sd cp]").gain(0.4)
+).viz("p5test")`
+
+  it('collect(parseStrudel(<#108 fixture>)) produces evt.s set of 7 distinct values', () => {
+    const ir = parseStrudel(FIXTURE)
+    const events = collect(ir)
+    const sValues = new Set(
+      events.map(e => e.s).filter((s): s is string => typeof s === 'string')
+    )
+    expect(sValues).toEqual(new Set(['sawtooth', 'sine', 'square', 'hh', 'bd', 'sd', 'cp']))
+  })
+
+  it('the three note(...) tracks each have a distinct evt.s', () => {
+    const ir = parseStrudel(FIXTURE)
+    const events = collect(ir)
+    const sawtoothCount = events.filter(e => e.s === 'sawtooth').length
+    const sineCount = events.filter(e => e.s === 'sine').length
+    const squareCount = events.filter(e => e.s === 'square').length
+    expect(sawtoothCount).toBeGreaterThan(0)
+    expect(sineCount).toBeGreaterThan(0)
+    expect(squareCount).toBeGreaterThan(0)
+  })
+
+  it('no event has evt.s === null where a chained .s was applied (root-cause assertion)', () => {
+    // Excludes the root-form s("hh*8") which already worked pre-20-10.
+    // Asserts the SEMANTICS root cause: chained .s populates evt.s.
+    const noteIr = parseStrudel('note("c4 e4 g4 b4").s("sawtooth").gain(0.3)')
+    const events = collect(noteIr)
+    events.forEach(e => expect(e.s).toBe('sawtooth'))
+  })
+})
