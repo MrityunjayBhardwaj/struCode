@@ -1398,3 +1398,53 @@ describe('20-12 β-3 — bar opacity = clamp(gain, 0.15, 1)', () => {
     expect(await getBarOpacity({ gain: 2 })).toBe(1)
   })
 })
+
+// ─── Phase 20-12 β-5 — hover tooltip (full chain summary) ───────────────────
+
+describe('20-12 β-5 — hover tooltip extension', () => {
+  async function getTooltip(eventOverrides: Partial<IREvent>): Promise<string> {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'd1', s: 'bd', begin: 0, end: 0.1, ...eventOverrides }),
+          ],
+        }),
+      )
+    })
+    const block = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    return block!.getAttribute('title') ?? ''
+  }
+
+  it('includes a non-default gain segment when gain != 1', async () => {
+    const t = await getTooltip({ gain: 0.5 })
+    expect(t).toContain('gain 0.5')
+  })
+
+  it('omits gain segment when gain === 1 (default)', async () => {
+    const t = await getTooltip({ gain: 1 })
+    expect(t).not.toContain('gain')
+  })
+
+  it('includes chained-Param extras (n / freq / pan) when present in evt.params', async () => {
+    const t = await getTooltip({
+      params: { n: 7, freq: 440, pan: 0.5 },
+    })
+    expect(t).toContain('n 7')
+    expect(t).toContain('freq 440Hz')
+    expect(t).toContain('pan 0.5')
+  })
+
+  it('does not surface forbidden IR vocabulary on Param-rich events (PV32 lock)', async () => {
+    const t = await getTooltip({
+      gain: 0.7,
+      params: { n: 0, freq: 440, room: 0.3 },
+    })
+    expect(t).not.toMatch(FORBIDDEN_VOCABULARY)
+  })
+})

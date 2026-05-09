@@ -125,6 +125,12 @@ function midiToName(n: number): string {
  * Build the tooltip string for a note block. Every interpolation site
  * is here so the test surface is small (Trap NEW-2: runtime-computed
  * vocabulary leaks). All segments use musician vocabulary only.
+ *
+ * Phase 20-12 β-5: extended to surface chained Param values (n / freq /
+ * pan / room / speed / bank / scale) and a non-default `gain` segment.
+ * Native `title=` carrier is retained — RESEARCH §B.4 / G.4: the browser
+ * gives `pointer-events: none` for free, mitigating CONTEXT pre-mortem
+ * #4 (tooltip-blocks-click-through).
  */
 function formatNoteTooltip(event: IREvent, fallbackTrackId: string): string {
   const sample = event.s ?? fallbackTrackId
@@ -141,7 +147,35 @@ function formatNoteTooltip(event: IREvent, fallbackTrackId: string): string {
     typeof event.velocity === 'number' && event.velocity !== 1
       ? `velocity ${event.velocity.toFixed(2)}`
       : null
-  return [sample, noteSegment, barBeat, velocitySegment]
+  // β-5: gain segment when non-default (gain 1 is the implicit default).
+  const gainSegment =
+    typeof event.gain === 'number' && event.gain !== 1
+      ? `gain ${event.gain}`
+      : null
+  // β-5: chained-Param extras (.n / .freq / .pan / .room / .speed / .bank /
+  // .scale). Uses raw value formatting; numeric `n` displays as integer-ish,
+  // `freq` includes units. Skipped when value is null/undefined.
+  const params = (event.params ?? {}) as Record<string, unknown>
+  const PARAM_KEYS_DISPLAY: readonly { key: string; format: (v: unknown) => string | null }[] = [
+    { key: 'n', format: (v) => (v == null ? null : `n ${v}`) },
+    { key: 'freq', format: (v) => (typeof v === 'number' ? `freq ${v}Hz` : v == null ? null : `freq ${v}`) },
+    { key: 'pan', format: (v) => (v == null ? null : `pan ${v}`) },
+    { key: 'room', format: (v) => (v == null ? null : `room ${v}`) },
+    { key: 'speed', format: (v) => (v == null ? null : `speed ${v}`) },
+    { key: 'bank', format: (v) => (v == null ? null : `bank ${v}`) },
+    { key: 'scale', format: (v) => (v == null ? null : `scale ${v}`) },
+  ]
+  const paramSegments = PARAM_KEYS_DISPLAY.map(({ key, format }) =>
+    format(params[key]),
+  )
+  return [
+    sample,
+    noteSegment,
+    barBeat,
+    velocitySegment,
+    gainSegment,
+    ...paramSegments,
+  ]
     .filter((s): s is string => typeof s === 'string' && s.length > 0)
     .join(' · ')
 }
