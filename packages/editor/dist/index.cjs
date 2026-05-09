@@ -4341,8 +4341,13 @@ function parseRoot(root, baseOffset = 0) {
   if (stackMatch) {
     const inner = extractParenContent(trimmed, "stack(");
     if (inner !== null) {
-      const args2 = splitArgs(inner);
-      const tracks = args2.map((a) => parseExpression(a.trim()));
+      const stackKwIdx = trimmed.indexOf("stack(");
+      const innerStartInTrimmed = stackKwIdx + "stack(".length;
+      const innerAbsOffset = baseOffset + leadingWs + innerStartInTrimmed;
+      const argsWithOffsets = splitArgsWithOffsets(inner);
+      const tracks = argsWithOffsets.map(
+        (a) => parseExpression(a.value, innerAbsOffset + a.offset)
+      );
       if (tracks.length === 0) return IR.pure();
       if (tracks.length === 1) return tracks[0];
       const trimmedAbs = baseOffset + leadingWs;
@@ -4709,11 +4714,21 @@ function extractParenContent(expr, prefix) {
   return expr.slice(parenStart + 1, closeIdx);
 }
 function splitArgs(argsStr) {
+  return splitArgsWithOffsets(argsStr).map((a) => a.value);
+}
+function splitArgsWithOffsets(argsStr) {
   const args2 = [];
   let depth = 0;
   let current2 = "";
+  let currentStart = 0;
   let inString = false;
   let stringChar = "";
+  const pushCurrent = () => {
+    if (current2.trim().length === 0) return;
+    let leading = 0;
+    while (leading < current2.length && /\s/.test(current2[leading])) leading += 1;
+    args2.push({ value: current2.trim(), offset: currentStart + leading });
+  };
   for (let i2 = 0; i2 < argsStr.length; i2++) {
     const ch = argsStr[i2];
     if (inString) {
@@ -4724,27 +4739,32 @@ function splitArgs(argsStr) {
     if (ch === '"' || ch === "'") {
       inString = true;
       stringChar = ch;
+      if (current2.length === 0) currentStart = i2;
       current2 += ch;
       continue;
     }
     if (ch === "(" || ch === "[" || ch === "{") {
       depth++;
+      if (current2.length === 0) currentStart = i2;
       current2 += ch;
       continue;
     }
     if (ch === ")" || ch === "]" || ch === "}") {
       depth--;
+      if (current2.length === 0) currentStart = i2;
       current2 += ch;
       continue;
     }
     if (ch === "," && depth === 0) {
-      args2.push(current2.trim());
+      pushCurrent();
       current2 = "";
+      currentStart = i2 + 1;
     } else {
+      if (current2.length === 0) currentStart = i2;
       current2 += ch;
     }
   }
-  if (current2.trim()) args2.push(current2.trim());
+  pushCurrent();
   return args2;
 }
 function splitFirstArg(argsStr) {

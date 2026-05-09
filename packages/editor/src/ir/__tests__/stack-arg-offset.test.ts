@@ -1,0 +1,83 @@
+/**
+ * Issue #107 regression — stack-arg offset propagation.
+ *
+ * `stack(s("hh*8"), s("bd"))` used to parse each arg with offset reset
+ * to 0, so atom `loc` ranges on the resulting events were positions
+ * within the arg slice, not within the whole file. Click-to-source in
+ * the MusicalTimeline navigated to the file's first line (typically a
+ * comment) for any sample-track event nested inside a stack call.
+ *
+ * Root cause: `parseStrudel.ts` stack arm called
+ * `parseExpression(a.trim())` without a `baseOffset`. The defer
+ * comment ("Argument offsets are dropped here for v0") was the
+ * explicit deferral. This test pins the v1 fix.
+ */
+import { describe, it, expect } from 'vitest'
+import { parseStrudel } from '../parseStrudel'
+import { collect } from '../collect'
+
+describe('#107 — stack-arg loc threads through to inner atoms', () => {
+  it('top-level stack(s("a"), s("b")) — atoms resolve to absolute positions', () => {
+    const code = 'stack(s("a"), s("b"))'
+    //                   ^=8        ^=18
+    const events = collect(parseStrudel(code))
+    expect(events.length).toBe(2)
+    expect(events[0].loc?.[0]).toEqual({ start: 9, end: 10 })
+    expect(events[1].loc?.[0]).toEqual({ start: 17, end: 18 })
+  })
+
+  it('multi-line stack — args carry per-line absolute offsets', () => {
+    const code = 'stack(\n  s("hh"),\n  s("bd")\n)'
+    // Layout (offsets):
+    //   '\n'        at 5
+    //   '  s("hh")' starts at 6, "hh" atom inside `s("` → atom at 11
+    //   ',\n'       after closing paren at 14
+    //   '  s("bd")' starts at 17, "bd" atom at 22
+    const events = collect(parseStrudel(code))
+    expect(events.length).toBe(2)
+    expect(events[0].loc?.[0]).toEqual({ start: 12, end: 14 })
+    expect(events[1].loc?.[0]).toEqual({ start: 23, end: 25 })
+  })
+
+  it('stack INSIDE a $: track — offset compounds (track offset + stack-arg offset)', () => {
+    // The user's actual reproduction shape: $: prefixes a track whose
+    // body starts a few chars in, and stack(...) lives inside that
+    // body. Each atom's loc must = trackOffset + stackArgOffset.
+    const code = '// header\n$: stack(s("hh"), s("bd"))'
+    //            0         10  13           21       30
+    // After '$: ' (3 chars) at 13, stack arm runs with baseOffset=13.
+    // Within stack(...): inner starts at 19 ('s("hh"), s("bd")'),
+    //   first arg 's("hh")' offset 0 within inner → atom 'hh' at
+    //   19 + 3 = 22.  second arg ' s("bd")' starts at 9 within inner
+    //   (after ', '), trimmed offset 10 → atom 'bd' at 19 + 13 = 32.
+    const events = collect(parseStrudel(code))
+    expect(events.length).toBe(2)
+    expect(events[0].loc?.[0]).toEqual({ start: 22, end: 24 })
+    expect(events[1].loc?.[0]).toEqual({ start: 31, end: 33 })
+  })
+
+  it('chain method on stack arg preserves inner atom as loc[0] (wrapper appended)', () => {
+    // `stack(s("hh").gain(0.5))` — the `.gain(0.5)` chain wraps the
+    // inner s("hh") as opaque Code. withWrapperLoc appends; loc[0]
+    // stays as the most-specific atom range.
+    const code = 'stack(s("hh").gain(0.5))'
+    //                   ^=8 ('h' of "hh")
+    const events = collect(parseStrudel(code))
+    expect(events.length).toBe(1)
+    expect(events[0].loc?.[0]).toEqual({ start: 9, end: 11 })
+    // Wrapper's range appended (gain call site)
+    expect(events[0].loc!.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it("stack arg with leading whitespace — offset skips the whitespace", () => {
+    const code = 'stack(   s("hh"),    s("bd"))'
+    // First arg trimmed-start at offset 9 within trimmed ('s' of 's("hh")'),
+    // atom 'hh' at 9 + 3 = 12 within trimmed (= absolute since baseOffset=0).
+    const events = collect(parseStrudel(code))
+    expect(events.length).toBe(2)
+    expect(events[0].loc?.[0].start).toBe(12)
+    // Second arg: after first arg's `s("hh"),` (offset 9..16) and
+    // `    ` whitespace (4 chars), trimmed-start at 21, atom 'bd' at 24.
+    expect(events[1].loc?.[0].start).toBe(24)
+  })
+})

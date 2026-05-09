@@ -245,15 +245,28 @@ export function parseRoot(root: string, baseOffset = 0): PatternIR {
     return parseMini(miniMatch[1], false, innerOffset)
   }
 
-  // stack(a, b, c) — parallel composition. Argument offsets are
-  // dropped here for v0 — when a future consumer needs loc through
-  // stack(), splitArgs would need to return slice positions too.
+  // stack(a, b, c) — parallel composition. Issue #107 — each arg's
+  // absolute file offset is now threaded into parseExpression so
+  // inner atoms resolve to real file positions. Without this,
+  // `stack(s("hh*8"), s("bd"))` produced events whose `loc[0]`
+  // pointed inside the file's first line (typically a comment),
+  // collapsing click-to-source for any sample-track event.
   const stackMatch = trimmed.match(/^stack\s*\(/)
   if (stackMatch) {
     const inner = extractParenContent(trimmed, 'stack(')
     if (inner !== null) {
-      const args = splitArgs(inner)
-      const tracks = args.map(a => parseExpression(a.trim()))
+      // Position of `inner` within `trimmed`: `extractParenContent`
+      // returns content from after `stack(` up to the matching `)`.
+      // The `(` lives at `trimmed.indexOf('stack(') + 'stack('.length - 1`,
+      // so inner[0] sits at openIdx+1 within trimmed. Absolute file
+      // offset of inner[0] = baseOffset + leadingWs + (openIdx + 1).
+      const stackKwIdx = trimmed.indexOf('stack(')
+      const innerStartInTrimmed = stackKwIdx + 'stack('.length
+      const innerAbsOffset = baseOffset + leadingWs + innerStartInTrimmed
+      const argsWithOffsets = splitArgsWithOffsets(inner)
+      const tracks = argsWithOffsets.map((a) =>
+        parseExpression(a.value, innerAbsOffset + a.offset),
+      )
       if (tracks.length === 0) return IR.pure()
       if (tracks.length === 1) return tracks[0]
       // 19-05 / #74: root-level `stack(...)` outer Stack carries the call-
@@ -1090,11 +1103,40 @@ function extractParenContent(expr: string, prefix: string): string | null {
  * Split comma-separated arguments, respecting balanced parens and strings.
  */
 function splitArgs(argsStr: string): string[] {
-  const args: string[] = []
+  return splitArgsWithOffsets(argsStr).map((a) => a.value)
+}
+
+/**
+ * Issue #107 — position-aware sibling of `splitArgs`. For each
+ * comma-separated arg, returns the *trimmed* value AND the byte offset
+ * of the trimmed arg's first character within `argsStr`. Callers thread
+ * the offset down to `parseExpression(value, baseOffset + offset)` so
+ * inner atom `loc` ranges resolve to absolute file positions.
+ *
+ * Without this, `stack(s("hh*8"), s("bd"))` parses each child at offset
+ * 0 within its own slice — atom positions on the resulting events
+ * collide with the file's first line (typically a comment), and
+ * click-to-source navigates to the wrong place. The original `splitArgs`
+ * comment in the stack arm ("Argument offsets are dropped here for v0")
+ * was the explicit deferral; this is the v1 lift.
+ */
+function splitArgsWithOffsets(
+  argsStr: string,
+): Array<{ value: string; offset: number }> {
+  const args: Array<{ value: string; offset: number }> = []
   let depth = 0
   let current = ''
+  let currentStart = 0 // index in argsStr where `current` began
   let inString = false
   let stringChar = ''
+
+  const pushCurrent = (): void => {
+    if (current.trim().length === 0) return
+    // Trimmed value's offset = currentStart + leadingWs-of-current.
+    let leading = 0
+    while (leading < current.length && /\s/.test(current[leading])) leading += 1
+    args.push({ value: current.trim(), offset: currentStart + leading })
+  }
 
   for (let i = 0; i < argsStr.length; i++) {
     const ch = argsStr[i]
@@ -1108,22 +1150,35 @@ function splitArgs(argsStr: string): string[] {
     if (ch === '"' || ch === "'") {
       inString = true
       stringChar = ch
+      if (current.length === 0) currentStart = i
       current += ch
       continue
     }
 
-    if (ch === '(' || ch === '[' || ch === '{') { depth++; current += ch; continue }
-    if (ch === ')' || ch === ']' || ch === '}') { depth--; current += ch; continue }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth++
+      if (current.length === 0) currentStart = i
+      current += ch
+      continue
+    }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      depth--
+      if (current.length === 0) currentStart = i
+      current += ch
+      continue
+    }
 
     if (ch === ',' && depth === 0) {
-      args.push(current.trim())
+      pushCurrent()
       current = ''
+      currentStart = i + 1
     } else {
+      if (current.length === 0) currentStart = i
       current += ch
     }
   }
 
-  if (current.trim()) args.push(current.trim())
+  pushCurrent()
   return args
 }
 
