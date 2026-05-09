@@ -33,6 +33,14 @@ function gen(ir: PatternIR): string {
       // Identity — opaque fragment, return as-is
       return ir.code
 
+    case 'Param':
+      // Phase 20-10 — byte-fidelity contract. rawArgs is preserved untrimmed
+      // by the parser (parseParamArg keeps the raw `args` slice). Mirrors
+      // Code-with-via precedent above. Full round-trip test corpus lands in
+      // wave β-1; the arm is added at α-4 to keep the gen function's switch
+      // exhaustive after the Param tag joins the union.
+      return `${gen(ir.body)}.${ir.userMethod ?? ir.key}(${ir.rawArgs})`
+
     case 'Play':
       return genPlay(ir.note, ir.params)
 

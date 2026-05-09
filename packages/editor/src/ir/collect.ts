@@ -344,6 +344,78 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       return []
     }
 
+    case 'Param': {
+      // Phase 20-10 — semantics-completeness pair-of PV37. Whitelisted
+      // chain methods inject their effect into ctx.params before the body
+      // walks, so makeEvent reads the right value at line 230.
+      //
+      // Two branches:
+      //   (a) Literal value (string | number) — last-typed-wins per α-1
+      //       (D-05). Diverges from FX merge convention (which is
+      //       first-typed-wins; FX bug, follow-up issue).
+      //   (b) Pattern-arg value (PatternIR sub-IR) — slot-table pre-walk
+      //       (RESEARCH G2.2 Option A). Sub-IR events consumed LOCALLY for
+      //       lookup; NEVER pushed onto out (PV36 + RESEARCH G2.3 #5).
+
+      // Branch (a) — literal. Last-typed-wins (D-05): outer wrapper sets
+      // the key first; inner wrappers DO NOT override an already-set key.
+      // Implemented by spreading `ir.params` FIRST, then `ctx.params`.
+      if (typeof ir.value === 'string' || typeof ir.value === 'number') {
+        const childCtx: CollectContext = {
+          ...ctx,
+          params: { [ir.key]: ir.value, ...ctx.params },
+        }
+        return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
+      }
+
+      // Branch (b) — pattern-arg sub-IR.
+      // Pre-walk the sub-IR ONCE with the parent ctx — produces a slot
+      // table of (begin, endClipped, value) tuples we look up per body event.
+      const slotEvents = walk(ir.value, ctx)
+      const bodyEvents = walk(ir.body, ctx)
+      const isNumericKey =
+        ir.key === 'gain' || ir.key === 'velocity' ||
+        ir.key === 'pan'  || ir.key === 'speed'
+
+      const out: IREvent[] = bodyEvents.map(e => {
+        // Find slot covering this body event's begin time. Half-open
+        // interval — [begin, endClipped) — same convention groupEventsByTrack
+        // and eventsActiveAt use.
+        const slot = slotEvents.find(s => {
+          const sEnd = s.endClipped ?? s.end
+          return s.begin <= e.begin && e.begin < sEnd
+        })
+        if (!slot) return e   // silence (`~` slot) — preserve body event unchanged.
+
+        // Coerce slot value: parseMini's Play leaves carry note: string for
+        // both sample and value-stream forms (RESEARCH G1.3). Numeric keys
+        // → Number(slot.note). Sample/category keys → slot.s ?? String(slot.note).
+        const v = isNumericKey
+          ? (typeof slot.note === 'number' ? slot.note : Number(slot.note ?? 0))
+          : (slot.s ?? String(slot.note ?? ''))
+
+        // Patch event-level fields. The `params` merge follows the literal
+        // branch's direction lock. The shorthand top-level fields mirror
+        // makeEvent's destructure at collect.ts:230 (s, gain, velocity, color).
+        return {
+          ...e,
+          params: { ...e.params, [ir.key]: v },
+          ...(ir.key === 's' ? { s: v as string, type: 'sample' as const } : {}),
+          ...(ir.key === 'gain' ? { gain: v as number } : {}),
+          ...(ir.key === 'velocity' ? { velocity: v as number } : {}),
+          ...(ir.key === 'color' ? { color: v as string } : {}),
+          // n / note / bank / scale / pan / speed flow through params only;
+          // they don't have top-level event shorthand fields per IREvent.
+        }
+      })
+
+      // CRITICAL: slotEvents are NOT included in `out`. The sub-IR is a
+      // VALUE PROVIDER, not an event producer. Re-emitting them duplicates
+      // events AND leaks mini-string-atom loc onto the output (PV36 violation,
+      // RESEARCH G8 Trap 10). γ-2 has an event-count test that pins this.
+      return withWrapperLoc(out, ir.loc)
+    }
+
     case 'Play': {
       // Respect the query window: skip events outside [begin, end)
       if (ctx.time < ctx.begin || ctx.time >= ctx.end) return []
