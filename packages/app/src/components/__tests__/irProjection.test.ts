@@ -18,6 +18,7 @@ import {
   projectedLabel,
   projectedChildren,
   stripInnerLate,
+  flattenLeafVoices,
   LOCALSTORAGE_KEY,
 } from '../irProjection'
 import { unwrapD1 } from '../../../../editor/src/ir/__tests__/helpers/unwrapD1'
@@ -681,5 +682,70 @@ describe('20-11 — Track projection (musician-track-identity / PV35 / PV32)', (
   it('stripInnerLate preserves Track wrapper (single-body recursion)', () => {
     const node: PatternIR = IR.track('d1', IR.play('c4', 1))
     expect(stripInnerLate(node)).toEqual(node)
+  })
+})
+
+// Phase 20-12 α-5 — flattenLeafVoices (D-03 / RESEARCH §C.2). Recursion gate:
+// Stack with userMethod ∈ {undefined, 'stack'} is the ONLY recursion case.
+// Everything else (incl. Stack with userMethod 'layer'/'jux'/'off') is a leaf.
+describe('20-12 α-5 — flattenLeafVoices', () => {
+  it('single-voice body (Play) returns [body] — 1 leaf', () => {
+    const body = IR.play('bd', 1)
+    const leaves = flattenLeafVoices(body)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]).toBe(body)
+  })
+
+  it('Stack with default userMethod (mini polymetric) returns [a, b, c] — 3 leaves', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const c = IR.play('sd', 1)
+    const body = IR.stack(a, b, c)
+    const leaves = flattenLeafVoices(body)
+    expect(leaves).toHaveLength(3)
+    expect(leaves[0]).toBe(a)
+    expect(leaves[1]).toBe(b)
+    expect(leaves[2]).toBe(c)
+  })
+
+  it('user-typed Stack(stack-userMethod) returns each track verbatim', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const stackTyped: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'stack' }
+    const leaves = flattenLeafVoices(stackTyped)
+    expect(leaves).toEqual([a, b])
+  })
+
+  it('nested Stack(stack(hh, bd), sawtooth) flattens to 3 leaves (inner stack dissolves)', () => {
+    const hh = IR.play('hh', 1)
+    const bd = IR.play('bd', 1)
+    const sawtooth = IR.play('sawtooth', 1)
+    const inner: PatternIR = { tag: 'Stack', tracks: [hh, bd], userMethod: 'stack' }
+    const outer: PatternIR = { tag: 'Stack', tracks: [inner, sawtooth], userMethod: 'stack' }
+    const leaves = flattenLeafVoices(outer)
+    expect(leaves).toEqual([hh, bd, sawtooth])
+  })
+
+  it('Stack with userMethod="layer" is a single leaf (NOT recursed)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const layerStack: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'layer' }
+    const leaves = flattenLeafVoices(layerStack)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]).toBe(layerStack)
+  })
+
+  it('Stack with userMethod="jux" is a single leaf', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const juxStack: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'jux' }
+    const leaves = flattenLeafVoices(juxStack)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]).toBe(juxStack)
+  })
+
+  it('empty Stack returns [] (RESEARCH §C.3 — expand-toggle is visual no-op)', () => {
+    const empty: PatternIR = { tag: 'Stack', tracks: [], userMethod: 'stack' }
+    expect(flattenLeafVoices(empty)).toEqual([])
   })
 })
