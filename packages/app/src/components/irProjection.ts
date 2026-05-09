@@ -138,12 +138,16 @@ export function projectedLabel(node: PatternIR): string | undefined {
       // the normal path — that path short-circuits one frame earlier.
       return node.tag
     case 'Track':
-      // Phase 20-11 wave α-1 placeholder. The userMethod-first short-
-      // circuit at lines 59-61 returns 'p' for `.p()`-derived Tracks. For
-      // synthetic-from-$: Tracks (userMethod undefined) we surface the
-      // trackId ('d1', 'd2', ...) as the projected label so the musician
-      // chrome shows the track row identity. γ-3 will refine the chrome
-      // (e.g. swap to a row chip rather than a tag chip).
+      // Phase 20-11 wave γ-3 (PV35 / PV32 — musician chrome).
+      //
+      // Note: the userMethod-first short-circuit at lines 59-61 already
+      // returns 'p' for `.p()`-derived Tracks (userMethod === 'p'); this
+      // arm fires only for synthetic d{N} Tracks where userMethod is
+      // undefined. For those, the trackId IS the user-visible identity —
+      // the musician sees `d1`, `d2`, ... rendered as the row label, not
+      // the IR tag name. Distinct from Param's userMethod-first short-
+      // circuit because the synthetic case still has a meaningful name
+      // (`d{N}` from the `$:` block index) rather than a leaked tag.
       return node.trackId
     default: {
       // Exhaustiveness check — TS error if a tag is missing.
@@ -247,10 +251,10 @@ export function projectedChildren(node: PatternIR): readonly PatternIR[] {
     case 'Code':
       return node.via ? [node.via.inner] : []
     case 'Track':
-      // Phase 20-11 wave α-1 placeholder. Single-body wrapper — surface
-      // the body as the only projected child so the inspector tree drills
-      // through Track. γ-3 may refine (e.g. promote children of a Stack
-      // body to flatten the row hierarchy).
+      // Phase 20-11 γ-3 — single-body wrapper; surface body so the
+      // inspector tree drills through Track. Promotion of Stack-body
+      // children (flattening the row hierarchy) is deferred to 20-12
+      // chrome polish.
       return [node.body]
     default: {
       const _exhaustive: never = node

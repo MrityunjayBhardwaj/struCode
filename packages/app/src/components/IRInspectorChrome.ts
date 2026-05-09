@@ -69,11 +69,14 @@ export function summarize(node: PatternIR): string {
       return `${node.key}=[pattern]`
     }
     case 'Track':
-      // Phase 20-11 wave α-1 placeholder. Developer chrome shows the
-      // resolved trackId; γ-3 may add userMethod-aware text (e.g.
-      // `trackId="lead" via .p()` for `.p()`-derived Tracks vs
-      // `trackId="d1"` for synthetic-from-$:).
-      return `trackId=${JSON.stringify(node.trackId)}`
+      // Phase 20-11 wave γ-3 — developer chrome. Shows the track id with
+      // the `track:` prefix to match PV35 audience separation: developer
+      // chrome announces the IR tag's identity, musician chrome (in
+      // irProjection.projectedLabel) renders just the trackId. 20-12 chrome
+      // pass may add userMethod-aware text (e.g. `track: "lead" via .p()`
+      // vs `track: "d1"` for synthetic-from-$:); for now the IR fields are
+      // visible via the children() drill-in.
+      return `track: ${node.trackId}`
   }
 }
 
@@ -123,7 +126,9 @@ export function children(node: PatternIR): readonly PatternIR[] {
     // Wrapper case: expose via.inner as a child so the inspector tree can
     // drill into the wrapped receiver. Parse-failure case (no via): leaf.
     case 'Code':  return node.via ? [node.via.inner] : []
-    // Phase 20-11 wave α-1 placeholder — single-body wrapper; expose body.
+    // Phase 20-11 γ-3 — Track is a single-body wrapper (like FX/Loop);
+    // children expose the body so the developer can drill into the
+    // wrapped expression.
     case 'Track': return [node.body]
     default:      return []
   }

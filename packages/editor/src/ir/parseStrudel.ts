@@ -100,13 +100,17 @@ export function parseStrudel(code: string): PatternIR {
     // `loc` (source ranges) to Play nodes.
     const tracks = extractTracks(code)
     if (tracks.length === 0) {
-      // No $: prefix — try parsing as a single expression at offset 0.
-      // 20-11 wave γ: synthetic-d1 wrap deferred until test migration
-      // lands in the same PR (~100 sites assert on the unwrapped tag;
-      // wrapping here without the unwrapD1 helper would red-suite the
-      // wave-α gate). Today: return the inner IR unchanged.
+      // No $: prefix — parse as a single expression and wrap in a
+      // synthetic Track('d1', ...). 20-11 D-04 option (a): every parseStrudel
+      // result whose root is the user's musical expression carries a
+      // trackId, even when the source has no `$:` block. The wrap has
+      // NO `loc` (no $: line to point at) and NO userMethod (synthetic,
+      // distinguishes from `.p("d1")`). toStrudel's β-2 Track arm strips
+      // synthetic-d1 (userMethod === undefined) on round-trip so the
+      // input → IR → string identity is preserved for non-$: sources.
       const trimStart = code.search(/\S/)
-      return parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0)
+      const inner = parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0)
+      return IR.track('d1', inner)
     }
     if (tracks.length === 1) {
       // Single `$:` block — Track('d1', expr) without an enclosing Stack.

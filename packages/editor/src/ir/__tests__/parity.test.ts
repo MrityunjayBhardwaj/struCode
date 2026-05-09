@@ -57,7 +57,7 @@ import * as strudelCore from '@strudel/core'
 import { mini, miniAllStrings } from '@strudel/mini/mini.mjs'
 
 import {
-  parseStrudel,
+  parseStrudel as _parseStrudel,
   collect,
   toStrudel,
   patternToJSON,
@@ -67,6 +67,13 @@ import {
   type CollectContext,
   type SourceLocation,
 } from '../../ir'
+import { unwrapD1 } from './helpers/unwrapD1'
+
+// Phase 20-11 γ-4 — drill through the synthetic d1 Track wrapper that
+// parseStrudel adds at the root of any non-`$:` input. Tests that need
+// the raw Track-wrapped shape (e.g. the wave-α/γ shape probes, the
+// rewritten `.p("track1")` test at γ-5) call `_parseStrudel` directly.
+const parseStrudel = (code: string): PatternIR => unwrapD1(_parseStrudel(code))
 // PRE-01 (PR #70 / issue #70) — internal test hooks that record whether
 // applyChain → applyMethod → parseTransform threaded a non-zero baseOffset
 // for multi-arg methods. Imported directly from parseStrudel.ts (not the
@@ -1939,11 +1946,28 @@ describe('20-04 wave β — parser wrap probes (D-03 / P33 / PV37)', () => {
 
   // --- Trap 3: .p("...") NOT wrapped (intentional pass-through) --------------
 
-  it('.p("trackId") is preserved as receiver (Trap 3 — track assignment passthrough)', () => {
+  it('.p("track1") wraps in Track tag (Phase 20-11 D-01 — demolishes 20-04 fence)', () => {
+    // Phase 20-11 — outer synthetic d1 (stripped by the parseStrudel shim
+    // above) + inner explicit `track1` from .p(), userMethod === 'p'.
+    // The 20-04 D-07 Chesterton pass-through was correct under PV37
+    // representation but wrong under the musician-track-identity model
+    // (PV35). collect's outer-then-inner spread gives ctx.trackId='d1'
+    // then override to 'track1'; INNER WINS (CONTEXT pre-mortem #1).
     const ir = parseStrudel('note("c").p("track1")')
-    // Track-assignment is consumed externally; the parser passes the
-    // receiver through unchanged. NOT a Code-with-via wrapper.
-    expect(ir.tag).toBe('Play')
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    expect(ir.trackId).toBe('track1')             // explicit
+    expect(ir.userMethod).toBe('p')
+
+    const inner = ir.body
+    expect(inner.tag).toBe('Play')
+
+    // The unwrapped (raw) parser output is Track('d1', Track('track1', Play)).
+    const raw = _parseStrudel('note("c").p("track1")')
+    expect(raw.tag).toBe('Track')
+    if (raw.tag !== 'Track') throw new Error('unreachable')
+    expect(raw.trackId).toBe('d1')                // outer synthetic
+    expect(raw.userMethod).toBeUndefined()
   })
 })
 
@@ -2346,5 +2370,82 @@ describe('20-11 wave β — Track round-trip', () => {
     }
     // userMethod absent → body only, no .p("d1") emitted.
     expect(toStrudel(ir)).toBe('note("c4")')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-11 wave γ — duplicate-`$:` regression (closes 20-08-residual /
+// CONTEXT §0). Pins root cause (evt.trackId distinct) AND symptom
+// (groupEventsByTrack-equivalent split). P51 — root + symptom, NOT either-or.
+// ---------------------------------------------------------------------------
+describe('20-11 wave γ — duplicate-$: regression (closes 20-08-residual / CONTEXT §0)', () => {
+  const FIXTURE = `$: stack(s("hh hh").gain(0.3), s("bd ~ ~ bd").gain(0.5)).viz("p5test")
+$: stack(s("hh hh").gain(0.3), s("bd ~ ~ bd").gain(0.5)).viz("p5test")`
+
+  it('two identical $: blocks produce events with distinct trackIds (root cause)', () => {
+    const evs = collect(_parseStrudel(FIXTURE))
+    const trackIds = new Set(
+      evs.map((e) => e.trackId).filter((t): t is string => typeof t === 'string'),
+    )
+    expect(trackIds.has('d1')).toBe(true)
+    expect(trackIds.has('d2')).toBe(true)
+    expect(trackIds.size).toBe(2)
+  })
+
+  it('events with the same `s` ("hh") split into two trackId groups (symptom)', () => {
+    const evs = collect(_parseStrudel(FIXTURE))
+    const hhEvents = evs.filter((e) => e.s === 'hh')
+    const hhTrackIds = new Set(hhEvents.map((e) => e.trackId))
+    // Pre-20-11: both blocks' hh events shared the fallback bucket via evt.s.
+    // Post-20-11: distinct trackIds reach the consumer; no inference loss.
+    expect(hhTrackIds.size).toBe(2) // d1 and d2; NOT collapsed
+  })
+
+  it('.p("custom") overrides $:-derived d{N}', () => {
+    const code = '$: s("bd bd bd bd").p("kick")'
+    const evs = collect(_parseStrudel(code))
+    expect(evs.length).toBeGreaterThan(0)
+    evs.forEach((e) => expect(e.trackId).toBe('kick')) // inner explicit wins
+  })
+
+  it('non-`$:` single expression renders as d1', () => {
+    const evs = collect(_parseStrudel('s("bd bd bd bd")'))
+    expect(evs.length).toBeGreaterThan(0)
+    evs.forEach((e) => expect(e.trackId).toBe('d1'))
+  })
+
+  it('.p() inside stack: per-pattern override; sibling inherits surrounding d{N}', () => {
+    // CONTEXT pre-mortem #9: stack(note("c").p("lead"), note("d")) with
+    // outer synthetic d1. First arg .p('lead') overrides; second has no
+    // .p(), inherits d1.
+    const evs = collect(_parseStrudel('stack(note("c").p("lead"), note("d"))'))
+    const leadEvents = evs.filter((e) => e.trackId === 'lead')
+    const d1Events = evs.filter((e) => e.trackId === 'd1')
+    expect(leadEvents.length).toBeGreaterThan(0)
+    expect(d1Events.length).toBeGreaterThan(0)
+  })
+
+  it('.p() chained AFTER other methods wraps the OUTERMOST receiver', () => {
+    // CONTEXT pre-mortem #8.
+    const ir = _parseStrudel('note("c").fast(2).p("lead")')
+    // outer Track('d1', Track('lead', Fast(...), userMethod:'p'))
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    expect(ir.trackId).toBe('d1')
+    expect(ir.userMethod).toBeUndefined()
+    const inner = ir.body
+    expect(inner.tag).toBe('Track')
+    if (inner.tag !== 'Track') throw new Error('unreachable')
+    expect(inner.trackId).toBe('lead')
+    expect(inner.userMethod).toBe('p')
+  })
+
+  it('two $: blocks both with .p("drums") merge into a single trackId', () => {
+    // CONTEXT §8 gate 6 — two explicit .p("drums") blocks; user explicitly
+    // chose to merge them. Expected: BOTH blocks' events carry trackId='drums'.
+    const code = '$: s("bd bd bd bd").p("drums")\n$: s("hh hh hh hh").p("drums")'
+    const evs = collect(_parseStrudel(code))
+    expect(evs.length).toBeGreaterThan(0)
+    evs.forEach((e) => expect(e.trackId).toBe('drums'))
   })
 })

@@ -230,10 +230,13 @@ export function runChainAppliedStage(input: PatternIR): PatternIR {
       }),
     )
   }
-  // Single-track case (or any non-multi-track shape). 20-11 wave γ defers
-  // the synthetic-d1 wrap (test migration lands in same commit), matching
-  // parseStrudel main path's deferral.
-  return applyOnTrack(input)
+  // Single-track case (or any non-multi-track shape). Phase 20-11 γ-4 —
+  // wrap with synthetic Track('d1', applied) to mirror parseStrudel main
+  // path. NO loc and NO userMethod (synthetic-from-non-`$:`); toStrudel's
+  // β-2 Track arm strips the wrap on round-trip when userMethod undefined
+  // so byte identity holds. The test migration uses the unwrapD1 helper
+  // (`__tests__/helpers/unwrapD1.ts`) to drill through this wrap.
+  return IR.track('d1', applyOnTrack(input))
 }
 
 /**

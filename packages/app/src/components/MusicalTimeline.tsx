@@ -53,7 +53,7 @@ import {
   formatBarBeat,
   cpsToBpm,
 } from './musicalTimeline/timeAxis'
-import { trackColorFromStem } from './musicalTimeline/colors'
+import { paletteForTrack, trackIndexOf } from './musicalTimeline/colors'
 import { Ruler } from './musicalTimeline/Ruler'
 import {
   EMPTY_STATE_COPY,
@@ -442,7 +442,7 @@ export function MusicalTimeline(
           ) : (
             orderedTracks.map(({ trackId, events }) => {
               const firstEventSample = events[0]?.s ?? undefined
-              const dotColor = trackColorFromStem(trackId, firstEventSample)
+              const dotColor = paletteForTrack(trackIndexOf(trackId), firstEventSample)
               return (
                 <div
                   key={trackId}
@@ -507,7 +507,7 @@ export function MusicalTimeline(
                       width: w,
                       background:
                         evt.color ??
-                        trackColorFromStem(trackId, evt.s ?? undefined),
+                        paletteForTrack(trackIndexOf(trackId), evt.s ?? undefined),
                       ...(isActive ? styles.noteBlockActive : null),
                     }}
                   />

@@ -73,3 +73,50 @@ describe('groupEventsByTrack (D-04)', () => {
     expect(a).not.toBe(b)
   })
 })
+
+describe('20-11 — duplicate $: blocks no longer collapse (closes 20-08-residual)', () => {
+  it('events from two $: blocks with same `s` group into two distinct rows', () => {
+    // Pre-20-11: groupEventsByTrack keyed on evt.trackId ?? evt.s — both
+    // blocks' `hh` events shared the fallback bucket. Post-20-11:
+    // evt.trackId is populated by the parser (Track('d1', ...) /
+    // Track('d2', ...)) so two distinct buckets emerge.
+    const events: IREvent[] = [
+      evt({ trackId: 'd1', s: 'hh' }),
+      evt({ trackId: 'd1', s: 'hh', begin: 0.25 }),
+      evt({ trackId: 'd2', s: 'hh', begin: 0.5 }),
+      evt({ trackId: 'd2', s: 'hh', begin: 0.75 }),
+    ]
+    const grouped = groupEventsByTrack(events)
+    expect(grouped).toHaveLength(2)
+    expect(grouped[0].trackId).toBe('d1')
+    expect(grouped[1].trackId).toBe('d2')
+    expect(grouped[0].events).toHaveLength(2)
+    expect(grouped[1].events).toHaveLength(2)
+  })
+
+  it('two $: blocks both with .p("drums") merge into a single bucket (user-chosen merge)', () => {
+    // CONTEXT §8 gate 6 — explicit `.p("drums")` on both blocks signals
+    // the user wants a single track. evt.trackId === 'drums' for both.
+    const events: IREvent[] = [
+      evt({ trackId: 'drums', s: 'bd' }),
+      evt({ trackId: 'drums', s: 'hh' }),
+    ]
+    const grouped = groupEventsByTrack(events)
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].trackId).toBe('drums')
+    expect(grouped[0].events).toHaveLength(2)
+  })
+
+  it('mixed parser-trackId + sample-fallback events route via D-04 chain', () => {
+    // Hand-built fixtures may lack trackId; the s-fallback still applies
+    // so synthetic / hand-made events don't crash the consumer.
+    const events: IREvent[] = [
+      evt({ trackId: 'd1', s: 'bd' }),
+      evt({ trackId: undefined, s: 'piano' }),
+    ]
+    const grouped = groupEventsByTrack(events)
+    expect(grouped).toHaveLength(2)
+    expect(grouped[0].trackId).toBe('d1')
+    expect(grouped[1].trackId).toBe('piano')
+  })
+})

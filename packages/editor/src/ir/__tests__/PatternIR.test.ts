@@ -3,7 +3,12 @@ import { IR, type PatternIR } from '../PatternIR'
 import { collect } from '../collect'
 import { toStrudel } from '../toStrudel'
 import { patternToJSON, patternFromJSON, PATTERN_IR_SCHEMA_VERSION } from '../serialize'
-import { parseStrudel, __test_wrapAsOpaque } from '../parseStrudel'
+import { parseStrudel as _parseStrudel, __test_wrapAsOpaque } from '../parseStrudel'
+import { unwrapD1 } from './helpers/unwrapD1'
+
+// Phase 20-11 γ-4 — drill through the synthetic d1 Track wrapper. Tests
+// that need the raw (Track-wrapped) shape import _parseStrudel directly.
+const parseStrudel = (code: string): PatternIR => unwrapD1(_parseStrudel(code))
 
 // ---------------------------------------------------------------------------
 // Type construction — every node variant via smart constructors

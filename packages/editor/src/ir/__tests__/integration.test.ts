@@ -6,12 +6,22 @@
 
 import { describe, it, expect } from 'vitest'
 import { parseMini, bjorklund } from '../parseMini'
-import { parseStrudel } from '../parseStrudel'
+import { parseStrudel as _parseStrudel } from '../parseStrudel'
 import { collect } from '../collect'
 import { toStrudel } from '../toStrudel'
 import { patternToJSON, patternFromJSON } from '../serialize'
 import { propagate, StrudelParseSystem, IREventCollectSystem, type ComponentBag } from '../propagation'
 import { IR, type PatternIR } from '../PatternIR'
+import { unwrapD1 } from './helpers/unwrapD1'
+
+// Phase 20-11 γ-4 — drill through the synthetic d1 Track wrapper that
+// parseStrudel adds at the root of any non-`$:` input. Pre-20-11 tests
+// asserted on the inner shape (Seq, Stack, Param, ...) directly; this
+// shim restores that contract without site-by-site rewrites at every
+// `parseStrudel(...).tag === 'Foo'` callsite. Tests that need the raw
+// (Track-wrapped) IR — multi-`$:` Stack roots, `.p()`-wrapped Tracks,
+// the new wave-α/γ shape probes — import _parseStrudel directly.
+const parseStrudel = (code: string): PatternIR => unwrapD1(_parseStrudel(code))
 
 // ---------------------------------------------------------------------------
 // parseMini

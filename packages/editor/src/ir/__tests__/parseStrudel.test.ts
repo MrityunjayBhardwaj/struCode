@@ -2,14 +2,18 @@ import { describe, it, expect } from 'vitest'
 import { parseStrudel, extractTracks } from '../parseStrudel'
 
 describe('20-11 wave α — Track wrap shape', () => {
-  it('non-`$:` single expression returns inner IR unchanged (synthetic-d1 wrap deferred to wave γ)', () => {
-    // Wave α scope adjustment: ~100 existing tests assert on the unwrapped
-    // tag for non-`$:` input (e.g. `parseStrudel('s("bd")').tag === 'Param'`).
-    // Wrapping today without the unwrapD1 helper migration (γ-4) would red-
-    // suite the wave-α gate. Wave γ ships the wrap WITH the migration in
-    // the same commit. For now, the inner IR is returned as-is.
+  it('non-`$:` single expression wraps in synthetic Track(d1, ...) (γ-4 — D-04 option a)', () => {
+    // Wave γ — synthetic-d1 wrap. The wrap has NO loc and NO userMethod
+    // (distinguishes from .p("d1")). toStrudel's β-2 Track arm strips it
+    // on round-trip when userMethod === undefined so byte identity holds.
     const ir = parseStrudel('s("bd*4")')
-    expect(ir.tag).not.toBe('Track')
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    expect(ir.trackId).toBe('d1')
+    expect(ir.userMethod).toBeUndefined()
+    expect(ir.loc).toBeUndefined()
+    // The body is the inner expression (not Track-wrapped).
+    expect(ir.body.tag).not.toBe('Track')
   })
 
   it('single `$:` block wraps with d1 + loc covering $: line range', () => {
