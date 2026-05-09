@@ -67,6 +67,15 @@ export function assertNoStageMeta(node: PatternIR): void {
       Object.prototype.hasOwnProperty.call(rec, 'chainOffset'),
       `node tag=${n.tag} has orphan chainOffset`,
     ).toBe(false)
+    // Phase 20-11 α-4 — Track-loc threading metadata.
+    expect(
+      Object.prototype.hasOwnProperty.call(rec, 'dollarStart'),
+      `node tag=${n.tag} has orphan dollarStart`,
+    ).toBe(false)
+    expect(
+      Object.prototype.hasOwnProperty.call(rec, 'dollarEnd'),
+      `node tag=${n.tag} has orphan dollarEnd`,
+    ).toBe(false)
     // Recurse into children based on tag shape.
     switch (n.tag) {
       case 'Seq':
@@ -142,7 +151,15 @@ function stripStageMeta(node: PatternIR): PatternIR {
   const rec = node as Record<string, unknown>
   const cloned: Record<string, unknown> = {}
   for (const k of Object.keys(rec)) {
-    if (k === 'unresolvedChain' || k === 'chainOffset') continue
+    // Phase 20-11 α-4 — Track-loc threading metadata.
+    if (
+      k === 'unresolvedChain' ||
+      k === 'chainOffset' ||
+      k === 'dollarStart' ||
+      k === 'dollarEnd'
+    ) {
+      continue
+    }
     const v = rec[k]
     cloned[k] = v
   }

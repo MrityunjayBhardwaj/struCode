@@ -4820,7 +4820,17 @@ function runRawStage(input) {
     tag: "Code",
     code: t.expr,
     lang: "strudel",
-    loc: [{ start: t.offset, end: t.offset + t.expr.length }]
+    loc: [{ start: t.offset, end: t.offset + t.expr.length }],
+    // Phase 20-11 α-4 — stage-transition metadata. Stash the `$:` line
+    // range (dollarStart..end-of-track-body-slice) so runChainAppliedStage
+    // can construct the Track wrapper with the same loc parseStrudel main
+    // produces (line 0..15 for the first $:, 15..28 for the second, etc.).
+    // Additive narrow-union per D-03; mirrors `unresolvedChain` /
+    // `chainOffset` (PR-A precedent). Stripped from FINAL by stripStageMeta
+    // — the strip happens in applyOnTrack via stripStageMeta below + in
+    // the test-helper stripStageMeta the regression sentinel uses.
+    dollarStart: t.dollarStart,
+    dollarEnd: t.end
   }));
   return {
     tag: "Stack",
@@ -4838,7 +4848,16 @@ function runMiniExpandedStage(input) {
   if (input.tag === "Stack" && input.userMethod === void 0) {
     const tracks = input.tracks.map((t) => {
       if (t.tag !== "Code") return t;
-      return parseRootWithChainMeta(t.code, t.loc?.[0]?.start ?? 0);
+      const parsed = parseRootWithChainMeta(t.code, t.loc?.[0]?.start ?? 0);
+      const tMeta = t;
+      if (tMeta.dollarStart !== void 0 && tMeta.dollarEnd !== void 0) {
+        return {
+          ...parsed,
+          dollarStart: tMeta.dollarStart,
+          dollarEnd: tMeta.dollarEnd
+        };
+      }
+      return parsed;
     });
     return { ...input, tracks };
   }
@@ -4866,7 +4885,14 @@ function parseRootWithChainMeta(expr, baseOffset) {
 }
 function runChainAppliedStage(input) {
   if (input.tag === "Stack" && input.userMethod === void 0) {
-    return IR.stack(...input.tracks.map(applyOnTrack));
+    return IR.stack(
+      ...input.tracks.map((t, i2) => {
+        const tMeta = t;
+        const applied = applyOnTrack(t);
+        const meta = tMeta.dollarStart !== void 0 && tMeta.dollarEnd !== void 0 ? { loc: [{ start: tMeta.dollarStart, end: tMeta.dollarEnd }] } : void 0;
+        return IR.track(`d${i2 + 1}`, applied, meta);
+      })
+    );
   }
   return applyOnTrack(input);
 }
@@ -4885,8 +4911,16 @@ function applyOnTrack(node) {
 }
 function stripStageMeta(node) {
   const n = node;
-  if (!("unresolvedChain" in n) && !("chainOffset" in n)) return node;
-  const { unresolvedChain: _u, chainOffset: _o, ...clean } = n;
+  if (!("unresolvedChain" in n) && !("chainOffset" in n) && !("dollarStart" in n) && !("dollarEnd" in n)) {
+    return node;
+  }
+  const {
+    unresolvedChain: _u,
+    chainOffset: _o,
+    dollarStart: _ds,
+    dollarEnd: _de,
+    ...clean
+  } = n;
   return clean;
 }
 function runFinalStage(input) {
