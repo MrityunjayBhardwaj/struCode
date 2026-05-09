@@ -842,6 +842,7 @@ function applyMethod(
     case 'bank':
     case 'scale':
     case 'color':
+    case 'freq':
     case 'gain':
     case 'velocity':
     case 'pan':
@@ -849,6 +850,13 @@ function applyMethod(
       // Phase 20-10 — Param tag promotion. Whitelist closes the SEMANTICS
       // gap that 20-04 left open for REPRESENTATION. PV37 still governs
       // everything outside this whitelist (default arm wraps as opaque).
+      //
+      // Phase 20-12 D-06 — `freq` added so chrome's Y-as-pitch can read
+      // `evt.params.freq` (β-4 extractPitch). Pre-20-12 `.freq(440)`
+      // wrapped as opaque Code via the default arm and `evt.params.freq`
+      // was always undefined. Numeric → Param; non-numeric / pattern args
+      // fall through parseParamArg's null-return → wrapAsOpaque (PV37
+      // wrap-never-drop preserved; P50 single-decision — no third path).
       const isSampleKey = method === 's' || method === 'bank' || method === 'scale'
       const parsed = parseParamArg(args, isSampleKey, baseOffset)
       if (!parsed) {
