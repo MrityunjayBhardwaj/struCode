@@ -1190,6 +1190,169 @@ describe('propagate', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Phase 20-10 wave γ — Param sub-IR slot-table semantics (PLAN §5 γ-2).
+//
+// The 11-test corpus pinning each edge case from RESEARCH G2.3 + Trap 10
+// + the merge-shadow at α-1. Lifecycle step 0: collectCycles is exported
+// from parity.test.ts:183 (verified at task time); we import it directly
+// for tests that exercise multi-cycle alternation (`<bd cp>` / `<bd <hh
+// cp>>`). Loc / irNodeId imports are local to the spread-mechanics tests.
+// ---------------------------------------------------------------------------
+import { collectCycles } from './parity.test'
+
+describe('20-10 wave γ — Param sub-IR slot-table semantics', () => {
+  // 1. Event count, not duplication (RESEARCH G2.3 #5 / Trap 10).
+  it('note("c d").s("<bd cp>") produces exactly 2 events (no slot-event leakage)', () => {
+    const evs = collect(parseStrudel('note("c d").s("<bd cp>")'))
+    expect(evs).toHaveLength(2)
+  })
+
+  // 2. Per-event evt.s alternates with cycle.
+  // <bd cp> at root form is per-cycle alternation; here `note("c d")` body
+  // has 2 atoms within one cycle. The slot-table walks the s-stream once
+  // per body event within the cycle. Per RESEARCH G1.2: case 'Cycle' picks
+  // items[ctx.cycle % len], so within cycle 0 the s-pattern resolves to
+  // 'bd' for every body event in that cycle. The per-event variation
+  // happens across CYCLES, not within. (Sequence form `s("bd cp")` would
+  // give per-event-within-cycle variation.)
+  it('note("c d").s("<bd cp>") evt.s alternates by cycle', () => {
+    const cyc = collectCycles(parseStrudel('note("c d").s("<bd cp>")'), 0, 2)
+    expect(cyc.length).toBe(4)
+    // Cycle 0 → all 'bd'; cycle 1 → all 'cp'.
+    expect(cyc[0].s).toBe('bd')
+    expect(cyc[1].s).toBe('bd')
+    expect(cyc[2].s).toBe('cp')
+    expect(cyc[3].s).toBe('cp')
+  })
+
+  // 3. Silence (`~`) preserves body event but emits null s.
+  it('note("c d").s("bd ~") evt.s is "bd" then null/undefined', () => {
+    const evs = collect(parseStrudel('note("c d").s("bd ~")'))
+    expect(evs[0].s).toBe('bd')
+    expect(evs[1].s ?? null).toBeNull()
+  })
+
+  // 4. Numeric coercion for value-stream.
+  it('note("c d").gain("0.3 0.7") coerces string atoms to numbers', () => {
+    const evs = collect(parseStrudel('note("c d").gain("0.3 0.7")'))
+    expect(evs[0].gain).toBeCloseTo(0.3)
+    expect(evs[1].gain).toBeCloseTo(0.7)
+  })
+
+  // 5. Nested mini `<bd <hh cp>>` — observed cycle behavior (PINNED).
+  // Strudel runtime semantics: outer `<...>` advances inner only on visit,
+  // yielding [bd, hh, bd, cp] over 4 cycles. Stave's current implementation
+  // uses ctx.cycle uniformly at every Cycle level (no per-Cycle counter),
+  // so the inner Cycle picks index `cycle % 2` directly, yielding
+  // [bd, cp, bd, cp]. This is a slot-table semantics divergence from
+  // Strudel runtime, not a 20-10 deliverable. Tracked under issue #109's
+  // family (nested-mini handling). The test pins observed behavior so a
+  // future fix that aligns with Strudel runtime updates the expectation
+  // explicitly.
+  it('note("c").s("<bd <hh cp>>") cycles per Stave implementation (divergent from Strudel runtime — issue #109 family)', () => {
+    const cycles = collectCycles(parseStrudel('note("c").s("<bd <hh cp>>")'), 0, 4)
+    expect(cycles.map((e) => e.s)).toEqual(['bd', 'cp', 'bd', 'cp'])
+  })
+
+  // 6. Param with mini-fast `s("hh*8")` — observed slot behavior (PINNED).
+  // Strudel runtime semantics: `hh*8` produces 8 events per cycle, so every
+  // body event finds a slot of 'hh'. Stave's current implementation lowers
+  // `*N` via parseMini to `Fast(N, Play(hh))`. The Fast collect arm at
+  // collect.ts:546 only scales ctx.speed; it does NOT repeat the body. So
+  // `Fast(8, Play(hh))` produces ONE slot event spanning [0, 0.125), and
+  // the second body event at begin=0.5 falls outside any slot → s=null.
+  // This is the same family as issue #109 (mini-shorthand handling) but
+  // reaches deeper into collect-time semantics, not just print-time. The
+  // test pins observed behavior; a future fix updates the expectation
+  // when Fast gains repeat semantics.
+  it('note("c d").s("hh*8") — first body event gets hh, second body event falls outside slot range (issue #109 family)', () => {
+    const evs = collect(parseStrudel('note("c d").s("hh*8")'))
+    expect(evs).toHaveLength(2)
+    expect(evs[0].s).toBe('hh')
+    expect(evs[1].s ?? null).toBeNull()
+  })
+
+  // 7. Loc-position assertion (PV36 / RESEARCH Trap 10 second clause).
+  // The first event's first loc atom should be inside `note("c d")` —
+  // specifically the position of "c" inside the note string. NOT the
+  // position of "bd" inside the s mini-string.
+  it('note("c d").s("<bd cp>") events carry body-atom loc, NOT mini-string loc', () => {
+    const code = 'note("c d").s("<bd cp>")'
+    const evs = collect(parseStrudel(code))
+    const firstAtomStart = evs[0].loc?.[0]?.start ?? -1
+    const cPos = code.indexOf('"c d"') + 1 // position of "c"
+    const bdPos = code.indexOf('"<bd cp>"') + 2 // position of "b" in "bd"
+    expect(firstAtomStart).toBe(cPos)
+    expect(firstAtomStart).not.toBe(bdPos)
+  })
+
+  // 8. Param-shadow shallow probe (root-cause version of γ-3).
+  // D-05 LOCKED 2026-05-09 (α-1 executed): last-typed-wins. So
+  // .s("a").s("b") → evt.s === 'b'. γ-3 is the runtime-parity version.
+  it('note("c").s("a").s("b") evt.s reflects α-1 merge direction (last-typed-wins)', () => {
+    const evs = collect(parseStrudel('note("c").s("a").s("b")'))
+    expect(evs[0].s).toBe('b')
+  })
+
+  // 9. No regression for opaque (PV37 preservation).
+  it('note("c").release(0.3) still produces a Code-with-via wrapper, NOT a Param', () => {
+    const ir = parseStrudel('note("c").release(0.3)')
+    expect(ir.tag).toBe('Code')
+    expect((ir as { via?: object }).via).toBeDefined()
+  })
+
+  // 10. Param sub-IR walk preserves loc + irNodeId on body events
+  // (PV36 + PV38 — Issue #3 catcher for α-4 pre_mortem clause 7).
+  it('Param sub-IR walk preserves loc and irNodeId on every body event', () => {
+    const ir = parseStrudel('note("c4 e4").s("<bd cp>")')
+    const evs = collect(ir)
+    expect(evs.length).toBeGreaterThan(0)
+    for (const e of evs) {
+      expect(e.loc).toBeDefined()
+      expect(e.loc!.length).toBeGreaterThan(0)
+      expect(e.irNodeId).toBeDefined()
+    }
+  })
+
+  // 11. Pattern-arg sub-IR atoms carry loc pointing INSIDE the mini-string
+  // (goal-backward gap — Inspector click on `<bd cp>` event must resolve
+  // to the mini-string atom, not the `.s(...)` call site).
+  it('pattern-arg sub-IR atoms carry loc pointing inside the mini-string', () => {
+    const code = 'note("c").s("<bd cp>")'
+    const ir = parseStrudel(code)
+    if (ir.tag !== 'Param') throw new Error('expected top-level Param')
+    const subIr = (ir as { value: unknown }).value
+    if (typeof subIr !== 'object' || subIr === null) {
+      throw new Error('expected PatternIR sub-IR (pattern-arg form)')
+    }
+    // Inner mini-string spans: code.indexOf('"<bd cp>"') is the OUTER quote;
+    // inner string lives between innerStart..innerEnd (exclusive of quotes).
+    const outerQuoteIdx = code.indexOf('"<bd cp>"')
+    const innerStart = outerQuoteIdx + 1 // position of '<'
+    const innerEnd = outerQuoteIdx + '"<bd cp>"'.length - 1 // position of closing '"'
+    // Recursively gather every loc on every node of the sub-IR. At least
+    // one Play leaf inside must carry a loc whose start is in
+    // [innerStart, innerEnd).
+    const collectLocs = (node: unknown): Array<{ start: number; end: number }> => {
+      if (typeof node !== 'object' || node === null) return []
+      const out: Array<{ start: number; end: number }> = []
+      const n = node as Record<string, unknown>
+      if (Array.isArray(n.loc)) {
+        for (const l of n.loc as Array<{ start: number; end: number }>) out.push(l)
+      }
+      for (const v of Object.values(n)) {
+        if (Array.isArray(v)) for (const item of v) out.push(...collectLocs(item))
+        else if (typeof v === 'object') out.push(...collectLocs(v))
+      }
+      return out
+    }
+    const locs = collectLocs(subIr)
+    const insideMini = locs.filter((l) => l.start >= innerStart && l.start < innerEnd)
+    expect(insideMini.length).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
