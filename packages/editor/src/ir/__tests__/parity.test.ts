@@ -2260,3 +2260,46 @@ describe('20-10 wave γ — issue #108 user fixture (narrow) round-trip', () => 
     expect(toStrudel(parseStrudel(fixture))).toBe(fixture)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 wave γ — Param-shadow merge direction parity vs Strudel runtime
+// (PLAN §5 γ-3). Converts α-1's local probe into a permanent runtime-parity
+// test. D-05 LOCKED 2026-05-09 (α-1 executed): last-typed-wins. The α-1
+// console output confirmed haps[0].gain and haps[0].s are top-level (no
+// `value.gain` fallback ladder needed; per the prompt "drop ?? haps[0].
+// value?.gain fallback since α-1 confirmed top-level"). normalizeStrudelHap
+// (engine/NormalizedHap.ts) flattens haps to the IREvent shape used here.
+// ---------------------------------------------------------------------------
+
+describe('20-10 wave γ — Param-shadow merge direction parity', () => {
+  it('note("c").gain(0.3).gain(0.7) — IR collect matches Strudel runtime', async () => {
+    const code = 'note("c").gain(0.3).gain(0.7)'
+    const haps = await strudelEventsFromCode(code, 1)
+    const ours = collect(parseStrudel(code))
+    expect(ours).toHaveLength(haps.length)
+    expect(ours[0].gain).toBeCloseTo(haps[0].gain ?? 0)
+  })
+
+  it('s("bd").s("cp") — IR collect matches Strudel runtime', async () => {
+    const code = 's("bd").s("cp")'
+    const haps = await strudelEventsFromCode(code, 1)
+    const ours = collect(parseStrudel(code))
+    expect(ours).toHaveLength(haps.length)
+    expect(ours[0].s).toBe(haps[0].s)
+  })
+
+  it('note("c d").s("<bd cp>") — IR collect matches Strudel runtime per-cycle over 4 cycles', async () => {
+    const code = 'note("c d").s("<bd cp>")'
+    const expected = await strudelEventsFromCode(code, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    expect(ours.length).toBe(expected.length)
+    // Sort both by (begin, note) to compare like-for-like; Strudel may emit
+    // boundary-clipped pairs. The Param-shadow assertion is per-event s.
+    const sortKey = (e: IREvent) => `${e.begin.toFixed(6)}|${e.note ?? ''}`
+    const exp = [...expected].sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+    const act = [...ours].sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+    act.forEach((e, i) => {
+      expect(e.s).toBe(exp[i].s)
+    })
+  })
+})
