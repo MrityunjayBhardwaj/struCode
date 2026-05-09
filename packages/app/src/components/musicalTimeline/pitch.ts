@@ -134,3 +134,44 @@ export function extractPitch(evt: IREvent): ExtractedPitch | null {
     tryParam('freq', 'params.freq')
   )
 }
+
+/**
+ * Phase 20-12 β-4 — map a MIDI value to a Y coordinate within a sub-row's
+ * Y-band, using auto-fit per `range`.
+ *
+ * Inputs:
+ *   - `midi`: pitch (may be fractional for `.freq()` reads).
+ *   - `band`: { top, height } of the sub-row's vertical extent (px from grid
+ *      top); β-2's `LeafLayout.{top, height}` is the producer.
+ *   - `range`: { min, max } MIDI values for THIS leaf — auto-fit per leaf
+ *      so two leaves on the same track don't share an axis (CONTEXT
+ *      pre-mortem #1: sub-row Y-band collapse).
+ *   - `barHeight`: bar's render height in px; reserved at the bottom of the
+ *      band so the bar doesn't clip below the next sub-row.
+ *   - `padding`: top + bottom inset within the band (default 2px).
+ *
+ * Output: y = top of bar within the band (px from grid top).
+ *
+ * Invariants:
+ *   - Single-pitch leaf (range.min === range.max) → bar centred in band.
+ *   - High pitch maps near band TOP, low pitch near band BOTTOM (DAW
+ *     convention; high notes float visually).
+ *   - Multi-pitch midpoint maps to ~mid of band (linearity test).
+ *   - Band too small for any mapping (innerHeight ≤ 0) → returns band.top
+ *     (flatline).
+ */
+export function pitchToY(
+  midi: number,
+  band: { top: number; height: number },
+  range: { min: number; max: number },
+  barHeight: number,
+  padding = 2,
+): number {
+  const innerTop = band.top + padding
+  const innerHeight = band.height - 2 * padding - barHeight
+  if (innerHeight <= 0) return band.top
+  if (range.max <= range.min) return innerTop + innerHeight / 2
+  const t = (midi - range.min) / (range.max - range.min)
+  // Inverted: high pitch at top of band. y measured from top of grid.
+  return innerTop + (1 - t) * innerHeight
+}

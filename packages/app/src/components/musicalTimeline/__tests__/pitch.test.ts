@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest'
 import type { IREvent } from '@stave/editor'
-import { noteStringToMidi, freqToMidi, extractPitch } from '../pitch'
+import { noteStringToMidi, freqToMidi, extractPitch, pitchToY } from '../pitch'
 
 function baseEvent(partial: Partial<IREvent> = {}): IREvent {
   return {
@@ -136,5 +136,45 @@ describe('20-12 α-6 — extractPitch', () => {
   it('non-numeric, non-string param value → fall through', () => {
     const evt = baseEvent({ note: null, params: { note: { foo: 'bar' }, n: 7 } as Record<string, unknown> })
     expect(extractPitch(evt)).toEqual({ source: 'params.n', midi: 7 })
+  })
+})
+
+// ─── Phase 20-12 β-4 — pitchToY auto-fit ────────────────────────────────────
+
+describe('20-12 β-4 — pitchToY auto-fit', () => {
+  const band = { top: 100, height: 18 }
+  const barHeight = 12
+
+  it('single-pitch range (min === max) → bar centred in band', () => {
+    const y = pitchToY(60, band, { min: 60, max: 60 }, barHeight)
+    // padding=2, innerTop=102, innerHeight=18-4-12=2, midpoint=103.
+    expect(y).toBe(103)
+  })
+
+  it('high pitch (max) maps near band TOP, low pitch (min) maps near band BOTTOM (DAW convention)', () => {
+    const range = { min: 60, max: 72 }
+    const yHigh = pitchToY(72, band, range, barHeight)
+    const yLow = pitchToY(60, band, range, barHeight)
+    // padding=2, innerTop=102, innerHeight=2.
+    // t=1 → innerTop + (1-1)*innerHeight = innerTop = 102.
+    // t=0 → innerTop + (1-0)*innerHeight = 102 + 2 = 104.
+    expect(yHigh).toBe(102)
+    expect(yLow).toBe(104)
+    expect(yHigh).toBeLessThan(yLow)
+  })
+
+  it('linearity: midi midpoint maps to mid of band', () => {
+    const range = { min: 60, max: 72 }
+    const yMid = pitchToY(66, band, range, barHeight)
+    const yHigh = pitchToY(72, band, range, barHeight)
+    const yLow = pitchToY(60, band, range, barHeight)
+    expect(yMid).toBeCloseTo((yHigh + yLow) / 2, 6)
+  })
+
+  it('returns band.top when band is too small for any mapping', () => {
+    // band.height < 2*padding + barHeight → innerHeight ≤ 0 → flatline.
+    const tinyBand = { top: 50, height: 8 }
+    const y = pitchToY(60, tinyBand, { min: 50, max: 70 }, barHeight)
+    expect(y).toBe(tinyBand.top)
   })
 })

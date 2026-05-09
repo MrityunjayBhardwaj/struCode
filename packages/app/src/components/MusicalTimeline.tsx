@@ -64,6 +64,7 @@ import {
   type TrackLayout,
   type LeafLayout,
 } from './musicalTimeline/layoutTrackRows'
+import { extractPitch, pitchToY } from './musicalTimeline/pitch'
 import { Ruler } from './musicalTimeline/Ruler'
 import {
   EMPTY_STATE_COPY,
@@ -97,6 +98,14 @@ const TAB_ID = 'musical-timeline'
 const TRACK_LABEL_WIDTH = 90 // mockup: .daw-gutter width 90px (DV-02)
 const ROW_HEIGHT = 24
 const STATUS_HEIGHT = 24
+// β-3/β-4 — bar geometry constants.
+//   BAR_TOP_DEFAULT / BAR_HEIGHT_DEFAULT: collapsed-row + non-expanded
+//     fallback (preserves the pre-β-4 top:4 / height:16 visual baseline).
+//   LEAF_BAR_HEIGHT: smaller bar inside SUB_ROW_HEIGHT bands so the bar +
+//     padding fit within the 18px leaf band.
+const BAR_TOP_DEFAULT = 4
+const BAR_HEIGHT_DEFAULT = 16
+const LEAF_BAR_HEIGHT = 12
 const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set<string>())
 
 /**
@@ -768,6 +777,44 @@ export function MusicalTimeline(
                     0.15,
                     Math.min(1, evt.gain ?? 1),
                   )
+                  // β-4: bar Y = pitch within the leaf's sub-row Y-band, when
+                  // the leaf is melodic and the event has an extractable pitch.
+                  // Otherwise (percussive leaf, no expansion, or no pitch)
+                  // fall through to the existing top:4 row-relative inset.
+                  // Top is computed in row-relative coordinates because the
+                  // bar div sits inside the track row whose `top` is already
+                  // trackLayout.top.
+                  let barTop = BAR_TOP_DEFAULT
+                  let barHeight = BAR_HEIGHT_DEFAULT
+                  if (!trackLayout.collapsed && trackLayout.leaves.length > 0) {
+                    // For v1, layoutTrackRows pools every event onto leaf 0
+                    // when leaves > 1 (event→leaf binding deferred). Leaf 0's
+                    // band extents are what we map within.
+                    const leaf = trackLayout.leaves[0]
+                    barHeight = LEAF_BAR_HEIGHT
+                    if (leaf.melodic && leaf.pitchRange) {
+                      const pitch = extractPitch(evt)
+                      if (pitch != null) {
+                        const yAbs = pitchToY(
+                          pitch.midi,
+                          { top: leaf.top, height: leaf.height },
+                          leaf.pitchRange,
+                          barHeight,
+                        )
+                        // row div is positioned at trackLayout.top, so make
+                        // the bar's top relative to that.
+                        barTop = yAbs - trackLayout.top
+                      } else {
+                        // Melodic leaf but this event has no pitch — flat
+                        // baseline within the leaf's band (defensive).
+                        barTop = leaf.top - trackLayout.top + leaf.height - barHeight - 2
+                      }
+                    } else {
+                      // Percussive leaf: flat baseline at the bottom of the
+                      // sub-row band (slight inset for visual separation).
+                      barTop = leaf.top - trackLayout.top + leaf.height - barHeight - 2
+                    }
+                  }
                   return (
                     <div
                       key={`${trackId}-${i}`}
@@ -779,6 +826,8 @@ export function MusicalTimeline(
                         ...styles.noteBlock,
                         left: x,
                         width: w,
+                        top: barTop,
+                        height: barHeight,
                         opacity: gainOpacity,
                         background:
                           evt.color ??
