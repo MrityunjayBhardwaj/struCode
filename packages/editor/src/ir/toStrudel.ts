@@ -21,13 +21,18 @@ function gen(ir: PatternIR): string {
     case 'Pure':
       return '""'
 
-    case 'Track':
-      // Phase 20-11 wave α-1 placeholder — re-emit the body unchanged.
-      // Wave β-2 replaces with the real arm that emits `$:` per Track
-      // when userMethod === undefined and `${gen(body)}.p("trackId")`
-      // when userMethod === 'p'. Multi-Stack-of-Track round-trip
-      // limitation documented at β-2.
+    case 'Track': {
+      // Phase 20-11 D-02 — userMethod discriminates the two wrapper sources:
+      //   - 'p'      → user wrote .p("name") — re-emit `${gen(body)}.p("name")`.
+      //   - undefined → synthetic d{N} from $: or single-expression file —
+      //                 re-emit body unchanged. Multi-$: re-emission deferred
+      //                 to issue #109 (Stack-of-Track currently round-trips
+      //                 to `stack(...)` not `$: ...\n$: ...`).
+      if (ir.userMethod === 'p') {
+        return `${gen(ir.body)}.p("${ir.trackId}")`
+      }
       return gen(ir.body)
+    }
 
     case 'Code':
       // Phase 20-04 T-10 (D-02 / PV37 clause 4).

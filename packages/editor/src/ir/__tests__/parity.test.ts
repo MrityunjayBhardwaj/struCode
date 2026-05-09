@@ -2285,3 +2285,66 @@ describe('20-10 wave γ — Param-shadow merge direction parity', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase 20-11 wave β — Track round-trip (β-2). userMethod discriminates the
+// two parser sources: explicit .p("name") (userMethod==='p') re-emits as
+// `${gen(body)}.p("name")`; synthetic d{N} from `$:` or non-`$:` file
+// (userMethod undefined) re-emits the body unchanged. Multi-`$:` re-emission
+// deferred to issue #109 (Stack-of-Track currently outputs `stack(...)` not
+// `$: ...\n$: ...`).
+// ---------------------------------------------------------------------------
+
+describe('20-11 wave β — Track round-trip', () => {
+  it('round-trips note("c").p("lead") byte-equal', () => {
+    const code = 'note("c").p("lead")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").gain(0.3).p("lead") byte-equal (chained Param + Track)', () => {
+    const code = 'note("c").gain(0.3).p("lead")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips s("bd") byte-equal (non-$: file: no Track wrapper today; γ-4 lands the synthetic-d1 wrap + ~100-site test migration)', () => {
+    const code = 's("bd")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('synthetic d1 from $: file does NOT emit `.p("d1")` in round-trip', () => {
+    // userMethod===undefined → gen(body) only. The `$:` prefix itself is
+    // dropped (#109 owns the multi-$: re-emission); single-`$:` collapses
+    // to body sans-prefix. Documenting both: no `.p("d1")` AND no `$:`.
+    const out = toStrudel(parseStrudel('$: s("bd")'))
+    expect(out).not.toContain('.p(')
+    expect(out).toBe('s("bd")')
+  })
+
+  it('serialize → deserialize → toStrudel byte-equal — note("c").p("lead")', () => {
+    const code = 'note("c").p("lead")'
+    const ir1 = parseStrudel(code)
+    const json = patternToJSON(ir1)
+    const ir2 = patternFromJSON(JSON.stringify(JSON.parse(json)))
+    expect(toStrudel(ir2)).toBe(code)
+  })
+
+  it('hand-built Track with userMethod==="p" emits .p("name") (gen arm in isolation)', () => {
+    const ir: PatternIR = {
+      tag: 'Track',
+      trackId: 'lead',
+      body: { tag: 'Play', note: 'c4', duration: 1, params: {} },
+      userMethod: 'p',
+    }
+    expect(toStrudel(ir)).toBe('note("c4").p("lead")')
+  })
+
+  it('hand-built Track WITHOUT userMethod re-emits body (synthetic d{N} discriminator)', () => {
+    const ir: PatternIR = {
+      tag: 'Track',
+      trackId: 'd1',
+      body: { tag: 'Play', note: 'c4', duration: 1, params: {} },
+    }
+    // userMethod absent → body only, no .p("d1") emitted.
+    expect(toStrudel(ir)).toBe('note("c4")')
+  })
+})
