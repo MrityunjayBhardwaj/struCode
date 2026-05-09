@@ -2139,3 +2139,84 @@ $: stack(
     events.forEach(e => expect(e.s).toBe('sawtooth'))
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 wave β — Param round-trip byte-fidelity (PLAN §4 β-1).
+//
+// Mirrors the Phase 20-04 wave-δ Code-with-via round-trip discipline above.
+// The toStrudel `case 'Param'` arm landed in α-4 (toStrudel.ts:36-42); these
+// tests pin its behaviour:
+//   - Literal-value params (string | number) round-trip byte-equal.
+//   - Pattern-arg sub-IR params (`.s("<bd cp>")`) preserve the raw inner
+//     string verbatim (rawArgs is untrimmed per CONTEXT D-03 / 20-04 D-02).
+//   - Whitespace inside parens is preserved (rawArgs whitespace contract).
+//   - Chained Params (`.s(...).gain(...)`) and Param-wrapping-FX shapes
+//     compose correctly under recursion.
+//   - serialize → deserialize → toStrudel survives the Param shape across
+//     JSON round-trip (PatternIR-valued .value as well).
+// ---------------------------------------------------------------------------
+
+describe('20-10 wave β — Param round-trip byte-fidelity', () => {
+  it('round-trips note("c").s("sawtooth") byte-equal', () => {
+    const code = 'note("c").s("sawtooth")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").gain(0.3) byte-equal', () => {
+    const code = 'note("c").gain(0.3)'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").s("<bd cp>") byte-equal (pattern-arg form)', () => {
+    const code = 'note("c").s("<bd cp>")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips with whitespace inside parens — note("c").s( "sawtooth" )', () => {
+    // CONTEXT D-03 / 20-04 D-02 — rawArgs preserved untrimmed. Pre-mortem
+    // Trap 5 (β-1 #4 / RESEARCH G3.4 "rawArgs whitespace").
+    const code = 'note("c").s( "sawtooth" )'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c d").s("<bd cp>").gain(0.3) byte-equal (chained Param)', () => {
+    const code = 'note("c d").s("<bd cp>").gain(0.3)'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").s("sawtooth").lpf(2400) byte-equal (Param wrapping FX-wrapping body)', () => {
+    // Param's body can be any IR — here it wraps the Param(s) which wraps
+    // the FX(lpf). Recursion through gen() must compose correctly.
+    const code = 'note("c").s("sawtooth").lpf(2400)'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").gain("0.3 0.7") byte-equal (numeric pattern-arg)', () => {
+    const code = 'note("c").gain("0.3 0.7")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips s("bd").s("cp") byte-equal (shadow chain — D-05 last-typed-wins)', () => {
+    const code = 's("bd").s("cp")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips full track-defining metadata chain byte-equal', () => {
+    // Exercises the parametric / track-bucket params (n / bank / scale /
+    // color) at the wider end of the wave-α whitelist.
+    const code = 'note("c").n(0).bank("RolandTR909").scale("major").color("red")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('serialize → deserialize → toStrudel byte-equal — note("c").s("<bd cp>")', () => {
+    // Mirrors the wave-δ corpus convention at parity.test.ts:2074-2078.
+    // Critical for PatternIR-valued Param.value: Param's `value` field is
+    // the sub-IR for pattern-args, so JSON round-trip must preserve the
+    // nested PatternIR shape (RESEARCH G4.3 / Trap 14 — nodesEqual JSON-
+    // string fragility on Param.value=PatternIR).
+    const code = 'note("c").s("<bd cp>")'
+    const ir1 = parseStrudel(code)
+    const ir2 = patternFromJSON(patternToJSON(ir1))
+    expect(toStrudel(ir2)).toBe(code)
+  })
+})
