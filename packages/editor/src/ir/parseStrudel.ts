@@ -127,8 +127,22 @@ export function parseStrudel(code: string): PatternIR {
  * offset within the slice is also a valid offset within `code`.
  * Returns [] if no $: lines found (caller handles single-expression case).
  */
-export function extractTracks(code: string): { expr: string; offset: number }[] {
-  const tracks: { expr: string; offset: number }[] = []
+export function extractTracks(
+  code: string,
+): { expr: string; offset: number; dollarStart: number; end: number }[] {
+  // Phase 20-11 α-2 — return shape additively widened. `dollarStart` (start
+  // of the literal `$:` token) and `end` (exclusive end of the track body
+  // slice — either the next `$:` line start or `code.length`) are exposed
+  // so α-3's parseStrudel main path can attach a loc covering the `$:` line
+  // range to each Track wrapper. Existing callers (parseStrudel main +
+  // parseStrudelStages.runRawStage) consume only `expr`/`offset` and are
+  // forward-compatible.
+  const tracks: {
+    expr: string
+    offset: number
+    dollarStart: number
+    end: number
+  }[] = []
   // Match `$:` at the start of a line (allowing leading whitespace).
   const dollarRe = /^[ \t]*\$:/gm
   const starts: { dollarStart: number; bodyStart: number }[] = []
@@ -146,12 +160,12 @@ export function extractTracks(code: string): { expr: string; offset: number }[] 
   if (starts.length === 0) return []
 
   for (let i = 0; i < starts.length; i++) {
-    const { bodyStart } = starts[i]
+    const { dollarStart, bodyStart } = starts[i]
     const end = i + 1 < starts.length ? starts[i + 1].dollarStart : code.length
     const slice = code.slice(bodyStart, end)
     // Trailing whitespace can stay — parseExpression handles it. We
     // keep the leading slice intact so offsets line up.
-    tracks.push({ expr: slice, offset: bodyStart })
+    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end })
   }
   return tracks
 }
