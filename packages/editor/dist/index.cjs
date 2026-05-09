@@ -4286,9 +4286,18 @@ function parseStrudel(code) {
       return parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0);
     }
     if (tracks.length === 1) {
-      return parseExpression(tracks[0].expr, tracks[0].offset);
+      const t = tracks[0];
+      return IR.track("d1", parseExpression(t.expr, t.offset), {
+        loc: [{ start: t.dollarStart, end: t.end }]
+      });
     }
-    return IR.stack(...tracks.map((t) => parseExpression(t.expr, t.offset)));
+    return IR.stack(
+      ...tracks.map(
+        (t, i2) => IR.track(`d${i2 + 1}`, parseExpression(t.expr, t.offset), {
+          loc: [{ start: t.dollarStart, end: t.end }]
+        })
+      )
+    );
   } catch {
     return IR.code(code);
   }
@@ -4308,10 +4317,10 @@ function extractTracks(code) {
   }
   if (starts.length === 0) return [];
   for (let i2 = 0; i2 < starts.length; i2++) {
-    const { bodyStart } = starts[i2];
+    const { dollarStart, bodyStart } = starts[i2];
     const end = i2 + 1 < starts.length ? starts[i2 + 1].dollarStart : code.length;
     const slice = code.slice(bodyStart, end);
-    tracks.push({ expr: slice, offset: bodyStart });
+    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end });
   }
   return tracks;
 }
@@ -4581,8 +4590,14 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
       if (isNaN(n) || n < 1) return wrapAsOpaque(ir, method, args2, callSiteRange);
       return IR.chop(n, ir, tagMeta(method, callSiteRange));
     }
-    case "p":
-      return ir;
+    case "p": {
+      const trimmed = args2.trim();
+      const strMatch = trimmed.match(/^"([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)"$/);
+      if (!strMatch || strMatch[1].length === 0) {
+        return wrapAsOpaque(ir, method, args2, callSiteRange);
+      }
+      return IR.track(strMatch[1], ir, tagMeta(method, callSiteRange));
+    }
     case "s":
     case "n":
     case "note":

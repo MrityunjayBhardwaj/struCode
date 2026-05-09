@@ -100,14 +100,34 @@ export function parseStrudel(code: string): PatternIR {
     // `loc` (source ranges) to Play nodes.
     const tracks = extractTracks(code)
     if (tracks.length === 0) {
-      // No $: prefix — try parsing as a single expression at offset 0
+      // No $: prefix — try parsing as a single expression at offset 0.
+      // 20-11 wave γ: synthetic-d1 wrap deferred until test migration
+      // lands in the same PR (~100 sites assert on the unwrapped tag;
+      // wrapping here without the unwrapD1 helper would red-suite the
+      // wave-α gate). Today: return the inner IR unchanged.
       const trimStart = code.search(/\S/)
       return parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0)
     }
     if (tracks.length === 1) {
-      return parseExpression(tracks[0].expr, tracks[0].offset)
+      // Single `$:` block — Track('d1', expr) without an enclosing Stack.
+      // loc covers the `$:` line range (PV36 / D-02). Synthetic-from-$:
+      // form: no userMethod (toStrudel β-2 distinguishes from `.p()` form
+      // via `userMethod === 'p'`).
+      const t = tracks[0]
+      return IR.track('d1', parseExpression(t.expr, t.offset), {
+        loc: [{ start: t.dollarStart, end: t.end }],
+      })
     }
-    return IR.stack(...tracks.map(t => parseExpression(t.expr, t.offset)))
+    // Two+ `$:` blocks — Stack(Track('d1', ...), Track('d2', ...), ...).
+    // Each Track carries its own `$:` line range as loc. The outer Stack
+    // is synthetic (no loc / no userMethod) — same shape as today.
+    return IR.stack(
+      ...tracks.map((t, i) =>
+        IR.track(`d${i + 1}`, parseExpression(t.expr, t.offset), {
+          loc: [{ start: t.dollarStart, end: t.end }],
+        }),
+      ),
+    )
   } catch {
     return IR.code(code)
   }
@@ -786,12 +806,31 @@ function applyMethod(
       return IR.chop(n, ir, tagMeta(method, callSiteRange))
     }
 
-    case 'p':
-      // .p("trackId") — track assignment, intentional pass-through.
-      // Phase 20-04 T-07 (Trap 3): consumed externally (not by our parser);
-      // wrapping would break track-assignment semantics. PV37 D-07 keeps
-      // this unwrapped — confirmed Chesterton fence (existence check).
-      return ir
+    case 'p': {
+      // Phase 20-11 D-01/D-02 — `.p("name")` overrides auto `d{N}` from $:.
+      // The 20-04 Chesterton (`return ir`) was correct under the PV37
+      // REPRESENTATION model but the musician-track-identity model (PV35)
+      // needs the SEMANTICS pair — mirror Param's promotion (20-10).
+      //
+      // Single decision (P50 — no fallback ladders): `args` is a content-
+      // bearing string literal (with surrounding quotes after the parser's
+      // arg extraction) → Track wrap. Anything else (no args, non-string,
+      // empty string, mini-syntax inside the literal) falls back to
+      // wrapAsOpaque (PV37 preserved; round-trip via toStrudel `.via.method/
+      // args` still emits `.p(...)` byte-for-byte).
+      //
+      // Identifier-only quoted string with optional spaces / `:.-_`. Brackets,
+      // angle-brackets, star, tilde, pipe excluded — anything mini-syntax
+      // routes through wrapAsOpaque so the user's intent is preserved as a
+      // typed source fragment.
+      const trimmed = args.trim()
+      const strMatch = trimmed.match(/^"([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)"$/)
+      if (!strMatch || strMatch[1].length === 0) {
+        // Empty / mini-syntax / non-string / no args — preserve PV37.
+        return wrapAsOpaque(ir, method, args, callSiteRange)
+      }
+      return IR.track(strMatch[1], ir, tagMeta(method, callSiteRange))
+    }
 
     case 's':
     case 'n':
