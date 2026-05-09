@@ -759,6 +759,15 @@ export function MusicalTimeline(
                 {events.map((evt, i) => {
                   const { x, w } = eventToRect(evt, { gridContentWidth })
                   const isActive = activeKeys.has(`${trackId}-${i}`)
+                  // β-3: opacity = clamp(gain, 0.15, 1). Replace, not multiply
+                  // (gain semantically dominates per RESEARCH §G.3). Floor 0.15
+                  // keeps gain(0) bars visually present (intentional —
+                  // disappearing entirely would be wrong feedback for a user
+                  // who set gain to 0 deliberately).
+                  const gainOpacity = Math.max(
+                    0.15,
+                    Math.min(1, evt.gain ?? 1),
+                  )
                   return (
                     <div
                       key={`${trackId}-${i}`}
@@ -770,6 +779,7 @@ export function MusicalTimeline(
                         ...styles.noteBlock,
                         left: x,
                         width: w,
+                        opacity: gainOpacity,
                         background:
                           evt.color ??
                           trackOverrideColor ??
@@ -898,11 +908,13 @@ const styles = {
     borderBottom: '1px solid rgba(255,255,255,0.08)',
   },
   noteBlock: {
+    // β-3 (20-12) — opacity is set per-event by `clamp(evt.gain ?? 1, 0.15, 1)`
+    // at the call site. No static opacity here so the per-event style
+    // override doesn't have to compete with a baseline `opacity: 0.85`.
     position: 'absolute' as const,
     top: 4,
     height: 16,
     borderRadius: 2,
-    opacity: 0.85,
     cursor: 'pointer' as const,
     boxSizing: 'border-box' as const,
   },

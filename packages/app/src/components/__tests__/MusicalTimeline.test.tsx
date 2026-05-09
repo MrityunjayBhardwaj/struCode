@@ -1358,3 +1358,43 @@ describe('20-12 β-1 — track header rail', () => {
     expect(swatch!.isConnected).toBe(true)
   })
 })
+
+// ─── Phase 20-12 β-3 — bar opacity = clamp(gain, 0.15, 1) ───────────────────
+
+describe('20-12 β-3 — bar opacity = clamp(gain, 0.15, 1)', () => {
+  async function getBarOpacity(eventOverrides: Partial<IREvent>): Promise<number> {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'd1', s: 'bd', begin: 0, end: 0.1, ...eventOverrides }),
+          ],
+        }),
+      )
+    })
+    const block = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(block).not.toBeNull()
+    return parseFloat(block!.style.opacity)
+  }
+
+  it('event with gain=1 (default) renders at opacity 1.0', async () => {
+    expect(await getBarOpacity({ gain: 1 })).toBe(1)
+  })
+
+  it('event with gain=0.5 renders at opacity 0.5', async () => {
+    expect(await getBarOpacity({ gain: 0.5 })).toBe(0.5)
+  })
+
+  it('event with gain=0 floors to opacity 0.15 (never invisible)', async () => {
+    expect(await getBarOpacity({ gain: 0 })).toBe(0.15)
+  })
+
+  it('event with gain=2 ceils to opacity 1.0', async () => {
+    expect(await getBarOpacity({ gain: 2 })).toBe(1)
+  })
+})
