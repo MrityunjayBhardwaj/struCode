@@ -137,6 +137,14 @@ export function projectedLabel(node: PatternIR): string | undefined {
       // rationale as Code's whitelist). It is NOT a PV32 violation in
       // the normal path — that path short-circuits one frame earlier.
       return node.tag
+    case 'Track':
+      // Phase 20-11 wave α-1 placeholder. The userMethod-first short-
+      // circuit at lines 59-61 returns 'p' for `.p()`-derived Tracks. For
+      // synthetic-from-$: Tracks (userMethod undefined) we surface the
+      // trackId ('d1', 'd2', ...) as the projected label so the musician
+      // chrome shows the track row identity. γ-3 will refine the chrome
+      // (e.g. swap to a row chip rather than a tag chip).
+      return node.trackId
     default: {
       // Exhaustiveness check — TS error if a tag is missing.
       const _exhaustive: never = node
@@ -238,6 +246,12 @@ export function projectedChildren(node: PatternIR): readonly PatternIR[] {
     // the wrapped receiver. Parse-failure case (no via): leaf as before.
     case 'Code':
       return node.via ? [node.via.inner] : []
+    case 'Track':
+      // Phase 20-11 wave α-1 placeholder. Single-body wrapper — surface
+      // the body as the only projected child so the inspector tree drills
+      // through Track. γ-3 may refine (e.g. promote children of a Stack
+      // body to flatten the row hierarchy).
+      return [node.body]
     default: {
       const _exhaustive: never = node
       return _exhaustive
@@ -286,6 +300,7 @@ export function stripInnerLate(node: PatternIR): PatternIR {
     case 'Chop':
     case 'When':
     case 'Loop':
+    case 'Track':         // Phase 20-11 — single-body wrapper; same shape as FX/Param.
       return { ...node, body: stripInnerLate(node.body) }
     default:
       // Multi-child / leaf nodes (Pure, Play, Sleep, Code, Stack, Seq,

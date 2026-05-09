@@ -109,6 +109,11 @@ export function assertNoStageMeta(node: PatternIR): void {
         visit(n.body)
         if (typeof n.value === 'object' && n.value !== null) visit(n.value as PatternIR)
         break
+      case 'Track':
+        // Phase 20-11 wave α-1 — Track wraps a body; recurse into it so the
+        // orphan-meta scan reaches inner nodes. Same single-body shape as FX.
+        visit(n.body)
+        break
       case 'Chunk':
         visit(n.transform)
         visit(n.body)
@@ -183,6 +188,10 @@ function stripStageMeta(node: PatternIR): PatternIR {
       if (typeof node.value === 'object' && node.value !== null) {
         cloned.value = stripStageMeta(node.value as PatternIR)
       }
+      break
+    case 'Track':
+      // Phase 20-11 wave α-1 — single-body wrapper; clone child.
+      cloned.body = stripStageMeta(node.body)
       break
     case 'Chunk':
       cloned.transform = stripStageMeta(node.transform)
@@ -453,6 +462,7 @@ function collectLocEntries(
     case 'When': case 'FX': case 'Ramp': case 'Fast': case 'Slow':
     case 'Elongate': case 'Late': case 'Degrade': case 'Ply': case 'Struct':
     case 'Swing': case 'Shuffle': case 'Scramble': case 'Chop': case 'Loop':
+    case 'Track':
       collectLocEntries(node.body, `${path}.body`, acc)
       break
     case 'Chunk':

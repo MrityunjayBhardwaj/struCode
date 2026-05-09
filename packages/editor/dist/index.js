@@ -2945,6 +2945,7 @@ var IR = {
   when: (gate, body2, meta) => attachMeta({ tag: "When", gate, body: body2 }, meta),
   fx: (name2, params, body2, meta) => attachMeta({ tag: "FX", name: name2, params, body: body2 }, meta),
   param: (key, value, rawArgs, body2, meta) => attachMeta({ tag: "Param", key, value, rawArgs, body: body2 }, meta),
+  track: (trackId, body2, meta) => attachMeta({ tag: "Track", trackId, body: body2 }, meta),
   ramp: (param, from, to, cycles, body2, meta) => attachMeta({ tag: "Ramp", param, from, to, cycles, body: body2 }, meta),
   fast: (factor, body2, meta) => attachMeta({ tag: "Fast", factor, body: body2 }, meta),
   slow: (factor, body2, meta) => attachMeta({ tag: "Slow", factor, body: body2 }, meta),
@@ -3105,6 +3106,9 @@ function walk(ir, ctx) {
   switch (ir.tag) {
     case "Pure":
       return [];
+    case "Track": {
+      return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+    }
     case "Code": {
       if (ir.via) {
         const innerEvents = walk(ir.via.inner, ctx);
@@ -3439,6 +3443,8 @@ function gen(ir) {
   switch (ir.tag) {
     case "Pure":
       return '""';
+    case "Track":
+      return gen(ir.body);
     case "Code":
       if (ir.via) {
         return `${gen(ir.via.inner)}.${ir.via.method}(${ir.via.args})`;
@@ -3655,7 +3661,8 @@ var VALID_TAGS = /* @__PURE__ */ new Set([
   "Slow",
   "Loop",
   "Code",
-  "Param"
+  "Param",
+  "Track"
 ]);
 function validateNode(raw, path) {
   if (typeof raw !== "object" || raw === null) {
@@ -3818,6 +3825,18 @@ function validateNode(raw, path) {
         key: node.key,
         value,
         rawArgs: node.rawArgs,
+        body: validateNode(node.body, `${path}.body`)
+      };
+      if (Array.isArray(node.loc)) out2.loc = node.loc;
+      if (typeof node.userMethod === "string") out2.userMethod = node.userMethod;
+      return out2;
+    }
+    case "Track": {
+      requireField(node, "trackId", ["string"], path);
+      requireField(node, "body", ["object"], path);
+      const out2 = {
+        tag: "Track",
+        trackId: node.trackId,
         body: validateNode(node.body, `${path}.body`)
       };
       if (Array.isArray(node.loc)) out2.loc = node.loc;
@@ -25976,6 +25995,8 @@ var _SuperSonicBridge = class _SuperSonicBridge {
   /** Free all synth, FX, and monitor nodes (clean slate for re-evaluate). */
   freeAllNodes() {
     if (!this.sonic) return;
+    this.sonic.purge().catch(() => {
+    });
     this.sonic.send("/g_freeAll", 100);
     this.sonic.send("/g_freeAll", 101);
     this.sonic.send("/g_freeAll", 102);
@@ -32387,6 +32408,10 @@ var SonicPiEngine = class {
       const prevInTopLevelEval = this.inTopLevelEval;
       this.inTopLevelEval = true;
       try {
+        if (isReEvaluate) {
+          this.loopFxScope.clear();
+          this.fxScopeChains.clear();
+        }
         await sandbox.execute(...dslValues);
       } finally {
         this.inTopLevelEval = prevInTopLevelEval;
@@ -32401,8 +32426,6 @@ var SonicPiEngine = class {
           this.nodeRefMap.clear();
           this.persistentFx.clear();
           this.reusableFx.clear();
-          this.loopFxScope.clear();
-          this.fxScopeChains.clear();
         }
         scheduler.reEvaluate(pendingLoops, { bpm: defaultBpm, synth: defaultSynth });
         for (const [name2, defaults] of pendingDefaults) {

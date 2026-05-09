@@ -331,6 +331,14 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     case 'Pure':
       return []
 
+    case 'Track': {
+      // Phase 20-11 wave α-1 placeholder — walk body unchanged so events
+      // are produced and the union extension doesn't break tsc. Wave β-1
+      // replaces this with the real childCtx-spread arm that injects
+      // ctx.trackId? for makeEvent (the actual semantics fix).
+      return withWrapperLoc(walk(ir.body, ctx), ir.loc)
+    }
+
     case 'Code': {
       // Phase 20-04 T-09 (D-01 / PV37 / PK13 step 3).
       // Wrapper case: walk via.inner; thread our call-site range onto

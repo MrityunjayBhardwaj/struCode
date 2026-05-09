@@ -68,6 +68,12 @@ export function summarize(node: PatternIR): string {
       if (typeof v === 'number') return `${node.key}=${v}`
       return `${node.key}=[pattern]`
     }
+    case 'Track':
+      // Phase 20-11 wave α-1 placeholder. Developer chrome shows the
+      // resolved trackId; γ-3 may add userMethod-aware text (e.g.
+      // `trackId="lead" via .p()` for `.p()`-derived Tracks vs
+      // `trackId="d1"` for synthetic-from-$:).
+      return `trackId=${JSON.stringify(node.trackId)}`
   }
 }
 
@@ -117,6 +123,8 @@ export function children(node: PatternIR): readonly PatternIR[] {
     // Wrapper case: expose via.inner as a child so the inspector tree can
     // drill into the wrapped receiver. Parse-failure case (no via): leaf.
     case 'Code':  return node.via ? [node.via.inner] : []
+    // Phase 20-11 wave α-1 placeholder — single-body wrapper; expose body.
+    case 'Track': return [node.body]
     default:      return []
   }
 }

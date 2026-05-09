@@ -296,6 +296,12 @@ type PatternIR = {
     loc?: SourceLocation[];
     userMethod?: string;
 } | {
+    tag: 'Track';
+    trackId: string;
+    body: PatternIR;
+    loc?: SourceLocation[];
+    userMethod?: string;
+} | {
     tag: 'Loop';
     body: PatternIR;
     loc?: SourceLocation[];
@@ -345,6 +351,7 @@ declare const IR: {
     readonly when: (gate: string, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly fx: (name: string, params: Record<string, number | string>, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly param: (key: string, value: string | number | PatternIR, rawArgs: string, body: PatternIR, meta?: TagMeta) => PatternIR;
+    readonly track: (trackId: string, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly ramp: (param: string, from: number, to: number, cycles: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly fast: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly slow: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;

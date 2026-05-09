@@ -75,6 +75,7 @@ function rawChildren(node: PatternIR): readonly PatternIR[] {
       if (typeof v === 'object' && v !== null) return [node.body, v as PatternIR]
       return [node.body]
     }
+    case 'Track': return [node.body]   // Phase 20-11 wave α-1 — single-body wrapper.
     case 'Chunk': return [node.body, node.transform]
     case 'Pick':  return [node.selector, ...node.lookup]
     default:      return []

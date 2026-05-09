@@ -75,6 +75,12 @@ export type PatternIR =
       loc?: SourceLocation[];                   // call-site range (.method(args))
       userMethod?: string;                      // user-typed token (PV32 — projection short-circuits on this; redundant w/ key for v1 but kept stable for future aliases)
     }   // Phase 20-10 — Param tag (semantics-completeness pair-of PV37)
+  | { tag: 'Track';
+      trackId: string                            // 'd1' | 'd2' | ... | <user-typed via .p()>
+      body: PatternIR
+      loc?: SourceLocation[]                     // $: line range OR .p() call-site range OR undefined (synthetic d1)
+      userMethod?: string                        // 'p' if from .p(); undefined if synthetic from $: or single-expression
+    }   // Phase 20-11 — Track tag (musician-track-identity wrapper; PV35 + PV37 model extension)
   | { tag: 'Loop';   body: PatternIR; loc?: SourceLocation[]; userMethod?: string }
   | {
       tag: 'Code'
@@ -165,6 +171,12 @@ export const IR = {
     meta?: TagMeta,
   ): PatternIR =>
     attachMeta({ tag: 'Param', key, value, rawArgs, body }, meta),
+  track: (
+    trackId: string,
+    body: PatternIR,
+    meta?: TagMeta,
+  ): PatternIR =>
+    attachMeta({ tag: 'Track', trackId, body }, meta),
   ramp: (param: string, from: number, to: number, cycles: number, body: PatternIR, meta?: TagMeta): PatternIR =>
     attachMeta({ tag: 'Ramp', param, from, to, cycles, body }, meta),
   fast: (factor: number, body: PatternIR, meta?: TagMeta): PatternIR =>
