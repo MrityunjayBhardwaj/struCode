@@ -598,7 +598,8 @@ describe('parity harness', () => {
     expect(ir.tag).toBe('Chunk')
     if (ir.tag === 'Chunk') {
       expect(ir.n).toBe(4)
-      expect(ir.transform.tag).toBe('FX')
+      // Phase 20-10 promoted .gain to Param.
+      expect(ir.transform.tag).toBe('Param')
     }
   })
 
@@ -736,9 +737,10 @@ describe('parity harness', () => {
     expect(ir.tag).toBe('Stack')
     if (ir.tag === 'Stack') {
       expect(ir.tracks.length).toBe(2)
-      // Each track is the body wrapped in an FX node (gain, gain).
-      expect(ir.tracks[0].tag).toBe('FX')
-      expect(ir.tracks[1].tag).toBe('FX')
+      // Each track is the body wrapped in a Param node (Phase 20-10
+      // promoted .gain from FX to Param).
+      expect(ir.tracks[0].tag).toBe('Param')
+      expect(ir.tracks[1].tag).toBe('Param')
     }
   })
 
@@ -1342,13 +1344,15 @@ describe('19-05 — per-method loc containment (D-04 + D-11)', () => {
   // -------------------------------------------------------------------------
   it('3-method chain — each link carries its own .method(args) callSiteRange (PLAN §5 #12)', () => {
     const code = 's("bd").fast(2).late(0.125).gain(0.5)'
+    // Phase 20-10: .gain promoted from FX to Param. loc / userMethod
+    // contracts unchanged.
     const ir = parseStrudel(code) as {
-      tag: 'FX'
+      tag: 'Param'
       userMethod?: string
       loc?: SourceLocation[]
       body: { tag: 'Late'; userMethod?: string; loc?: SourceLocation[]; body: { tag: 'Fast'; userMethod?: string; loc?: SourceLocation[]; body: unknown } }
     }
-    expect(ir.tag).toBe('FX')
+    expect(ir.tag).toBe('Param')
     expect(ir.userMethod).toBe('gain')
     const gainStart = code.indexOf('.gain(0.5)')
     expect(ir.loc).toEqual([{ start: gainStart, end: gainStart + '.gain(0.5)'.length }])
@@ -1874,12 +1878,21 @@ describe('20-04 wave β — parser wrap probes (D-03 / P33 / PV37)', () => {
     expect(ir.via?.inner.tag).toBe('Play')
   })
 
-  it('default arm wraps with quoted args verbatim (.s("sawtooth"))', () => {
+  it('typed Param arm carries quoted args verbatim (.s("sawtooth")) — Phase 20-10 promotion', () => {
+    // Phase 20-10 promoted `s` to the typed Param tag — `.s("sawtooth")`
+    // no longer falls through to wrapAsOpaque. The original wave-β probe
+    // asserted Code-with-via for default-arm wrapping; with the Param arm
+    // present, the byte-fidelity contract carries through Param.rawArgs
+    // instead. Replace the probe with the (analogous) Param contract;
+    // the default-arm release(0.3) test above still pins PV37 wrap
+    // semantics for unrecognised methods.
     const ir = parseStrudel('note("c").s("sawtooth")')
-    expect(ir.tag).toBe('Code')
-    if (ir.tag !== 'Code') return
-    expect(ir.via?.method).toBe('s')
-    expect(ir.via?.args).toBe('"sawtooth"')    // includes surrounding quotes
+    expect(ir.tag).toBe('Param')
+    if (ir.tag !== 'Param') return
+    expect(ir.key).toBe('s')
+    expect(ir.value).toBe('sawtooth')
+    expect(ir.rawArgs).toBe('"sawtooth"')      // raw — surrounding quotes preserved
+    expect(ir.userMethod).toBe('s')
   })
 
   // --- Typed-arm parse-failure wraps (T-06 / D-03 expansion) -----------------
@@ -1892,11 +1905,18 @@ describe('20-04 wave β — parser wrap probes (D-03 / P33 / PV37)', () => {
     expect(ir.via?.args).toBe('"<2 3>"')
   })
 
-  it('gain wraps on parseFloat NaN', () => {
+  it('gain with mini-pattern arg routes to Param sub-IR (Phase 20-10 promotion)', () => {
+    // Pre-20-10 this wrapped as Code-with-via because gain's standalone arm
+    // failed parseFloat on `"0.3 0.7"`. Post-20-10 the Param arm recognises
+    // the quoted-mini shape and parses it into a sub-IR via parseMini. The
+    // default arm still wraps unrecognised methods (release(0.3) probe
+    // above) — PV37 preserved for the non-whitelisted case.
     const ir = parseStrudel('note("c").gain("0.3 0.7")')
-    expect(ir.tag).toBe('Code')
-    if (ir.tag !== 'Code') return
-    expect(ir.via?.method).toBe('gain')
+    expect(ir.tag).toBe('Param')
+    if (ir.tag !== 'Param') return
+    expect(ir.key).toBe('gain')
+    expect(typeof ir.value).toBe('object')     // sub-IR (PatternIR)
+    expect(ir.rawArgs).toBe('"0.3 0.7"')
   })
 
   it('lpf wraps on parseFloat NaN (FX group line 618)', () => {

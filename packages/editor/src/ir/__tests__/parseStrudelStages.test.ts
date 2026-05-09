@@ -103,6 +103,12 @@ export function assertNoStageMeta(node: PatternIR): void {
       case 'Loop':
         visit(n.body)
         break
+      case 'Param':
+        // Phase 20-10 — Param has BOTH a body and a value (which may be a
+        // sub-IR for the pattern-arg form). Recurse into both.
+        visit(n.body)
+        if (typeof n.value === 'object' && n.value !== null) visit(n.value as PatternIR)
+        break
       case 'Chunk':
         visit(n.transform)
         visit(n.body)
@@ -170,6 +176,13 @@ function stripStageMeta(node: PatternIR): PatternIR {
     case 'Chop':
     case 'Loop':
       cloned.body = stripStageMeta(node.body)
+      break
+    case 'Param':
+      // Phase 20-10 — body + (optionally) sub-IR value.
+      cloned.body = stripStageMeta(node.body)
+      if (typeof node.value === 'object' && node.value !== null) {
+        cloned.value = stripStageMeta(node.value as PatternIR)
+      }
       break
     case 'Chunk':
       cloned.transform = stripStageMeta(node.transform)
@@ -504,9 +517,10 @@ describe('parseStrudel stages — PK12 dot-inclusive convention preserved (T-10.
   it('s("bd").fast(2).late(0.125).gain(0.5) — each tag.loc.start lands on its leading dot', () => {
     const code = 's("bd").fast(2).late(0.125).gain(0.5)'
     const ir = pipeline(code)
-    // Outermost tag is FX (gain). Walk down: FX → Late → Fast → Play.
-    expect(ir.tag).toBe('FX')
-    if (ir.tag !== 'FX') throw new Error('unreachable')
+    // Phase 20-10: outermost tag is now Param (gain). Walk down: Param →
+    // Late → Fast → Play. Loc convention unchanged (PK12 dot-inclusive).
+    expect(ir.tag).toBe('Param')
+    if (ir.tag !== 'Param') throw new Error('unreachable')
     expect(ir.loc?.[0]?.start).toBe(code.indexOf('.gain'))
 
     expect(ir.body.tag).toBe('Late')
@@ -549,9 +563,9 @@ describe('parseStrudel stages — userMethod alias-distinguished pairs (T-10.a, 
     expect((s as { userMethod?: string }).userMethod).toBe('sometimes')
   })
 
-  it('FX-from-gain has userMethod gain (not pan)', () => {
+  it('Param-from-gain has userMethod gain (not pan) — Phase 20-10 promotion', () => {
     const g = pipeline('s("bd").gain(0.5)')
-    expect(g.tag).toBe('FX')
+    expect(g.tag).toBe('Param')
     expect((g as { userMethod?: string }).userMethod).toBe('gain')
   })
 })

@@ -523,11 +523,13 @@ describe('parseStrudel', () => {
       if (right.tag === 'FX') {
         expect(right.name).toBe('pan')
         expect(right.params.pan).toBe(1)
-        // Right body is the transformed body — gain(0.5) wraps the body in FX.
-        expect(right.body.tag).toBe('FX')
-        if (right.body.tag === 'FX') {
-          expect(right.body.name).toBe('gain')
-          expect(right.body.params.gain).toBe(0.5)
+        // Right body is the transformed body — Phase 20-10 promoted gain to
+        // the Param tag. Inner pan(±1) tracks stay FX because .jux's
+        // desugar constructs them via IR.fx() directly (not via applyMethod).
+        expect(right.body.tag).toBe('Param')
+        if (right.body.tag === 'Param') {
+          expect(right.body.key).toBe('gain')
+          expect(right.body.value).toBe(0.5)
         }
       }
     }
