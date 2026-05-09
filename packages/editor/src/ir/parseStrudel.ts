@@ -441,18 +441,6 @@ function applyMethod(
       }
     }
 
-    case 'gain': {
-      const val = parseFloat(args.trim())
-      if (!isNaN(val)) return IR.fx('gain', { gain: val }, ir, tagMeta(method, callSiteRange))
-      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
-    }
-
-    case 'pan': {
-      const val = parseFloat(args.trim())
-      if (!isNaN(val)) return IR.fx('pan', { pan: val }, ir, tagMeta(method, callSiteRange))
-      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
-    }
-
     case 'chunk': {
       // Tier 4 (Phase 19-03 Task 09). `.chunk(n, transform)` desugars
       // (pattern.mjs:2569-2578):
@@ -654,7 +642,6 @@ function applyMethod(
     case 'crush':
     case 'distort':
     case 'vowel':
-    case 'speed':
     case 'begin':
     case 'end':
     case 'cut':
@@ -662,8 +649,7 @@ function applyMethod(
     case 'resonance':
     case 'lpf':
     case 'hpf': {
-      // FX group (14 arms collapse to one failure line — D-03 / P33 / PV37
-      // wrap covers all 14 in a single edit).
+      // FX group — 13 arms after Phase 20-10 migrated `speed` to Param.
       const val = parseFloat(args.trim())
       if (!isNaN(val)) return IR.fx(method, { [method]: val }, ir, tagMeta(method, callSiteRange))
       return wrapAsOpaque(ir, method, args, callSiteRange)
@@ -780,6 +766,28 @@ function applyMethod(
       // this unwrapped — confirmed Chesterton fence (existence check).
       return ir
 
+    case 's':
+    case 'n':
+    case 'note':
+    case 'bank':
+    case 'scale':
+    case 'color':
+    case 'gain':
+    case 'velocity':
+    case 'pan':
+    case 'speed': {
+      // Phase 20-10 — Param tag promotion. Whitelist closes the SEMANTICS
+      // gap that 20-04 left open for REPRESENTATION. PV37 still governs
+      // everything outside this whitelist (default arm wraps as opaque).
+      const isSampleKey = method === 's' || method === 'bank' || method === 'scale'
+      const parsed = parseParamArg(args, isSampleKey, baseOffset)
+      if (!parsed) {
+        // Unrecognised arg shape — preserve PV37 (wrap-never-drop, REPRESENTATION).
+        return wrapAsOpaque(ir, method, args, callSiteRange)
+      }
+      return IR.param(method, parsed.value, args, ir, tagMeta(method, callSiteRange))
+    }
+
     default:
       // Phase 20-04 T-04 / DV-06 (D-03 / P33 / PV37): unrecognised method —
       // wrap as opaque Code carrying the call site. PV37 wrap-never-drop;
@@ -854,6 +862,48 @@ function parseTransform(transformStr: string, defaultIr: PatternIR, baseOffset =
   }
 
   return defaultIr
+}
+
+/**
+ * Phase 20-10 — recognise the arg shape for a whitelisted Param method.
+ * Returns null when the shape doesn't match; caller wraps as opaque
+ * (preserves PV37). Shapes:
+ *   - literal-number:  gain(0.3) / pan(-0.5)         → { value: 0.3 }
+ *   - literal-string:  s("sawtooth") / bank("RolandTR909")  → { value: "sawtooth" }
+ *   - mini-pattern:    s("<bd cp>") / gain("0.3 0.7")  → { value: PatternIR (sub-IR) }
+ *
+ * Boundary: any quoted string with internal whitespace OR mini-syntax
+ * characters (`<`, `>`, `[`, `]`, `*`, `?`, `~`) goes to the mini-pattern
+ * path. Strudel runtime parses it as mini at that point too. Identifier-
+ * only quoted strings (`/^"[a-zA-Z0-9#_:-]*?"$/`) take the literal path.
+ *
+ * baseOffset threading: when a quoted string parses as mini, the inner
+ * string's offset (for click-to-source on inner atoms — PV25 / PV36)
+ * is `argsOffsetAbs + args.indexOf('"') + 1`. Same convention parseRoot
+ * uses for `s(...)` at root (parseStrudel.ts:223-224).
+ */
+function parseParamArg(
+  args: string,
+  isSampleKey: boolean,
+  argsOffsetAbs: number,
+): { value: string | number | PatternIR } | null {
+  const trimmed = args.trim()
+  // 1. literal-number
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return { value: parseFloat(trimmed) }
+  }
+  // 2. literal-string (identifier-only — no spaces, no mini-syntax)
+  const strMatch = trimmed.match(/^"([a-zA-Z0-9#_:-]*?)"$/)
+  if (strMatch) return { value: strMatch[1] }
+  // 3. mini-pattern (anything else inside quotes)
+  const miniMatch = trimmed.match(/^"([^"]*)"$/)
+  if (miniMatch) {
+    const innerStr = miniMatch[1]
+    const quoteIdx = args.indexOf('"')
+    const innerOffsetAbs = quoteIdx >= 0 ? argsOffsetAbs + quoteIdx + 1 : argsOffsetAbs
+    return { value: parseMini(innerStr, isSampleKey, innerOffsetAbs) }
+  }
+  return null   // unknown shape — caller wraps as opaque
 }
 
 /**
