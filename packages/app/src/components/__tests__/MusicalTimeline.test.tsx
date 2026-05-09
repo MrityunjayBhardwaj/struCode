@@ -1449,3 +1449,126 @@ describe('20-12 β-5 — hover tooltip extension', () => {
     expect(t).not.toMatch(FORBIDDEN_VOCABULARY)
   })
 })
+
+// ─── Phase 20-12 γ-1 — collapse persistence (round-trip across remount) ────
+
+describe('20-12 γ-1 — collapse persistence', () => {
+  it('chevron click writes { collapsed: true } to trackMeta store', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma1.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    expect(
+      mockGetTrackMeta('file:gamma1.strudel', 'd1').collapsed,
+    ).toBeUndefined()
+
+    const chevron = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    await act(async () => {
+      chevron!.click()
+    })
+
+    expect(
+      mockGetTrackMeta('file:gamma1.strudel', 'd1').collapsed,
+    ).toBe(true)
+  })
+
+  it('reload-equivalent (re-mount with same fileId+trackId) restores collapsed state', async () => {
+    // Simulate prior session: store already has collapsed=true persisted.
+    mockSetTrackMeta('file:gamma1.strudel', 'd1', { collapsed: true })
+
+    const { container, unmount } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma1.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+
+    const chevron = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevron!.getAttribute('data-collapsed')).toBe('true')
+    expect(chevron!.getAttribute('aria-expanded')).toBe('false')
+
+    // Re-mount (reload-equivalent): unmount + render fresh + republish.
+    unmount()
+    const { container: c2 } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma1.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevron2 = c2.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevron2!.getAttribute('data-collapsed')).toBe('true')
+  })
+
+  it('switch fileId then back: each file has independent collapsed state', async () => {
+    // File A collapses d1; File B does not touch d1.
+    mockSetTrackMeta('file:A.strudel', 'd1', { collapsed: true })
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    // Mount on file B — its d1 must read uncollapsed (per-file scoping).
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:B.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevronB = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevronB!.getAttribute('data-collapsed')).toBe('false')
+
+    // Switch to file A — d1 must now read collapsed.
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:A.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevronA = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevronA!.getAttribute('data-collapsed')).toBe('true')
+
+    // Switch back to file B — still uncollapsed (no leakage).
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:B.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevronB2 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevronB2!.getAttribute('data-collapsed')).toBe('false')
+  })
+})
