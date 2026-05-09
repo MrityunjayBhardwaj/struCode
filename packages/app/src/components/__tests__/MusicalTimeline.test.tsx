@@ -135,6 +135,8 @@ vi.mock('@stave/editor', async () => {
     revealLineInFile: (source: string, line: number) =>
       revealLineInFileMock(source, line),
     useTrackMeta,
+    getTrackMeta: mockGetTrackMeta,
+    subscribeToTrackMeta: mockSubscribeToTrackMeta,
   }
 })
 

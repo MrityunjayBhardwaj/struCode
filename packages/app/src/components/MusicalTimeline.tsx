@@ -34,15 +34,18 @@
 'use client'
 
 import * as React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type IRSnapshot,
   type IREvent,
   type HapStream,
   type HapEvent,
+  type PatternIR,
   type TrackMeta,
   getIRSnapshot,
+  getTrackMeta,
   subscribeIRSnapshot,
+  subscribeToTrackMeta,
   revealLineInFile,
   useTrackMeta,
 } from '@stave/editor'
@@ -56,6 +59,11 @@ import {
   cpsToBpm,
 } from './musicalTimeline/timeAxis'
 import { paletteForTrack, trackIndexOf } from './musicalTimeline/colors'
+import {
+  layoutTrackRows,
+  type TrackLayout,
+  type LeafLayout,
+} from './musicalTimeline/layoutTrackRows'
 import { Ruler } from './musicalTimeline/Ruler'
 import {
   EMPTY_STATE_COPY,
@@ -127,6 +135,64 @@ function formatNoteTooltip(event: IREvent, fallbackTrackId: string): string {
   return [sample, noteSegment, barBeat, velocitySegment]
     .filter((s): s is string => typeof s === 'string' && s.length > 0)
     .join(' · ')
+}
+
+/**
+ * Phase 20-12 β-2 — Walk an IR tree and collect every `Track` node by trackId.
+ *
+ * Used by MusicalTimeline to map each row's trackId to its body subtree, which
+ * `layoutTrackRows` then flattens into leaf voices for sub-row expansion.
+ *
+ * The walk is shallow-recursive — it descends through every PatternIR child
+ * (mirroring `irChildren` in irProjection.ts) and records the body of every
+ * Track tag it encounters. Duplicate trackIds (which 20-11 γ-1 forbids but
+ * which the parser may still emit on edge cases) keep the FIRST occurrence;
+ * a later duplicate doesn't override since the row layout's identity is the
+ * stable trackId, and over-writing would race the cached snapshot identity.
+ */
+function collectTrackBodies(node: PatternIR): Map<string, PatternIR> {
+  const out = new Map<string, PatternIR>()
+  const visit = (n: PatternIR): void => {
+    if (n.tag === 'Track') {
+      if (!out.has(n.trackId)) out.set(n.trackId, n.body)
+      visit(n.body)
+      return
+    }
+    // Single-body wrappers + multi-child carriers — descend per the projection
+    // shape used by the inspector (irChildren). Defensive: rather than
+    // duplicating that switch, use property checks.
+    const anyN = n as unknown as Record<string, unknown>
+    if (anyN.body && typeof anyN.body === 'object' && (anyN.body as PatternIR).tag) {
+      visit(anyN.body as PatternIR)
+    }
+    if (Array.isArray(anyN.tracks)) {
+      for (const c of anyN.tracks as PatternIR[]) visit(c)
+    }
+    if (Array.isArray(anyN.children)) {
+      for (const c of anyN.children as PatternIR[]) visit(c)
+    }
+    if (anyN.then && typeof anyN.then === 'object' && (anyN.then as PatternIR).tag) {
+      visit(anyN.then as PatternIR)
+    }
+    if (anyN.else_ && typeof anyN.else_ === 'object' && (anyN.else_ as PatternIR).tag) {
+      visit(anyN.else_ as PatternIR)
+    }
+    if (anyN.transform && typeof anyN.transform === 'object' && (anyN.transform as PatternIR).tag) {
+      visit(anyN.transform as PatternIR)
+    }
+    if (anyN.selector && typeof anyN.selector === 'object' && (anyN.selector as PatternIR).tag) {
+      visit(anyN.selector as PatternIR)
+    }
+    if (Array.isArray(anyN.lookup)) {
+      for (const c of anyN.lookup as PatternIR[]) visit(c)
+    }
+    if (anyN.via && typeof anyN.via === 'object') {
+      const inner = (anyN.via as { inner?: PatternIR }).inner
+      if (inner) visit(inner)
+    }
+  }
+  visit(node)
+  return out
 }
 
 /**
@@ -515,6 +581,50 @@ export function MusicalTimeline(
 
   const fileId = snapshot?.source
 
+  // ── Phase 20-12 β-2 — trackMeta subscription for collapsed-state reads ─
+  // The parent reads each track's `collapsed` flag to drive layoutTrackRows.
+  // useTrackMeta is per-(fileId, trackId) and lives inside TrackHeaderRow;
+  // here we subscribe ONCE to the file's trackMeta channel and use a tick
+  // counter to re-render on any meta change. `getTrackMeta` is then called
+  // synchronously per-track during layout — cheap (a Y.Map lookup).
+  const [trackMetaTick, setTrackMetaTick] = useState(0)
+  useEffect(() => {
+    if (!fileId) return
+    return subscribeToTrackMeta(fileId, () => {
+      setTrackMetaTick((t) => t + 1)
+    })
+  }, [fileId])
+  const collapsedFor = useCallback(
+    (trackId: string): boolean => {
+      if (!fileId) return false
+      return getTrackMeta(fileId, trackId).collapsed ?? false
+    },
+    // trackMetaTick is intentionally in deps — refresh the closure when the
+    // store fires, so consumers reading collapsedFor see the latest values.
+    [fileId, trackMetaTick],
+  )
+
+  // ── Phase 20-12 β-2 — Layout (collapsed = ROW; expanded = N * SUB_ROW) ─
+  const bodyByTrackId = useMemo<Map<string, PatternIR>>(() => {
+    if (!snapshot?.ir) return new Map()
+    return collectTrackBodies(snapshot.ir)
+  }, [snapshot])
+
+  const layoutInputs = useMemo(
+    () =>
+      orderedTracks.map(({ trackId, events }) => ({
+        trackId,
+        body: bodyByTrackId.get(trackId),
+        events,
+      })),
+    [orderedTracks, bodyByTrackId],
+  )
+
+  const layout = useMemo(
+    () => layoutTrackRows(layoutInputs, collapsedFor),
+    [layoutInputs, collapsedFor],
+  )
+
   const playheadX = cycleToPlayheadX(currentCycle, { gridContentWidth })
 
   // Click-to-source — single contract per PV36 / D-02. evt.loc[0] is the
@@ -580,7 +690,10 @@ export function MusicalTimeline(
               {EMPTY_STATE_COPY}
             </div>
           ) : (
-            orderedTracks.map(({ trackId, events }, slotIndex) => {
+            layout.tracks.map((trackLayout) => {
+              const trackId = trackLayout.trackId
+              const events =
+                orderedTracks.find((t) => t.trackId === trackId)?.events ?? []
               const firstEventSample = events[0]?.s ?? undefined
               const autoColor = paletteForTrack(
                 trackIndexOf(trackId),
@@ -592,8 +705,8 @@ export function MusicalTimeline(
                   fileId={fileId}
                   trackId={trackId}
                   autoColor={autoColor}
-                  top={slotIndex * ROW_HEIGHT}
-                  height={ROW_HEIGHT}
+                  top={trackLayout.top}
+                  height={trackLayout.height}
                   onOpenSwatch={handleOpenSwatch}
                 />
               )
@@ -619,37 +732,59 @@ export function MusicalTimeline(
                 />
               )
             })}
-          {/* Track rows + note blocks */}
-          {orderedTracks.map(({ trackId, events }, slotIndex) => (
-            <div
-              key={trackId}
-              data-musical-timeline-track-row={trackId}
-              style={{ ...styles.row, top: slotIndex * ROW_HEIGHT }}
-            >
-              {events.map((evt, i) => {
-                const { x, w } = eventToRect(evt, { gridContentWidth })
-                const isActive = activeKeys.has(`${trackId}-${i}`)
-                return (
-                  <div
-                    key={`${trackId}-${i}`}
-                    data-musical-timeline-note={trackId}
-                    data-musical-timeline-active={isActive ? 'true' : undefined}
-                    title={formatNoteTooltip(evt, trackId)}
-                    onClick={() => handleNoteClick(evt)}
-                    style={{
-                      ...styles.noteBlock,
-                      left: x,
-                      width: w,
-                      background:
-                        evt.color ??
-                        paletteForTrack(trackIndexOf(trackId), evt.s ?? undefined),
-                      ...(isActive ? styles.noteBlockActive : null),
-                    }}
-                  />
-                )
-              })}
-            </div>
-          ))}
+          {/* Track rows + note blocks (β-2: layout-driven; collapsed rows
+              get a single ROW_HEIGHT band, expanded rows render N
+              SUB_ROW_HEIGHT sub-rows, one per leaf voice from
+              flattenLeafVoices). */}
+          {layout.tracks.map((trackLayout) => {
+            const trackId = trackLayout.trackId
+            const events =
+              orderedTracks.find((t) => t.trackId === trackId)?.events ?? []
+            const trackOverrideColor = (() => {
+              if (!fileId) return undefined
+              const meta: TrackMeta = getTrackMeta(fileId, trackId)
+              return meta.color
+            })()
+            return (
+              <div
+                key={trackId}
+                data-musical-timeline-track-row={trackId}
+                data-track-collapsed={trackLayout.collapsed ? 'true' : 'false'}
+                style={{
+                  ...styles.row,
+                  top: trackLayout.top,
+                  height: trackLayout.height,
+                }}
+              >
+                {events.map((evt, i) => {
+                  const { x, w } = eventToRect(evt, { gridContentWidth })
+                  const isActive = activeKeys.has(`${trackId}-${i}`)
+                  return (
+                    <div
+                      key={`${trackId}-${i}`}
+                      data-musical-timeline-note={trackId}
+                      data-musical-timeline-active={isActive ? 'true' : undefined}
+                      title={formatNoteTooltip(evt, trackId)}
+                      onClick={() => handleNoteClick(evt)}
+                      style={{
+                        ...styles.noteBlock,
+                        left: x,
+                        width: w,
+                        background:
+                          evt.color ??
+                          trackOverrideColor ??
+                          paletteForTrack(
+                            trackIndexOf(trackId),
+                            evt.s ?? undefined,
+                          ),
+                        ...(isActive ? styles.noteBlockActive : null),
+                      }}
+                    />
+                  )
+                })}
+              </div>
+            )
+          })}
           {/* Playhead — fixed-position marker, pointer-events: none so it
               doesn't intercept click-to-source on note blocks behind it. */}
           <div
@@ -753,6 +888,9 @@ const styles = {
     pointerEvents: 'none' as const,
   },
   row: {
+    // height is set per-row by β-2 layoutTrackRows (collapsed = ROW_HEIGHT;
+    // expanded = N * SUB_ROW_HEIGHT). The default below is a defensive
+    // fallback used when layout supplies no override (shouldn't happen).
     position: 'absolute' as const,
     left: 0,
     right: 0,
