@@ -710,6 +710,109 @@ export function subscribeToZoneOverrides(fileId: string, cb: Subscriber): () => 
   }
 }
 
+// ── Phase 20-12 α-2 — trackMeta (D-01/D-02): per-file Y.Map<trackId, TrackMeta> ──
+//
+// Mirrors zoneOverrides verbatim (RESEARCH §A.2 / §A.4). Track-chrome state
+// (custom palette swatch + collapse toggle) lives per-file so a kick's color
+// in song A doesn't bleed into song B; per-file matches DAW semantics.
+//
+// Storage shape inside each file's Y.Map:
+//   trackMeta: Y.Map<trackId, { color?: string; collapsed?: boolean }>
+//
+// Observer wires by REFERENCE-IDENTITY (Set<fileId>), NOT a boolean
+// (feedback_observer_wire_race.md). resetFileStore + tests reset clear the
+// Set so a fresh Y.Doc gets a fresh observer (mirrors :722-723 idiom).
+
+/**
+ * Phase 20-12 D-01/D-02 — per-track UI metadata persisted in the file's PM
+ * Yjs doc. Mirrors ZoneOverride shape; one record per trackId.
+ *  - `color`: user-picked from TRACK_PALETTE_32 (overrides paletteForTrack auto)
+ *  - `collapsed`: chevron state (default = expanded; users notice collapse by absence)
+ */
+export interface TrackMeta {
+  color?: string
+  collapsed?: boolean
+}
+
+const trackMetaSubscribers = new Map<string, Set<Subscriber>>()
+const wiredTrackMetaObservers = new Set<string>()
+
+function ensureTrackMetaMap(fileId: string): Y.Map<unknown> | null {
+  const filesMap = getFilesMap()
+  const fileMap = filesMap.get(fileId) as Y.Map<unknown> | undefined
+  if (!fileMap) return null
+  let meta = fileMap.get('trackMeta') as Y.Map<unknown> | undefined
+  if (!meta) {
+    meta = new Y.Map()
+    fileMap.set('trackMeta', meta)
+  }
+  // Wire observer once per file. observeDeep matches the zoneOverrides
+  // neighbour idiom (RESEARCH §A.5) and is forgiving for any future
+  // nested-map shape; for the current plain-object TrackMeta records the
+  // whole-record `meta.set(trackId, merged)` write at setTrackMeta also
+  // satisfies bare `.observe`. Defensive on both axes.
+  if (!wiredTrackMetaObservers.has(fileId)) {
+    meta.observeDeep(() => {
+      const subs = trackMetaSubscribers.get(fileId)
+      if (subs) for (const cb of subs) cb()
+    })
+    wiredTrackMetaObservers.add(fileId)
+  }
+  return meta
+}
+
+export function getTrackMeta(fileId: string, trackId: string): TrackMeta {
+  ensureDoc()
+  const meta = ensureTrackMetaMap(fileId)
+  if (!meta) return {}
+  return ((meta.get(trackId) as TrackMeta | undefined) ?? {})
+}
+
+/**
+ * Set per-track metadata. Merge-patch semantics: the partial shallow-merges
+ * onto the existing record. When BOTH fields end up undefined the key is
+ * deleted (cleanup keeps the Y.Map small for files where the user toggles
+ * back to default state).
+ */
+export function setTrackMeta(
+  fileId: string,
+  trackId: string,
+  partial: Partial<TrackMeta>,
+): void {
+  ensureDoc()
+  const meta = ensureTrackMetaMap(fileId)
+  if (!meta) return
+  const doc = ensureDoc()
+  doc.transact(() => {
+    const existing = (meta.get(trackId) as TrackMeta | undefined) ?? {}
+    const merged: TrackMeta = { ...existing, ...partial }
+    if (merged.color === undefined && merged.collapsed === undefined) {
+      meta.delete(trackId)
+    } else {
+      meta.set(trackId, merged)
+    }
+  }, STRUCT_ORIGIN)
+}
+
+/**
+ * Subscribe to ANY trackMeta change within a file. Fires after each committed
+ * mutation. Returns an unsubscribe.
+ */
+export function subscribeToTrackMeta(fileId: string, cb: Subscriber): () => void {
+  ensureDoc()
+  ensureTrackMetaMap(fileId)
+  let set = trackMetaSubscribers.get(fileId)
+  if (!set) {
+    set = new Set()
+    trackMetaSubscribers.set(fileId, set)
+  }
+  set.add(cb)
+  return () => {
+    set!.delete(cb)
+    if (set!.size === 0) trackMetaSubscribers.delete(fileId)
+  }
+}
+
 export function resetFileStore(): void {
   for (const [id] of textObservers) {
     unwireTextObserver(id)
@@ -721,6 +824,12 @@ export function resetFileStore(): void {
   folderOrderObserverWired = false
   zoneOverrideSubscribers.clear()
   wiredZoneObservers.clear()
+  // Phase 20-12 α-2 — clear by REFERENCE (Set<fileId>), mirrors :723.
+  // Without this, switchProject swaps Y.Doc but the Set keeps the fileId →
+  // observer never re-wires on the new map → user's color/collapse writes
+  // would silently no-op (feedback_observer_wire_race.md).
+  trackMetaSubscribers.clear()
+  wiredTrackMetaObservers.clear()
   // Undo manager was bound to the previous Y.Doc — drop it so the next
   // access rebuilds against the new doc.
   resetUndoManager()
@@ -747,6 +856,8 @@ export function __resetWorkspaceFilesForTests(): void {
   folderOrderSubscribers.clear()
   zoneOverrideSubscribers.clear()
   wiredZoneObservers.clear()
+  trackMetaSubscribers.clear()
+  wiredTrackMetaObservers.clear()
   wiredFilesMap = null
   folderOrderObserverWired = false
   destroyProjectDoc()
