@@ -67,6 +67,14 @@ export type PatternIR =
   | { tag: 'Shuffle';  n: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 (Phase 19-04 T-05) — signal.mjs:392 shuffle(n) = _rearrangeWith(randrun(n), n, pat); per-cycle permutation of n slices, each played exactly once per cycle.
   | { tag: 'Scramble'; n: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 (Phase 19-04 T-05) — signal.mjs:405 scramble(n) = _rearrangeWith(_irand(n)._segment(n), n, pat); per-slot independent samples (with replacement) of n slices.
   | { tag: 'Chop';   n: number; body: PatternIR; loc?: SourceLocation[]; userMethod?: string }  // Tier 4 (Phase 19-04 T-08) — pattern.mjs:3291-3306 chop(n) = pat.squeezeBind(o => sequence(slice_objects.map(s => merge(o, s)))). Per-event sample-range slicing — each source event becomes n sub-events with progressive begin/end controls. D-04: pattern-level only; audio-buffer slicing deferred to phase 22 (axis 5).
+  | { tag: 'Param';
+      key: string;                              // 's' | 'n' | 'note' | 'gain' | 'velocity' | 'color' | 'pan' | 'speed' | 'bank' | 'scale'
+      value: string | number | PatternIR;       // literal OR pattern-arg sub-IR (D-03)
+      rawArgs: string;                          // RAW (untrimmed) — round-trip byte-fidelity per CONTEXT D-03 / 20-04 D-02
+      body: PatternIR;                          // receiver
+      loc?: SourceLocation[];                   // call-site range (.method(args))
+      userMethod?: string;                      // user-typed token (PV32 — projection short-circuits on this; redundant w/ key for v1 but kept stable for future aliases)
+    }   // Phase 20-10 — Param tag (semantics-completeness pair-of PV37)
   | { tag: 'Loop';   body: PatternIR; loc?: SourceLocation[]; userMethod?: string }
   | {
       tag: 'Code'
@@ -149,6 +157,14 @@ export const IR = {
     attachMeta({ tag: 'When', gate, body }, meta),
   fx: (name: string, params: Record<string, number | string>, body: PatternIR, meta?: TagMeta): PatternIR =>
     attachMeta({ tag: 'FX', name, params, body }, meta),
+  param: (
+    key: string,
+    value: string | number | PatternIR,
+    rawArgs: string,
+    body: PatternIR,
+    meta?: TagMeta,
+  ): PatternIR =>
+    attachMeta({ tag: 'Param', key, value, rawArgs, body }, meta),
   ramp: (param: string, from: number, to: number, cycles: number, body: PatternIR, meta?: TagMeta): PatternIR =>
     attachMeta({ tag: 'Ramp', param, from, to, cycles, body }, meta),
   fast: (factor: number, body: PatternIR, meta?: TagMeta): PatternIR =>
