@@ -1067,3 +1067,124 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
     expect(revealLineInFileMock).toHaveBeenCalledWith('fixture.strudel', 1)
   })
 })
+
+// Phase 20-12 α-4 — silent-prefix two-cycle geometry contract (D-04).
+//
+// Rule (CONTEXT D-04 rev2): silent cycles render as full-width empty cells.
+// Cycle-column geometry is invariant to event count — `pxPerCycle = width /
+// WINDOW_CYCLES` (timeAxis.ts:73). A cycle with zero events still occupies
+// the same horizontal slot as a cycle with events.
+//
+// Two-cycle fixture: events present in cycle 1 only (cycle 0 silent). The
+// `cat(silence, s("bd"))` shape from CONTEXT D-04 reaches MusicalTimeline as
+// 4 events at begins 1.0, 1.25, 1.5, 1.75 (cycle 1 stretched across the
+// whole cycle) and zero events in [0, 1). β-2's sub-row layout helper must
+// not introduce an event-count-derived width or this regression fails fast.
+describe('20-12 α-4 — silent-prefix geometry contract (D-04)', () => {
+  it('cycle 0 has zero event blocks; cycle 1 events render at expected x positions', async () => {
+    const { container } = render(<MusicalTimeline {...defaultProps()} />)
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            // Cycle 1 (silent prefix in cycle 0): bd*4 across the second cycle.
+            evt({ trackId: 'bd', s: 'bd', begin: 1.0, end: 1.05 }),
+            evt({ trackId: 'bd', s: 'bd', begin: 1.25, end: 1.30 }),
+            evt({ trackId: 'bd', s: 'bd', begin: 1.5, end: 1.55 }),
+            evt({ trackId: 'bd', s: 'bd', begin: 1.75, end: 1.80 }),
+          ],
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const blocks = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-musical-timeline-note]'),
+    )
+    // 4 events total — all in cycle 1.
+    expect(blocks).toHaveLength(4)
+    const xs = blocks.map((b) => parseFloat(b.style.left.replace('px', '')))
+    // pxPerCycle = 800 / 2 = 400. Cycle 1 starts at x=400.
+    // Cycle 0 is empty: NO blocks should land in [0, 400).
+    expect(xs.every((x) => x >= 400)).toBe(true)
+    // Beats 1.0, 1.25, 1.5, 1.75 → x ≈ 400, 500, 600, 700.
+    expect(Math.round(xs[0])).toBe(400)
+    expect(Math.round(xs[1])).toBe(500)
+    expect(Math.round(xs[2])).toBe(600)
+    expect(Math.round(xs[3])).toBe(700)
+  })
+
+  it('bar lines are drawn at cycle boundaries regardless of event count', async () => {
+    // Geometry invariance: WINDOW_CYCLES = 2 → 3 bar-line rules at left=0,
+    // pxPerCycle, 2*pxPerCycle. Holds whether cycle 0 has events or not.
+    const { container } = render(<MusicalTimeline {...defaultProps()} />)
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'bd', s: 'bd', begin: 1.0, end: 1.05 }),
+          ],
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const barLines = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-musical-timeline-bar-line]'),
+    )
+    // WINDOW_CYCLES + 1 (start, mid, end) bar lines. Implementation may
+    // emit either WINDOW_CYCLES or WINDOW_CYCLES + 1; assert "at least
+    // WINDOW_CYCLES" so this regression catches geometry collapse, not
+    // implementation-detail count.
+    expect(barLines.length).toBeGreaterThanOrEqual(2)
+    // Bar-line at index 0 starts at left=0; bar-line at index 1 must be
+    // at pxPerCycle = 400. The cycle-column slot exists even though
+    // cycle 0 has zero events.
+    const lefts = barLines.map((bl) => parseFloat(bl.style.left.replace('px', '')))
+    // First bar at left=0 (cycle boundary 0).
+    expect(Math.round(lefts[0])).toBe(0)
+    // Mid bar at left=400 (cycle 1 boundary).
+    expect(Math.round(lefts[1])).toBe(400)
+  })
+
+  it('cycle 0 silence + cycle 1 events: cycle-column widths are equal (event-count invariance)', async () => {
+    // Probe: render two snapshots — one with events ONLY in cycle 0, one
+    // with events ONLY in cycle 1. Each event's pxPerCycle = 800 / 2 = 400.
+    // The same begin offset within its cycle must map to the same column-
+    // relative position. (eventToRect is the geometry function; this test
+    // verifies the rendered output reflects it under MusicalTimeline.)
+    const { container, rerender } = render(<MusicalTimeline {...defaultProps()} />)
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd', s: 'bd', begin: 0, end: 0.05 })],
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const blockCycle0 = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    const x0 = parseFloat(blockCycle0!.style.left.replace('px', ''))
+    expect(Math.round(x0)).toBe(0)
+
+    rerender(<MusicalTimeline {...defaultProps()} />)
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd', s: 'bd', begin: 1, end: 1.05 })],
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const blockCycle1 = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    const x1 = parseFloat(blockCycle1!.style.left.replace('px', ''))
+    // Distance from cycle 1 start to event = 0; distance from cycle 0 start
+    // to event = 0. Therefore x1 - x0 = pxPerCycle = 400.
+    expect(Math.round(x1 - x0)).toBe(400)
+  })
+})
