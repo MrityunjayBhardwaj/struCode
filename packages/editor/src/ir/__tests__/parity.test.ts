@@ -2220,3 +2220,43 @@ describe('20-10 wave β — Param round-trip byte-fidelity', () => {
     expect(toStrudel(ir2)).toBe(code)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 wave γ — issue #108 user fixture (narrow) round-trip (PLAN §5 γ-1).
+//
+// Narrow fixture per γ-1 scope decision. The full multi-line #108 fixture
+// CANNOT round-trip byte-equal because parseStrudel lowers several surface
+// forms structurally and toStrudel re-emits the lowered shape:
+//   - Mini-shorthand `*N` at root → Fast(N, ...) → re-emits as `.fast(N)`.
+//   - Bracketed mini `[~ bd]` at root → grouped sub-tree → re-emits with
+//     different bracket / spacing shape.
+//   - Nested angle-with-brackets `<g2 [g2 eb2]>` at root → Cycle/Stack/Seq
+//     nodes with no `rawMini` field → re-emits semantically equivalent but
+//     byte-different.
+//   - `$:` block syntax → parseRoot splits and re-roots into `stack(...)` →
+//     re-emits as a single `stack(\n  ..., ...\n)` call (loses `$:` lines).
+// All four are PRE-EXISTING parser/printer asymmetries (not 20-10
+// regressions). They surfaced when 20-10 wave-γ tried to round-trip the
+// full #108 fixture and are tracked by issue #109
+// (https://github.com/MrityunjayBhardwaj/stave-code/issues/109).
+//
+// γ-1 here pins what 20-10 explicitly delivers: Param + PV37 Code-with-via
+// cooperation through chained methods. The fixture exercises:
+//   - Param-whitelisted methods (.s, .gain) — typed Param IR tag.
+//   - Non-whitelisted methods (.lpf, .release, .viz) — Code-with-via wrap
+//     (PV37 — opaque-fragment, semantics-deferred).
+//   - Simple sequence root-form notes (no `*N`, no `[]`, no `<>`, no `$:`).
+//   - Two parallel voices via an explicit `stack(...)` so the multi-voice
+//     compositional wiring is exercised without triggering `$:` lowering.
+// ---------------------------------------------------------------------------
+
+describe('20-10 wave γ — issue #108 user fixture (narrow) round-trip', () => {
+  const fixture = `stack(
+  note("c4 e4 g4").s("sawtooth").gain(0.3).lpf(2400).release(0.12).viz("pianoroll"),
+  note("c4 e4").s("sine").gain(0.15).release(0.3)
+)`
+
+  it('round-trips byte-equal — Param + PV37 Code-with-via cooperation through chained methods', () => {
+    expect(toStrudel(parseStrudel(fixture))).toBe(fixture)
+  })
+})
