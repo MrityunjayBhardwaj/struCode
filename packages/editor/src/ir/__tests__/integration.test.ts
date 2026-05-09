@@ -1198,7 +1198,7 @@ describe('propagate', () => {
 // for tests that exercise multi-cycle alternation (`<bd cp>` / `<bd <hh
 // cp>>`). Loc / irNodeId imports are local to the spread-mechanics tests.
 // ---------------------------------------------------------------------------
-import { collectCycles } from './parity.test'
+import { collectCycles } from './helpers/collectCycles'
 
 describe('20-10 wave γ — Param sub-IR slot-table semantics', () => {
   // 1. Event count, not duplication (RESEARCH G2.3 #5 / Trap 10).

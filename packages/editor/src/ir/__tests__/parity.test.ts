@@ -175,29 +175,11 @@ export function normalizeStrudelPan(e: IREvent): IREvent {
   return e
 }
 
-// --------------------------------------------------------------------------
-// Multi-cycle collect — loops per-cycle calls and concatenates events.
-// Lives inline in the test for Wave 1; promoted to ir/collect.ts in
-// Task 19-03-08 when Chunk semantics need it for production callers.
-// --------------------------------------------------------------------------
-export function collectCycles(
-  ir: PatternIR,
-  startCycle: number,
-  endCycle: number,
-): IREvent[] {
-  const events: IREvent[] = []
-  for (let c = startCycle; c < endCycle; c++) {
-    const ctx: Partial<CollectContext> = {
-      cycle: c,
-      time: c,
-      begin: c,
-      end: c + 1,
-      duration: 1,
-    }
-    events.push(...collect(ir, ctx))
-  }
-  return events
-}
+// Multi-cycle collect — extracted to ./helpers/collectCycles.ts so that
+// other test files can import it without side-effect-registering this
+// suite's describe blocks (vitest treats imported test files as part of
+// the importer's suite, doubling the test surface).
+import { collectCycles } from './helpers/collectCycles'
 
 // --------------------------------------------------------------------------
 // Diff helper — sort both sides; assert lengths; per pair assert each
