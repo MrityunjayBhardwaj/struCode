@@ -44,6 +44,7 @@ import {
   type TrackMeta,
   getIRSnapshot,
   getTrackMeta,
+  setTrackMeta,
   subscribeIRSnapshot,
   subscribeToTrackMeta,
   revealLineInFile,
@@ -65,6 +66,7 @@ import {
   type LeafLayout,
 } from './musicalTimeline/layoutTrackRows'
 import { extractPitch, pitchToY } from './musicalTimeline/pitch'
+import { TrackSwatchPopover } from './TrackSwatchPopover'
 import { Ruler } from './musicalTimeline/Ruler'
 import {
   EMPTY_STATE_COPY,
@@ -886,6 +888,34 @@ export function MusicalTimeline(
           />
         </div>
       </div>
+      {/* β-6: Track swatch popover. Single-instance at parent level (one
+          popover open at a time). Anchor + currentColor read from the
+          per-track meta resolved via getTrackMeta (synchronous; the
+          parent already subscribed to the file's trackMeta channel via
+          the trackMetaTick effect above so changes propagate). */}
+      {swatchAnchor && fileId && (
+        <TrackSwatchPopover
+          anchorRect={swatchAnchor.rect}
+          currentColor={
+            getTrackMeta(fileId, swatchAnchor.trackId).color ??
+            paletteForTrack(
+              trackIndexOf(swatchAnchor.trackId),
+              orderedTracks.find((t) => t.trackId === swatchAnchor.trackId)
+                ?.events[0]?.s ?? undefined,
+            )
+          }
+          onPick={(color) => {
+            // Direct setTrackMeta write — bypasses useTrackMeta to avoid the
+            // hook-rules dance of conditional subscription. The parent
+            // already subscribes via trackMetaTick effect, so the write
+            // propagates back to TrackHeaderRow without an extra hop. Trap
+            // #5 (write storm) is mitigated by binding to onClick (not
+            // mousemove) inside TrackSwatchPopover.
+            setTrackMeta(fileId, swatchAnchor.trackId, { color })
+          }}
+          onClose={() => setSwatchAnchor(null)}
+        />
+      )}
     </div>
   )
 }
