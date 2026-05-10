@@ -605,7 +605,16 @@ export function MusicalTimeline(
       // Disambig within the irNodeId-group via FP-tolerant begin compare
       // (RESEARCH DEC-NEW-2). hap-side begin via Number() to unwrap
       // Strudel's Fraction objects.
-      const hapBegin = Number(event.hap?.whole?.begin ?? 0)
+      const hapBeginRaw = Number(event.hap?.whole?.begin ?? 0)
+      // Phase 20-12 — events are collected over [0, WINDOW_CYCLES) via
+      // collectCycles, but Strudel's runtime hap stream emits begin as
+      // a monotonically-increasing cycle index (cycle 2 → begin=2.x,
+      // cycle 3 → 3.x, ...). When the playhead loops back to cycle 0,
+      // hapBegin keeps climbing while event.begin stays in [0, 2). To
+      // keep highlighting working past the first window pass, fold
+      // hapBegin into the visible window via modulo. (`% N` on negative
+      // is undefined in JS for our use; hap begins are non-negative.)
+      const hapBegin = hapBeginRaw % WINDOW_CYCLES
 
       // Find the (trackId, eventIndex) row that fired. Read latest tracks
       // through the ref so the handler always sees the current snapshot.
