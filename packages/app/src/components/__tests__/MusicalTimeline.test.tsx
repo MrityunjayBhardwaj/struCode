@@ -138,6 +138,10 @@ vi.mock('@stave/editor', async () => {
     getTrackMeta: mockGetTrackMeta,
     setTrackMeta: mockSetTrackMeta,
     subscribeToTrackMeta: mockSubscribeToTrackMeta,
+    // Phase 20-12 wave-δ — sub-row height setting. Tests don't exercise
+    // the slider, so a static getter + a no-op subscribe suffice.
+    getMusicalTimelineSubRowHeight: () => 18,
+    onMusicalTimelineSubRowHeightChange: () => () => {},
   }
 })
 

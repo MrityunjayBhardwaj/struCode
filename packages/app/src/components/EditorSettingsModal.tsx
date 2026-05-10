@@ -10,6 +10,8 @@ import {
   setEditorUiIconSize,
   getInlineVizActionSize,
   setInlineVizActionSize,
+  getMusicalTimelineSubRowHeight,
+  setMusicalTimelineSubRowHeight,
   getEditorTheme,
   setEditorTheme,
   type EditorTheme,
@@ -31,6 +33,7 @@ export function EditorSettingsModal({ open, onClose }: Props) {
   const [minimap, setMinimap] = useState(false);
   const [iconSize, setIconSize] = useState(25);
   const [vizActionSize, setVizActionSize] = useState(11);
+  const [subRowHeight, setSubRowHeight] = useState(18);
   const [theme, setTheme] = useState<EditorTheme>("dark");
 
   useEffect(() => {
@@ -39,6 +42,7 @@ export function EditorSettingsModal({ open, onClose }: Props) {
     setMinimap(getEditorMinimap());
     setIconSize(getEditorUiIconSize());
     setVizActionSize(getInlineVizActionSize());
+    setSubRowHeight(getMusicalTimelineSubRowHeight());
     setTheme(getEditorTheme());
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
@@ -109,6 +113,21 @@ export function EditorSettingsModal({ open, onClose }: Props) {
               style={s.range}
             />
             <span style={s.value}>{vizActionSize}px</span>
+          </Row>
+          <Row label="Timeline sub-row">
+            <input
+              type="range"
+              min={12}
+              max={48}
+              value={subRowHeight}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setSubRowHeight(v);
+                setMusicalTimelineSubRowHeight(v);
+              }}
+              style={s.range}
+            />
+            <span style={s.value}>{subRowHeight}px</span>
           </Row>
           {/* Backdrop blur / opacity / quality moved to the
               backdrop popover (click the bg indicator in the

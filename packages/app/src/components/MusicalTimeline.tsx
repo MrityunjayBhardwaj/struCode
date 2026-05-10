@@ -49,6 +49,8 @@ import {
   subscribeToTrackMeta,
   revealLineInFile,
   useTrackMeta,
+  getMusicalTimelineSubRowHeight,
+  onMusicalTimelineSubRowHeightChange,
 } from '@stave/editor'
 import { groupEventsByTrack } from './musicalTimeline/groupEventsByTrack'
 import { stableTrackOrder } from './musicalTimeline/stableTrackOrder'
@@ -726,9 +728,19 @@ export function MusicalTimeline(
     [orderedTracks, bodyByTrackId],
   )
 
+  // ── Phase 20-12 wave-δ — sub-row height from editor settings ─────────
+  // Setting lives in @stave/editor; we subscribe to changes so the layout
+  // re-renders when the user drags the slider in EditorSettingsModal.
+  const [subRowHeight, setSubRowHeight] = useState<number>(() =>
+    getMusicalTimelineSubRowHeight(),
+  )
+  useEffect(() => {
+    return onMusicalTimelineSubRowHeightChange((h) => setSubRowHeight(h))
+  }, [])
+
   const layout = useMemo(
-    () => layoutTrackRows(layoutInputs, collapsedFor),
-    [layoutInputs, collapsedFor],
+    () => layoutTrackRows(layoutInputs, collapsedFor, subRowHeight),
+    [layoutInputs, collapsedFor, subRowHeight],
   )
 
   const playheadX = cycleToPlayheadX(currentCycle, { gridContentWidth })

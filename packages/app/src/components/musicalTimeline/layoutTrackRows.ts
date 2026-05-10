@@ -90,10 +90,16 @@ export interface LayoutTrackRowsResult {
 /**
  * Compute per-track Y bands. Collapsed/expanded state read via the
  * `collapsedFor` callback (chrome wires it to `useTrackMeta`).
+ *
+ * Phase 20-12 wave-δ — `subRowHeight` is an optional per-call override
+ * (default = SUB_ROW_HEIGHT constant). Wired to the editor setting
+ * `getMusicalTimelineSubRowHeight()` so the user can tune density via
+ * EditorSettingsModal. Range 12-48 (clamped at the setter).
  */
 export function layoutTrackRows(
   tracks: readonly TrackInput[],
   collapsedFor: (trackId: string) => boolean,
+  subRowHeight: number = SUB_ROW_HEIGHT,
 ): LayoutTrackRowsResult {
   const out: TrackLayout[] = []
   let cursor = 0
@@ -161,13 +167,13 @@ export function layoutTrackRows(
       return {
         leafIndex,
         label,
-        top: cursor + leafIndex * SUB_ROW_HEIGHT,
-        height: SUB_ROW_HEIGHT,
+        top: cursor + leafIndex * subRowHeight,
+        height: subRowHeight,
         melodic,
         pitchRange,
       }
     })
-    const totalHeight = leafIRs.length * SUB_ROW_HEIGHT
+    const totalHeight = leafIRs.length * subRowHeight
     out.push({
       trackId: t.trackId,
       top: cursor,

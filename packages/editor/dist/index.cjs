@@ -16771,6 +16771,32 @@ function onInlineVizActionSizeChange(cb) {
 function applyPersistedInlineVizActionSize() {
   applyInlineVizActionSizeVar(readInlineVizActionSize());
 }
+var DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT = 18;
+var MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE = "stave:musicalTimeline.subRowHeight";
+var musicalTimelineSubRowHeightListeners = /* @__PURE__ */ new Set();
+function readMusicalTimelineSubRowHeight() {
+  const ls = safeLocalStorage();
+  if (!ls) return DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT;
+  const saved = Number(ls.getItem(MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE));
+  return Number.isFinite(saved) && saved >= 12 && saved <= 48 ? saved : DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT;
+}
+function writeMusicalTimelineSubRowHeight(h) {
+  safeLocalStorage()?.setItem(MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE, String(h));
+}
+function getMusicalTimelineSubRowHeight() {
+  return readMusicalTimelineSubRowHeight();
+}
+function setMusicalTimelineSubRowHeight(h) {
+  const clamped = Math.max(12, Math.min(48, Math.round(h)));
+  writeMusicalTimelineSubRowHeight(clamped);
+  for (const cb of Array.from(musicalTimelineSubRowHeightListeners)) cb(clamped);
+}
+function onMusicalTimelineSubRowHeightChange(cb) {
+  musicalTimelineSubRowHeightListeners.add(cb);
+  return () => {
+    musicalTimelineSubRowHeightListeners.delete(cb);
+  };
+}
 var DEFAULT_BACKDROP_BLUR = 8;
 var BACKDROP_BLUR_STORAGE = "stave:backdropBlur";
 var BACKDROP_BLUR_VAR = "--stave-backdrop-blur";
@@ -35252,6 +35278,7 @@ exports.getIRSnapshot = getIRSnapshot;
 exports.getInlineVizActionSize = getInlineVizActionSize;
 exports.getLastOpenedProject = getLastOpenedProject;
 exports.getLogHistory = getLogHistory;
+exports.getMusicalTimelineSubRowHeight = getMusicalTimelineSubRowHeight;
 exports.getNamedViz = getNamedViz;
 exports.getPresetIdForFile = getPresetIdForFile;
 exports.getPreviewProviderForExtension = getPreviewProviderForExtension;
@@ -35291,6 +35318,7 @@ exports.noteToMidi = noteToMidi;
 exports.onBackdropOpacityChange = onBackdropOpacityChange;
 exports.onBackdropQualityChange = onBackdropQualityChange;
 exports.onInlineVizActionSizeChange = onInlineVizActionSizeChange;
+exports.onMusicalTimelineSubRowHeightChange = onMusicalTimelineSubRowHeightChange;
 exports.onNamedVizChanged = onNamedVizChanged;
 exports.onThemeChange = onThemeChange;
 exports.onUiIconSizeChange = onUiIconSizeChange;
@@ -35340,6 +35368,7 @@ exports.setEditorTheme = setEditorTheme;
 exports.setEditorUiIconSize = setEditorUiIconSize;
 exports.setFolderOrder = setFolderOrder;
 exports.setInlineVizActionSize = setInlineVizActionSize;
+exports.setMusicalTimelineSubRowHeight = setMusicalTimelineSubRowHeight;
 exports.setProjectBackgroundCrop = setProjectBackgroundCrop;
 exports.setProjectBackgroundFileId = setProjectBackgroundFileId;
 exports.setSubfolderOrder = setSubfolderOrder;

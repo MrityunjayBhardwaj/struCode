@@ -152,4 +152,49 @@ describe('20-12 β-2 — layoutTrackRows', () => {
     expect(leaf.melodic).toBe(false)
     expect(leaf.pitchRange).toBeUndefined()
   })
+
+  // Phase 20-12 wave-δ — custom subRowHeight from editor settings.
+  describe('wave-δ — custom subRowHeight override', () => {
+    it('expanded leaves use the custom subRowHeight (height + top + totalHeight propagate)', () => {
+      const body = stack(PURE, PURE, PURE) // 3 leaves
+      const result = layoutTrackRows(
+        [{ trackId: 'd1', body, events: [] }],
+        () => false,
+        32, // custom override (default = SUB_ROW_HEIGHT = 18)
+      )
+      const track = result.tracks[0]
+      expect(track.leaves).toHaveLength(3)
+      // Each leaf band picks up the custom height.
+      expect(track.leaves[0].height).toBe(32)
+      expect(track.leaves[1].height).toBe(32)
+      expect(track.leaves[2].height).toBe(32)
+      // Top stacks at the custom step (cursor + leafIndex * subRowHeight).
+      expect(track.leaves[0].top).toBe(0)
+      expect(track.leaves[1].top).toBe(32)
+      expect(track.leaves[2].top).toBe(64)
+      // Total = 3 * 32 = 96; totalHeight (grid) reflects it.
+      expect(track.height).toBe(96)
+      expect(result.totalHeight).toBe(96)
+    })
+
+    it('default subRowHeight (no arg) preserves SUB_ROW_HEIGHT contract', () => {
+      const body = stack(PURE, PURE)
+      const result = layoutTrackRows(
+        [{ trackId: 'd1', body, events: [] }],
+        () => false,
+      )
+      expect(result.tracks[0].leaves[0].height).toBe(SUB_ROW_HEIGHT)
+      expect(result.tracks[0].height).toBe(2 * SUB_ROW_HEIGHT)
+    })
+
+    it('collapsed rows ignore subRowHeight (always ROW_HEIGHT)', () => {
+      const result = layoutTrackRows(
+        [{ trackId: 'd1', body: PURE, events: [] }],
+        () => true,
+        48,
+      )
+      expect(result.tracks[0].height).toBe(ROW_HEIGHT)
+      expect(result.tracks[0].leaves).toHaveLength(0)
+    })
+  })
 })
