@@ -172,4 +172,54 @@ describe('20-12 α-1 — freq Param promotion', () => {
     expect(found.via?.method).toBe('freq')
     expect(found.via?.args).toBe('somevar')
   })
+
+  // Phase 20-12 wave-δ — freq is numeric-only. Pattern-arg .freq("<200 880>")
+  // resolves per-cycle to a number that chrome's extractPitch would Y-staircase.
+  // That's a PV37 violation — chrome reading pitch from what the user wrote as
+  // a parametric/wrap-as-opaque shape. Gate the freq case to numeric-only;
+  // pattern args land in wrapAsOpaque alongside `.freq(somevar)`.
+  it('pattern arg .freq("<200 880>") wraps as Code (PV37, wave-δ gate)', () => {
+    const ir = parseStrudel('s("sine").freq("<200 880>")')
+    // Must NOT find a Param node for freq.
+    const param = findNode(ir, (n) => n.tag === 'Param' && (n as { key: string }).key === 'freq')
+    expect(param).toBeUndefined()
+    // Must find a Code-with-via for freq.
+    const code = findNode(
+      ir,
+      (n) => n.tag === 'Code' && (n as { via?: { method: string } }).via?.method === 'freq',
+    )
+    expect(code).toBeDefined()
+    if (!code || code.tag !== 'Code') throw new Error('unreachable')
+    expect(code.via?.method).toBe('freq')
+    expect(code.via?.args).toBe('"<200 880>"')
+  })
+
+  it('identifier-string arg .freq("foo") wraps as Code (numeric-only gate)', () => {
+    // parseParamArg arm 2 (literal-string) would normally produce
+    // Param{value: "foo"} for sample-key Params, but freq is numeric-only.
+    const ir = parseStrudel('s("sine").freq("foo")')
+    const param = findNode(ir, (n) => n.tag === 'Param' && (n as { key: string }).key === 'freq')
+    expect(param).toBeUndefined()
+    const code = findNode(
+      ir,
+      (n) => n.tag === 'Code' && (n as { via?: { method: string } }).via?.method === 'freq',
+    )
+    expect(code).toBeDefined()
+  })
+
+  it('other Param keys still accept pattern args (s, n, note unchanged)', () => {
+    // Smoke-check: numeric-only gate is freq-specific, not a global change.
+    // Chain form so the .s/.note arms fire (top-level s("...") is a receiver,
+    // not a chain step).
+    const irS = parseStrudel('note("c4").s("<piano harp>")')
+    const sParam = findNode(irS, (n) => n.tag === 'Param' && (n as { key: string }).key === 's')
+    expect(sParam).toBeDefined()
+
+    const irNote = parseStrudel('s("piano").note("<c4 d4>")')
+    const noteParam = findNode(
+      irNote,
+      (n) => n.tag === 'Param' && (n as { key: string }).key === 'note',
+    )
+    expect(noteParam).toBeDefined()
+  })
 })

@@ -3024,6 +3024,41 @@ var DEFAULT_CONTEXT = {
   speed: 1,
   params: {}
 };
+function countLeavesInIR(node) {
+  if (node.tag === "Stack") {
+    if (node.userMethod === void 0 || node.userMethod === "stack") {
+      let n = 0;
+      for (const t of node.tracks) n += countLeavesInIR(t);
+      return n;
+    }
+    return 1;
+  }
+  if (node.tag === "Code" && node.via?.inner) {
+    return countLeavesInIR(node.via.inner);
+  }
+  switch (node.tag) {
+    case "Param":
+    case "FX":
+    case "Fast":
+    case "Slow":
+    case "Elongate":
+    case "Late":
+    case "Degrade":
+    case "Ply":
+    case "Struct":
+    case "Swing":
+    case "Shuffle":
+    case "Scramble":
+    case "Chop":
+    case "When":
+    case "Every":
+    case "Loop":
+    case "Ramp":
+      return countLeavesInIR(node.body);
+    default:
+      return 1;
+  }
+}
 function noteToFreq(note2) {
   if (typeof note2 === "number") {
     return 440 * Math.pow(2, (note2 - 69) / 12);
@@ -3062,7 +3097,8 @@ function makeEvent(ctx, note2, params) {
     // ctx.trackId is undefined (hand-built IR without Track wrapper).
     // Avoids polluting IREvent with enumerable `trackId: undefined`
     // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
-    ...ctx.trackId !== void 0 ? { trackId: ctx.trackId } : {}
+    ...ctx.trackId !== void 0 ? { trackId: ctx.trackId } : {},
+    ...ctx.leafIndex !== void 0 ? { leafIndex: ctx.leafIndex } : {}
   };
 }
 function _collectRearrange(selector, n, body2, ctx, wrapperLoc) {
@@ -3112,7 +3148,11 @@ function walk(ir, ctx) {
     case "Pure":
       return [];
     case "Track": {
-      const childCtx = { ...ctx, trackId: ir.trackId };
+      const childCtx = {
+        ...ctx,
+        trackId: ir.trackId,
+        leafIndex: void 0
+      };
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Code": {
@@ -3185,9 +3225,19 @@ function walk(ir, ctx) {
       return withWrapperLoc(events, ir.loc);
     }
     case "Stack": {
+      const isVoiceDefining = ir.userMethod === void 0 || ir.userMethod === "stack";
       const events = [];
-      for (const track of ir.tracks) {
-        events.push(...walk(track, ctx));
+      if (isVoiceDefining) {
+        let leafIdx = ctx.leafIndex ?? 0;
+        for (const track of ir.tracks) {
+          const childCtx = { ...ctx, leafIndex: leafIdx };
+          events.push(...walk(track, childCtx));
+          leafIdx += countLeavesInIR(track);
+        }
+      } else {
+        for (const track of ir.tracks) {
+          events.push(...walk(track, ctx));
+        }
       }
       return withWrapperLoc(events, ir.loc);
     }
@@ -3232,17 +3282,43 @@ function walk(ir, ctx) {
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Fast": {
+      const factor = ir.factor;
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+      }
+      if (Number.isInteger(factor) && factor >= 1) {
+        const events = [];
+        const slotDuration = ctx.duration / factor;
+        for (let i2 = 0; i2 < factor; i2++) {
+          const childCtx2 = {
+            ...ctx,
+            time: ctx.time + i2 * slotDuration,
+            duration: slotDuration
+            // Don't scale speed: the duration shrink already encodes the
+            // "twice as fast" semantic for the iterated body. Multiplying
+            // speed too would double-shrink Play durations and Seq cursor
+            // advance (`slotDuration / ctx.speed`), leaving inter-slot
+            // gaps that violate the "fill the cycle" expectation.
+          };
+          events.push(...walk(ir.body, childCtx2));
+        }
+        return withWrapperLoc(events, ir.loc);
+      }
       const childCtx = {
         ...ctx,
-        speed: ctx.speed * ir.factor,
+        speed: ctx.speed * factor,
         duration: ctx.duration
       };
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Slow": {
+      const factor = ir.factor;
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+      }
       const childCtx = {
         ...ctx,
-        speed: ctx.speed / ir.factor,
+        speed: ctx.speed / factor,
         duration: ctx.duration
       };
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
@@ -3439,6 +3515,21 @@ function walk(ir, ctx) {
       return withWrapperLoc(out2, ir.loc);
     }
   }
+}
+function collectCycles(ir, startCycle, endCycle) {
+  const events = [];
+  for (let c = startCycle; c < endCycle; c++) {
+    events.push(
+      ...collect(ir, {
+        cycle: c,
+        time: c,
+        begin: c,
+        end: c + 1,
+        duration: 1
+      })
+    );
+  }
+  return events;
 }
 
 // src/ir/toStrudel.ts
@@ -4597,6 +4688,9 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
       const isSampleKey = method === "s" || method === "bank" || method === "scale";
       const parsed = parseParamArg(args2, isSampleKey, baseOffset);
       if (!parsed) {
+        return wrapAsOpaque(ir, method, args2, callSiteRange);
+      }
+      if (method === "freq" && typeof parsed.value !== "number") {
         return wrapAsOpaque(ir, method, args2, callSiteRange);
       }
       return IR.param(method, parsed.value, args2, ir, tagMeta(method, callSiteRange));
@@ -26218,6 +26312,20 @@ var Recorder = class _Recorder {
     this.source.connect(this.processor);
     this.processor.connect(this.silentSink);
     this.silentSink.connect(this.audioCtx.destination);
+    if (typeof globalThis !== "undefined" && globalThis.__recorderTrace) {
+      globalThis.__recorderTraceEvents ?? (globalThis.__recorderTraceEvents = []);
+      globalThis.__recorderTraceEvents.push({
+        event: "start",
+        t: performance.now(),
+        ctxState: this.audioCtx.state,
+        ctxTime: this.audioCtx.currentTime,
+        silentSinkGain: this.silentSink.gain.value,
+        sourceCtor: this.source.constructor.name,
+        ctxDestinationMaxChannelCount: this.audioCtx.destination.maxChannelCount,
+        ctxDestinationNumberOfInputs: this.audioCtx.destination.numberOfInputs
+      });
+      globalThis.__lastRecorder = this;
+    }
     this._state = "recording";
   }
   /** Stop recording and return the audio as a WAV Blob. */
@@ -26225,26 +26333,65 @@ var Recorder = class _Recorder {
     if (this._state !== "recording" || !this.processor) {
       throw new Error("Not recording");
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    this.processor.onaudioprocess = null;
+    const processor = this.processor;
+    const silentSink = this.silentSink;
+    const source = this.source;
+    if (typeof globalThis !== "undefined" && globalThis.__recorderTrace) {
+      globalThis.__recorderTraceEvents ?? (globalThis.__recorderTraceEvents = []);
+      const evs = globalThis.__recorderTraceEvents;
+      evs.push({
+        event: "stop:enter",
+        t: performance.now(),
+        ctxState: this.audioCtx.state,
+        ctxTime: this.audioCtx.currentTime,
+        silentSinkGain: silentSink ? silentSink.gain.value : null
+      });
+      debugger;
+    }
+    const tailMs = SCRIPT_PROCESSOR_BUFFER_SIZE / this.audioCtx.sampleRate * 1e3;
+    await new Promise((resolve) => {
+      const prev = processor.onaudioprocess;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      processor.onaudioprocess = (e) => {
+        prev?.call(processor, e);
+        finish();
+      };
+      setTimeout(finish, tailMs + 50);
+    });
     try {
-      this.source.disconnect(this.processor);
+      source.disconnect(processor);
     } catch {
     }
     try {
-      this.processor.disconnect();
+      processor.disconnect();
     } catch {
     }
-    if (this.silentSink) {
+    if (silentSink) {
       try {
-        this.silentSink.disconnect();
+        silentSink.disconnect();
       } catch {
       }
     }
+    processor.onaudioprocess = null;
     this.processor = null;
     this.silentSink = null;
     const wavBlob = this.encodeWav(this.chunks, this.audioCtx.sampleRate);
     this._state = "stopped";
+    if (typeof globalThis !== "undefined" && globalThis.__recorderTrace) {
+      const evs = globalThis.__recorderTraceEvents;
+      evs.push({
+        event: "stop:exit",
+        t: performance.now(),
+        wavSize: wavBlob.size,
+        ctxState: this.audioCtx.state,
+        ctxTime: this.audioCtx.currentTime
+      });
+    }
     return wavBlob;
   }
   /** Stop recording and trigger a browser download. */
@@ -26258,7 +26405,8 @@ var Recorder = class _Recorder {
    * can be invoked separately from `recording_stop` (#228).
    */
   static saveBlobToDownload(blob, filename) {
-    const url = URL.createObjectURL(blob);
+    const downloadBlob = blob.type === "audio/wav" ? new Blob([blob], { type: "application/octet-stream" }) : blob;
+    const url = URL.createObjectURL(downloadBlob);
     const a = document.createElement("a");
     a.href = url;
     a.download = filename ?? `sonicpi-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[T:]/g, "-")}.wav`;
@@ -34967,6 +35115,6 @@ function emitFromGlobal(err2, _kind) {
   });
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getTrackMeta, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setTrackMeta, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useTrackMeta, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, collectCycles, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getTrackMeta, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setTrackMeta, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useTrackMeta, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

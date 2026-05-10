@@ -857,10 +857,25 @@ function applyMethod(
       // was always undefined. Numeric → Param; non-numeric / pattern args
       // fall through parseParamArg's null-return → wrapAsOpaque (PV37
       // wrap-never-drop preserved; P50 single-decision — no third path).
+      //
+      // Phase 20-12 wave-δ — `freq` is numeric-only. `parseParamArg` arms
+      // 2 + 3 (literal-string / mini-pattern) accept quoted args for
+      // pattern-friendly Params (`.s("<bd cp>")` etc.) but `.freq(...)`
+      // is fundamentally a Hz literal: a pattern-arg `.freq("<200 880>")`
+      // resolves to a per-cycle number that chrome's `extractPitch` then
+      // Y-staircases — which would silently violate PV37 (chrome reading
+      // pitch from a wrap-as-opaque shape). Gate freq to numeric here so
+      // pattern-arg freq lands in `wrapAsOpaque` like any other unmodelled
+      // call. P50 single-decision preserved; PV37 wrap-never-drop intact.
       const isSampleKey = method === 's' || method === 'bank' || method === 'scale'
       const parsed = parseParamArg(args, isSampleKey, baseOffset)
       if (!parsed) {
         // Unrecognised arg shape — preserve PV37 (wrap-never-drop, REPRESENTATION).
+        return wrapAsOpaque(ir, method, args, callSiteRange)
+      }
+      if (method === 'freq' && typeof parsed.value !== 'number') {
+        // Pattern-arg freq is wrap-as-opaque per PV37; chrome must not see
+        // pattern-resolved Hz on `evt.params.freq`. See 20-δ rationale above.
         return wrapAsOpaque(ir, method, args, callSiteRange)
       }
       return IR.param(method, parsed.value, args, ir, tagMeta(method, callSiteRange))
