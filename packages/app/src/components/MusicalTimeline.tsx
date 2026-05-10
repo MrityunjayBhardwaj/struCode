@@ -310,7 +310,7 @@ function TrackHeaderRow({
         alignItems: 'center',
         gap: 4,
         paddingLeft: 4,
-        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
         boxSizing: 'border-box',
       }}
     >
@@ -326,7 +326,7 @@ function TrackHeaderRow({
           height: 12,
           border: 'none',
           background: 'transparent',
-          color: 'rgba(255,255,255,0.6)',
+          color: 'var(--text-chrome, rgba(255,255,255,0.6))',
           cursor: 'pointer',
           padding: 0,
           fontSize: 10,
@@ -360,7 +360,7 @@ function TrackHeaderRow({
         style={{
           fontSize: 10,
           lineHeight: '12px',
-          color: 'rgba(255,255,255,0.4)',
+          color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -402,7 +402,7 @@ function TrackLeafLabel({
         boxSizing: 'border-box',
         fontSize: 10,
         lineHeight: '12px',
-        color: 'rgba(255,255,255,0.5)',
+        color: 'var(--text-secondary, rgba(255,255,255,0.5))',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
@@ -1019,9 +1019,11 @@ export function MusicalTimeline(
 }
 
 // ───── Styles ───────────────────────────────────────────────────────────────
-// Inline styles with mockup-literal values (Phase 20-02 DV-08). All CSS
-// variable references from PR #92 replaced with the mockup's color tokens.
-// No external theme dependency — the tab is a self-contained visual unit.
+// Phase 20-12 wave-δ — theme-aware. The chrome reads CSS variables from
+// the global theme (globals.css), so the timeline tracks light/dark/system
+// alongside the rest of the IDE. Each var carries a mockup-literal fallback
+// (the original Phase 20-02 DV-08 values) so the chrome remains legible if
+// loaded outside the global theme (storybook, isolated tests).
 
 const FONT_MONO = '"JetBrains Mono", "Fira Code", ui-monospace, monospace'
 
@@ -1034,8 +1036,8 @@ const styles = {
     overflow: 'hidden',
     fontFamily: FONT_MONO,
     fontSize: 11, // mockup body font-size: 11px (DV-02)
-    color: '#e2e8f0',
-    background: '#090912',
+    color: 'var(--text-body, #e2e8f0)',
+    background: 'var(--bg-app, #090912)',
   },
   status: {
     height: STATUS_HEIGHT,
@@ -1043,9 +1045,9 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     padding: '0 12px',
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
-    color: 'rgba(255,255,255,0.4)',
-    background: '#14141f',
+    borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
+    color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
+    background: 'var(--bg-panel, #14141f)',
     fontVariantNumeric: 'tabular-nums' as const,
     fontSize: 11,
   },
@@ -1054,12 +1056,12 @@ const styles = {
     minHeight: 0,
     display: 'flex',
     overflow: 'auto',
-    background: '#090912',
+    background: 'var(--bg-app, #090912)',
   },
   labels: {
     width: TRACK_LABEL_WIDTH, // 90px (DV-02)
     flexShrink: 0,
-    borderRight: '1px solid rgba(255,255,255,0.08)',
+    borderRight: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
     display: 'flex',
     flexDirection: 'column' as const,
   },
@@ -1069,7 +1071,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: 6, // mockup: .track-label gap: 6px
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
     cursor: 'pointer' as const,
   },
   trackDot: {
@@ -1080,7 +1082,7 @@ const styles = {
     display: 'inline-block',
   },
   trackName: {
-    color: 'rgba(255,255,255,0.4)',
+    color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
     fontSize: 10,
     overflow: 'hidden',
     textOverflow: 'ellipsis' as const,
@@ -1089,7 +1091,7 @@ const styles = {
   emptyLabel: {
     padding: 8,
     fontStyle: 'italic' as const,
-    color: 'rgba(255,255,255,0.4)',
+    color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
     fontSize: 11,
     lineHeight: 1.4,
   },
@@ -1098,14 +1100,17 @@ const styles = {
     minWidth: 200,
     position: 'relative' as const,
     overflow: 'hidden',
-    background: '#0f0f1a',
+    background: 'var(--bg-input, #0f0f1a)',
   },
   barLine: {
     position: 'absolute' as const,
     top: 0,
     bottom: 0,
     width: 1,
-    background: 'rgba(255,255,255,0.04)', // Trap 9 — faint cycle cue
+    // Trap 9 — faint cycle cue. Stronger contrast in light mode (uses an
+    // alpha over the body bg via `currentColor`-friendly token).
+    background: 'var(--border-subtle, rgba(255,255,255,0.04))',
+    opacity: 0.4,
     pointerEvents: 'none' as const,
   },
   row: {
@@ -1116,7 +1121,7 @@ const styles = {
     left: 0,
     right: 0,
     height: ROW_HEIGHT,
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
   },
   noteBlock: {
     // β-3 (20-12) — opacity is set per-event by `clamp(evt.gain ?? 1, 0.15, 1)`
@@ -1130,16 +1135,17 @@ const styles = {
     boxSizing: 'border-box' as const,
   },
   noteBlockActive: {
-    outline: '1px solid rgba(139,92,246,0.8)',
-    boxShadow: '0 0 6px rgba(139,92,246,0.5)',
+    outline: '1px solid var(--border-accent-strong, rgba(139,92,246,0.8))',
+    boxShadow: '0 0 6px var(--border-accent, rgba(139,92,246,0.5))',
   },
   playhead: {
     position: 'absolute' as const,
     top: 0,
     bottom: 0,
     width: 1,
-    background: 'rgba(255,255,255,0.55)', // mockup: .playhead
-    boxShadow: '0 0 4px rgba(255,255,255,0.3)', // mockup: .playhead box-shadow
+    background: 'var(--text-primary, rgba(255,255,255,0.55))', // mockup: .playhead
+    opacity: 0.55,
+    boxShadow: '0 0 4px var(--text-primary, rgba(255,255,255,0.3))', // mockup: .playhead box-shadow
     pointerEvents: 'none' as const,
   },
 } satisfies Record<string, React.CSSProperties>
