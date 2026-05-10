@@ -165,7 +165,12 @@ describe('20-12 β-6 — TrackSwatchPopover', () => {
     expect(input!.type).toBe('color')
   })
 
-  it('custom color change fires onPick(value) then onClose() (commit-on-change, not on drag input)', () => {
+  // Phase 20-12 wave-ε — custom picker does NOT close on change. React's
+  // onChange for `<input type="color">` maps to native `input` which fires
+  // on every drag frame; closing on first fire unmounts the popover before
+  // the user can commit. Behavior: write-through on every change for
+  // live preview; explicit dismiss (outside-click / Esc) closes.
+  it('custom color change fires onPick(value) WITHOUT closing the popover (live preview)', () => {
     const onPick = vi.fn()
     const onClose = vi.fn()
     const { container } = render(
@@ -181,10 +186,29 @@ describe('20-12 β-6 — TrackSwatchPopover', () => {
     fireEvent.change(input!, { target: { value: '#abcdef' } })
     expect(onPick).toHaveBeenCalledTimes(1)
     expect(onPick).toHaveBeenCalledWith('#abcdef')
-    expect(onClose).toHaveBeenCalledTimes(1)
-    expect(onPick.mock.invocationCallOrder[0]).toBeLessThan(
-      onClose.mock.invocationCallOrder[0],
+    // No close on change — popover stays open for further adjustment.
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('multiple change events all write through (drag frames live-preview)', () => {
+    const onPick = vi.fn()
+    const onClose = vi.fn()
+    const { container } = render(
+      <TrackSwatchPopover
+        anchorRect={fakeRect()}
+        onPick={onPick}
+        onClose={onClose}
+      />,
     )
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-musical-timeline="swatch-custom-input"]',
+    )
+    fireEvent.change(input!, { target: { value: '#111111' } })
+    fireEvent.change(input!, { target: { value: '#222222' } })
+    fireEvent.change(input!, { target: { value: '#333333' } })
+    expect(onPick).toHaveBeenCalledTimes(3)
+    expect(onPick.mock.calls.map((c) => c[0])).toEqual(['#111111', '#222222', '#333333'])
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('custom picker initial value reflects currentColor when off-palette', () => {

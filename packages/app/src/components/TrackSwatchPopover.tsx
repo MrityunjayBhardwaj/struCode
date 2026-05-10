@@ -171,12 +171,19 @@ export function TrackSwatchPopover({
           data-musical-timeline="swatch-custom-input"
           aria-label="Custom track color"
           defaultValue={customColor}
-          // Commit on `change` (single fire on dismiss), NOT on `input` (fires
-          // every drag frame — would spawn a write storm). Mirror β-6's
-          // commit-on-click rule for native pickers.
+          // Phase 20-12 wave-ε — DON'T close on change. React's `onChange`
+          // for `<input type="color">` maps to the native `input` event,
+          // which fires on EVERY drag frame inside the OS color picker.
+          // The wave-δ implementation called onClose() on the first input
+          // event, unmounting the popover before the user could commit.
+          // Wave-ε behavior: write through on every change so the chrome
+          // live-previews the color (track bars + dot update as the user
+          // drags); the popover stays open until outside-click or Esc.
+          // The user explicitly dismisses to commit; the LAST onPick value
+          // is the persisted choice. Y.Map de-duplicates equal writes so
+          // the per-frame write rate is fine.
           onChange={(e) => {
             onPick(e.currentTarget.value)
-            onClose()
           }}
           style={{
             width: 28,
