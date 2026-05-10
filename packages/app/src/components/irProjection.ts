@@ -343,7 +343,12 @@ export function stripInnerLate(node: PatternIR): PatternIR {
  */
 export function flattenLeafVoices(body: PatternIR): readonly PatternIR[] {
   // Recursion gate: Stack with `userMethod ∈ {undefined, 'stack'}` is the
-  // ONLY recursion case. Everything else is a leaf.
+  // ONLY recursion case. Everything else is a leaf — UNLESS the node is a
+  // single-body wrapper (uniform modifier) hiding a Stack inside. Then we
+  // peel one layer and re-evaluate. This handles the common case
+  // `stack(...).viz(...)` / `.gain(...)` / `.fast(...)` etc., where the
+  // user's mental model is "N voices regardless of outer wrappers" but the
+  // IR puts the Stack inside an outer Code/Param/Fast/etc.
   if (body.tag === 'Stack') {
     const um = body.userMethod
     if (um === undefined || um === 'stack') {
@@ -353,7 +358,47 @@ export function flattenLeafVoices(body: PatternIR): readonly PatternIR[] {
       }
       return leaves
     }
+    // Stack with userMethod 'layer'/'jux'/'off' = single leaf (transforms,
+    // not parallel composition).
+    return [body]
   }
-  // All other tags (and Stack with userMethod 'layer'/'jux'/'off') = single leaf.
+  const peeled = peelSingleBodyWrapper(body)
+  if (peeled) return flattenLeafVoices(peeled)
   return [body]
+}
+
+/**
+ * Peel one layer of a single-body wrapper. Returns the structural inner when
+ * the node is a uniform modifier (effect / time-transform / parameter /
+ * opaque-method-wrapper); returns null otherwise.
+ *
+ * NOT peeled: multi-path nodes (Choice then/else_, Pick selector/lookup),
+ * structural carriers (Stack, Seq, Cat — they ARE the voice topology), and
+ * Chunk (transform field is alternative event source, peeling would lose it).
+ * Code WITHOUT via.inner is also not peeled (parse-failure leaf, no inner).
+ */
+function peelSingleBodyWrapper(n: PatternIR): PatternIR | null {
+  if (n.tag === 'Code' && n.via?.inner) return n.via.inner
+  switch (n.tag) {
+    case 'Param':
+    case 'FX':
+    case 'Fast':
+    case 'Slow':
+    case 'Elongate':
+    case 'Late':
+    case 'Degrade':
+    case 'Ply':
+    case 'Struct':
+    case 'Swing':
+    case 'Shuffle':
+    case 'Scramble':
+    case 'Chop':
+    case 'When':
+    case 'Every':
+    case 'Loop':
+    case 'Ramp':
+      return n.body
+    default:
+      return null
+  }
 }

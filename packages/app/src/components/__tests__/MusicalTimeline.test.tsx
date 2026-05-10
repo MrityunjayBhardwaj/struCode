@@ -1330,6 +1330,147 @@ describe('20-12 β-1 — track header rail', () => {
     expect(chevron2!.getAttribute('data-collapsed')).toBe('true')
   })
 
+  // Regression: double-click chevron with Track-wrapped IR. Verifies BOTH
+  // the chevron data attribute AND the row layout's data-track-collapsed
+  // round-trip — earlier coverage only checked the first click.
+  it('chevron double-click round-trips collapse → uncollapse (Track-wrapped IR)', async () => {
+    const trackBody: PatternIR = { tag: 'Pure' } as PatternIR
+    const trackedIR: PatternIR = {
+      tag: 'Track',
+      trackId: 'd1',
+      body: trackBody,
+    } as PatternIR
+    const snap: IRSnapshot = {
+      ts: 0,
+      source: 'file:probe.strudel',
+      runtime: 'strudel' as IRSnapshot['runtime'],
+      code: '',
+      passes: [{ name: 'final', ir: trackedIR }],
+      ir: trackedIR,
+      events: [evt({ trackId: 'd1', s: 'bd' })],
+      irNodeIdLookup: new Map(),
+      irNodeLocLookup: new Map(),
+      irNodeIdsByLine: new Map(),
+    }
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(snap)
+    })
+
+    const chevron = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    const row = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d1"]',
+    )
+    expect(chevron).not.toBeNull()
+    expect(row).not.toBeNull()
+
+    // Initial: expanded
+    expect(chevron!.getAttribute('data-collapsed')).toBe('false')
+    expect(row!.getAttribute('data-track-collapsed')).toBe('false')
+
+    // Click 1: collapse
+    await act(async () => {
+      chevron!.click()
+    })
+    expect(mockGetTrackMeta('file:probe.strudel', 'd1').collapsed).toBe(true)
+    const chevronAfter1 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    const rowAfter1 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d1"]',
+    )
+    expect(chevronAfter1!.getAttribute('data-collapsed')).toBe('true')
+    expect(rowAfter1!.getAttribute('data-track-collapsed')).toBe('true')
+
+    // Click 2: uncollapse — THE CRITICAL CHECK
+    await act(async () => {
+      chevronAfter1!.click()
+    })
+    expect(mockGetTrackMeta('file:probe.strudel', 'd1').collapsed).toBe(false)
+    const chevronAfter2 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    const rowAfter2 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d1"]',
+    )
+    expect(chevronAfter2!.getAttribute('data-collapsed')).toBe('false')
+    expect(rowAfter2!.getAttribute('data-track-collapsed')).toBe('false')
+  })
+
+  // Regression: multi-track Stack of Tracks (matches user's #108 fixture shape).
+  // Two `$:` blocks → Stack { tracks: [Track('d1', ...), Track('d2', ...)] }.
+  // Click chevron on d2 → collapse → click again → uncollapse.
+  it('chevron double-click on d2 in multi-track Stack uncollapses cleanly', async () => {
+    const trackedIR: PatternIR = {
+      tag: 'Stack',
+      tracks: [
+        { tag: 'Track', trackId: 'd1', body: { tag: 'Pure' } },
+        { tag: 'Track', trackId: 'd2', body: { tag: 'Pure' } },
+      ],
+    } as PatternIR
+    const snap: IRSnapshot = {
+      ts: 0,
+      source: 'file:probe2.strudel',
+      runtime: 'strudel' as IRSnapshot['runtime'],
+      code: '',
+      passes: [{ name: 'final', ir: trackedIR }],
+      ir: trackedIR,
+      events: [
+        evt({ trackId: 'd1', s: 'hh' }),
+        evt({ trackId: 'd2', s: 'bd' }),
+      ],
+      irNodeIdLookup: new Map(),
+      irNodeLocLookup: new Map(),
+      irNodeIdsByLine: new Map(),
+    }
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(snap)
+    })
+
+    const chevronD2 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline-track-label="d2"] [data-musical-timeline="track-chevron"]',
+    )
+    const rowD2 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d2"]',
+    )
+    expect(chevronD2).not.toBeNull()
+    expect(rowD2).not.toBeNull()
+    expect(chevronD2!.getAttribute('data-collapsed')).toBe('false')
+    expect(rowD2!.getAttribute('data-track-collapsed')).toBe('false')
+
+    // Click 1: collapse d2
+    await act(async () => {
+      chevronD2!.click()
+    })
+    expect(mockGetTrackMeta('file:probe2.strudel', 'd2').collapsed).toBe(true)
+    const rowD2After1 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d2"]',
+    )
+    expect(rowD2After1!.getAttribute('data-track-collapsed')).toBe('true')
+
+    // Click 2: uncollapse d2
+    const chevronD2After1 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline-track-label="d2"] [data-musical-timeline="track-chevron"]',
+    )
+    await act(async () => {
+      chevronD2After1!.click()
+    })
+    expect(mockGetTrackMeta('file:probe2.strudel', 'd2').collapsed).toBe(false)
+    const rowD2After2 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d2"]',
+    )
+    expect(rowD2After2!.getAttribute('data-track-collapsed')).toBe('false')
+  })
+
   it('swatch click captures the dot rect (popover anchor available)', async () => {
     const { container } = await renderSettled(
       <MusicalTimeline {...defaultProps()} />,

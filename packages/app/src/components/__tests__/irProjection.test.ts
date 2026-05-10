@@ -748,4 +748,106 @@ describe('20-12 α-5 — flattenLeafVoices', () => {
     const empty: PatternIR = { tag: 'Stack', tracks: [], userMethod: 'stack' }
     expect(flattenLeafVoices(empty)).toEqual([])
   })
+
+  // Wrapper-peel regression — `stack(...).viz(...)` / `.gain(...)` / `.fast(...)`
+  // wrap the Stack in single-body modifier nodes. The user's mental model is
+  // "voice count = stack arg count" regardless of outer wrappers. Without the
+  // peel, only the outer Code/Param/Fast was visible and flattenLeafVoices
+  // returned 1 leaf instead of N — observed live in /tmp/probe-collapse.mjs
+  // run on the user's 4-`$:` fixture. Stack-wrapped-in-Code-via was the live bug.
+  it('Code-with-via wrapping a Stack peels to N leaves (`stack(...).viz(...)`)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const c = IR.play('sd', 1)
+    const stack: PatternIR = { tag: 'Stack', tracks: [a, b, c], userMethod: 'stack' }
+    const wrapped: PatternIR = {
+      tag: 'Code',
+      code: 'stack(...).viz("p5test")',
+      lang: 'strudel',
+      via: {
+        method: 'viz',
+        args: '"p5test"',
+        callSiteRange: [0, 0],
+        inner: stack,
+      },
+    }
+    expect(flattenLeafVoices(wrapped)).toEqual([a, b, c])
+  })
+
+  it('Code-without-via is a leaf (no peel — parse-failure / opaque)', () => {
+    const opaque: PatternIR = {
+      tag: 'Code',
+      code: 'some(unparseable)',
+      lang: 'strudel',
+    }
+    const leaves = flattenLeafVoices(opaque)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]).toBe(opaque)
+  })
+
+  it('Param wrapping a Stack peels to N leaves (`stack(...).gain(0.5)`)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const stack: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'stack' }
+    const gainWrapped: PatternIR = {
+      tag: 'Param',
+      key: 'gain',
+      value: 0.5,
+      rawArgs: '0.5',
+      body: stack,
+    }
+    expect(flattenLeafVoices(gainWrapped)).toEqual([a, b])
+  })
+
+  it('Fast wrapping a Stack peels to N leaves (`stack(...).fast(2)`)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const stack: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'stack' }
+    const fastWrapped: PatternIR = { tag: 'Fast', factor: 2, body: stack }
+    expect(flattenLeafVoices(fastWrapped)).toEqual([a, b])
+  })
+
+  it('Multiple wrappers chain through to the inner Stack (`stack(...).gain(0.5).fast(2).viz(...)`)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const c = IR.play('sd', 1)
+    const stack: PatternIR = { tag: 'Stack', tracks: [a, b, c], userMethod: 'stack' }
+    const gainWrapped: PatternIR = {
+      tag: 'Param',
+      key: 'gain',
+      value: 0.5,
+      rawArgs: '0.5',
+      body: stack,
+    }
+    const fastWrapped: PatternIR = { tag: 'Fast', factor: 2, body: gainWrapped }
+    const vizWrapped: PatternIR = {
+      tag: 'Code',
+      code: 'stack(...).gain(0.5).fast(2).viz("x")',
+      lang: 'strudel',
+      via: {
+        method: 'viz',
+        args: '"x"',
+        callSiteRange: [0, 0],
+        inner: fastWrapped,
+      },
+    }
+    expect(flattenLeafVoices(vizWrapped)).toEqual([a, b, c])
+  })
+
+  it('Wrapper around a non-Stack body still terminates as 1 leaf', () => {
+    const inner = IR.play('square', 1)
+    const wrapped: PatternIR = {
+      tag: 'Code',
+      code: 'note(...).s("square").viz("pitchwheel")',
+      lang: 'strudel',
+      via: {
+        method: 'viz',
+        args: '"pitchwheel"',
+        callSiteRange: [0, 0],
+        inner,
+      },
+    }
+    const leaves = flattenLeafVoices(wrapped)
+    expect(leaves).toHaveLength(1)
+  })
 })
