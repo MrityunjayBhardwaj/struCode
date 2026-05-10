@@ -10,7 +10,7 @@ export type { PatternIR, PlayParams } from './PatternIR'
 export { IR } from './PatternIR'
 
 // Interpreters
-export { collect } from './collect'
+export { collect, collectCycles } from './collect'
 export type { CollectContext } from './collect'
 export { toStrudel } from './toStrudel'
 

@@ -29,7 +29,7 @@ import {
   emitLog,
   emitFixed,
   formatFriendlyError,
-  collect,
+  collectCycles,
   runPasses,
   publishIRSnapshot,
   IR,
@@ -373,7 +373,18 @@ export default function StrudelEditorClient({
           // snapshot. Single source of truth — passes[last].ir and the
           // alias cannot drift apart (PV27).
           const finalIR = passes[passes.length - 1].ir;
-          const events = collect(finalIR);
+          // Phase 20-12 — collect across the same cycle window the
+          // timeline displays. WINDOW_CYCLES (musicalTimeline/timeAxis.ts)
+          // is currently 2; collecting only [0, 1) leaves the cycle-1
+          // column empty for static viz. `collectCycles` loops collect()
+          // once per cycle so cross-cycle alternation patterns
+          // (`<a b c>`), randomized patterns, and steady-state loops all
+          // render their full visible-window shape. The constant is
+          // duplicated here because chrome (app) and engine (editor)
+          // can't import each other; if WINDOW_CYCLES changes there,
+          // update this number to match.
+          const TIMELINE_WINDOW_CYCLES = 2;
+          const events = collectCycles(finalIR, 0, TIMELINE_WINDOW_CYCLES);
           publishIRSnapshot(
             {
               ts: Date.now(),

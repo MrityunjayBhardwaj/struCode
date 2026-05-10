@@ -1171,3 +1171,40 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     }
   }
 }
+
+/**
+ * Collect events across N consecutive cycles. The single-cycle `collect`
+ * emits events in [0, 1); for the timeline (which displays
+ * `WINDOW_CYCLES` cycles) we want events filling [0, WINDOW_CYCLES).
+ * Loops `collect()` once per cycle with `time = begin = c, end = c + 1`
+ * and concatenates results — events from cycle `c` carry begin/end ∈
+ * [c, c+1).
+ *
+ * Promoted from `__tests__/helpers/collectCycles.ts` (extracted in
+ * Phase 19-03-08, used by parity tests). Production caller:
+ * `StrudelEditorClient` populates `IRSnapshot.events` so the timeline's
+ * cycle-1 column isn't empty for static viz patterns. Cross-cycle
+ * variation (`<a b c>` alternation, `degrade`, `shuffle`) renders
+ * its full per-cycle shape inside the visible window.
+ *
+ * Phase 20-12 chrome-fidelity fix.
+ */
+export function collectCycles(
+  ir: PatternIR,
+  startCycle: number,
+  endCycle: number,
+): IREvent[] {
+  const events: IREvent[] = []
+  for (let c = startCycle; c < endCycle; c++) {
+    events.push(
+      ...collect(ir, {
+        cycle: c,
+        time: c,
+        begin: c,
+        end: c + 1,
+        duration: 1,
+      }),
+    )
+  }
+  return events
+}

@@ -2,7 +2,7 @@
 export type { IREvent, SourceLocation, IRPattern } from './ir'
 export { merge, transpose, timestretch, filter, scaleGain } from './ir'
 export type { PatternIR, PlayParams, CollectContext, ComponentBag, System } from './ir'
-export { IR, collect, toStrudel, patternToJSON, patternFromJSON, PATTERN_IR_SCHEMA_VERSION } from './ir'
+export { IR, collect, collectCycles, toStrudel, patternToJSON, patternFromJSON, PATTERN_IR_SCHEMA_VERSION } from './ir'
 export { parseMini, parseStrudel, propagate, StrudelParseSystem, IREventCollectSystem } from './ir'
 
 // Phase 19-07 (#79) — parser stage helpers. PK10 propagation: re-exported
