@@ -79,6 +79,15 @@ export function TrackSwatchPopover({
       : anchorRect.left
   const top = anchorRect.bottom + 4
 
+  // Track the in-progress custom-picker value so the native <input type="color">
+  // can stage its choice without committing on every drag-frame. Only commit
+  // (onPick + onClose) when the user releases the picker via `onBlur` /
+  // `onChange` (Chrome fires `change` once on dismiss, after multiple `input`
+  // events while dragging). Pre-mortem #5 family — write storm guard.
+  const customColor = currentColor && !TRACK_PALETTE_32.includes(currentColor)
+    ? currentColor
+    : '#888888'
+
   return (
     <div
       ref={ref}
@@ -95,41 +104,91 @@ export function TrackSwatchPopover({
         border: '1px solid var(--border-strong, #333)',
         padding: 6,
         borderRadius: 4,
-        display: 'grid',
-        gridTemplateColumns: 'repeat(8, 16px)',
-        gridGap: 4,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
         boxShadow: '0 12px 40px rgba(0, 0, 0, 0.45)',
       }}
     >
-      {TRACK_PALETTE_32.map((color) => {
-        const isCurrent = color === currentColor
-        return (
-          <button
-            key={color}
-            type="button"
-            data-musical-timeline="swatch-cell"
-            data-color={color}
-            aria-label={`Color ${color}`}
-            aria-current={isCurrent ? 'true' : undefined}
-            onClick={() => {
-              onPick(color)
-              onClose()
-            }}
-            style={{
-              width: 16,
-              height: 16,
-              padding: 0,
-              border: isCurrent
-                ? '2px solid white'
-                : '1px solid rgba(255,255,255,0.18)',
-              background: color,
-              cursor: 'pointer',
-              borderRadius: 3,
-              boxSizing: 'border-box',
-            }}
-          />
-        )
-      })}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(8, 16px)',
+          gridGap: 4,
+        }}
+      >
+        {TRACK_PALETTE_32.map((color) => {
+          const isCurrent = color === currentColor
+          return (
+            <button
+              key={color}
+              type="button"
+              data-musical-timeline="swatch-cell"
+              data-color={color}
+              aria-label={`Color ${color}`}
+              aria-current={isCurrent ? 'true' : undefined}
+              onClick={() => {
+                onPick(color)
+                onClose()
+              }}
+              style={{
+                width: 16,
+                height: 16,
+                padding: 0,
+                border: isCurrent
+                  ? '2px solid white'
+                  : '1px solid rgba(255,255,255,0.18)',
+                background: color,
+                cursor: 'pointer',
+                borderRadius: 3,
+                boxSizing: 'border-box',
+              }}
+            />
+          )
+        })}
+      </div>
+      <div
+        data-musical-timeline="swatch-custom-row"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          paddingTop: 4,
+          borderTop: '1px solid var(--border-strong, rgba(255,255,255,0.12))',
+          fontSize: 11,
+          color: 'var(--fg-muted, rgba(255,255,255,0.55))',
+        }}
+      >
+        <label
+          htmlFor="track-swatch-custom"
+          style={{ flex: 1, cursor: 'pointer' }}
+        >
+          Custom
+        </label>
+        <input
+          id="track-swatch-custom"
+          type="color"
+          data-musical-timeline="swatch-custom-input"
+          aria-label="Custom track color"
+          defaultValue={customColor}
+          // Commit on `change` (single fire on dismiss), NOT on `input` (fires
+          // every drag frame — would spawn a write storm). Mirror β-6's
+          // commit-on-click rule for native pickers.
+          onChange={(e) => {
+            onPick(e.currentTarget.value)
+            onClose()
+          }}
+          style={{
+            width: 28,
+            height: 18,
+            padding: 0,
+            border: '1px solid var(--border-strong, rgba(255,255,255,0.18))',
+            borderRadius: 3,
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
+        />
+      </div>
     </div>
   )
 }

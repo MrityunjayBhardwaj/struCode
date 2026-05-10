@@ -146,4 +146,80 @@ describe('20-12 β-6 — TrackSwatchPopover', () => {
     const allCurrent = container.querySelectorAll('[aria-current="true"]')
     expect(allCurrent).toHaveLength(1)
   })
+
+  // Phase 20-12 wave-δ — custom color picker.
+  it('renders a custom color row with <input type="color">', () => {
+    const { container } = render(
+      <TrackSwatchPopover
+        anchorRect={fakeRect()}
+        onPick={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    const row = container.querySelector('[data-musical-timeline="swatch-custom-row"]')
+    expect(row).not.toBeNull()
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-musical-timeline="swatch-custom-input"]',
+    )
+    expect(input).not.toBeNull()
+    expect(input!.type).toBe('color')
+  })
+
+  it('custom color change fires onPick(value) then onClose() (commit-on-change, not on drag input)', () => {
+    const onPick = vi.fn()
+    const onClose = vi.fn()
+    const { container } = render(
+      <TrackSwatchPopover
+        anchorRect={fakeRect()}
+        onPick={onPick}
+        onClose={onClose}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-musical-timeline="swatch-custom-input"]',
+    )
+    fireEvent.change(input!, { target: { value: '#abcdef' } })
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(onPick).toHaveBeenCalledWith('#abcdef')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onPick.mock.invocationCallOrder[0]).toBeLessThan(
+      onClose.mock.invocationCallOrder[0],
+    )
+  })
+
+  it('custom picker initial value reflects currentColor when off-palette', () => {
+    // Off-palette currentColor → seed the picker with it for editing.
+    const offPalette = '#abcdef'
+    expect(TRACK_PALETTE_32).not.toContain(offPalette)
+    const { container } = render(
+      <TrackSwatchPopover
+        anchorRect={fakeRect()}
+        currentColor={offPalette}
+        onPick={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-musical-timeline="swatch-custom-input"]',
+    )
+    expect(input!.defaultValue).toBe(offPalette)
+  })
+
+  it('custom picker uses a neutral default when currentColor is on-palette', () => {
+    // On-palette currentColor → don't overwrite the picker with a palette
+    // match (that's the swatch grid's job; the picker stages a NEW choice).
+    const { container } = render(
+      <TrackSwatchPopover
+        anchorRect={fakeRect()}
+        currentColor={TRACK_PALETTE_32[3]}
+        onPick={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-musical-timeline="swatch-custom-input"]',
+    )
+    expect(input!.defaultValue).not.toBe(TRACK_PALETTE_32[3])
+    expect(/^#[0-9a-f]{6}$/i.test(input!.defaultValue)).toBe(true)
+  })
 })
