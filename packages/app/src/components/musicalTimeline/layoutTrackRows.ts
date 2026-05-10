@@ -124,10 +124,24 @@ export function layoutTrackRows(
       cursor += ROW_HEIGHT
       continue
     }
-    // For v1, partition events onto leaf 0 only when leaves > 1 (the
-    // event→leaf binding doesn't exist in IR yet; γ-wave refines).
-    const eventsForLeaf = (idx: number): readonly IREvent[] =>
-      idx === 0 ? t.events : []
+    // Phase 20-12 — partition events per leaf via `evt.leafIndex` (set
+    // by the Stack collect arm at editor's collect.ts). Events without a
+    // leafIndex (e.g. hand-built fixtures, single-voice tracks where the
+    // body isn't a voice-defining Stack) fall onto leaf 0. Out-of-range
+    // leafIndex (defensive — shouldn't happen if IR + countLeavesInIR
+    // agree) clamps to last leaf.
+    const eventsForLeaf = (idx: number): readonly IREvent[] => {
+      const result: IREvent[] = []
+      const lastLeaf = leafIRs.length - 1
+      for (const e of t.events) {
+        const li =
+          e.leafIndex === undefined
+            ? 0
+            : Math.min(Math.max(0, e.leafIndex), lastLeaf)
+        if (li === idx) result.push(e)
+      }
+      return result
+    }
     const leaves: LeafLayout[] = leafIRs.map((_leaf, leafIndex) => {
       const events = eventsForLeaf(leafIndex)
       const pitches: number[] = []

@@ -107,7 +107,12 @@ const STATUS_HEIGHT = 24
 //     padding fit within the 18px leaf band.
 const BAR_TOP_DEFAULT = 4
 const BAR_HEIGHT_DEFAULT = 16
-const LEAF_BAR_HEIGHT = 12
+// Phase 20-12 — leaf bar must be thin enough that the pitch-Y mapping
+// has visible vertical room within SUB_ROW_HEIGHT (= 18). innerHeight
+// (per pitch.ts pitchToY) = SUB_ROW_HEIGHT - 2*padding - LEAF_BAR_HEIGHT
+// = 18 - 4 - LEAF_BAR_HEIGHT. With LEAF_BAR_HEIGHT=6 → 8px of pitch
+// motion, enough to show a c4..c5 melodic contour at ~0.67 px/semitone.
+const LEAF_BAR_HEIGHT = 6
 const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set<string>())
 
 /**
@@ -260,6 +265,11 @@ interface TrackHeaderRowProps {
   top: number
   height: number
   onOpenSwatch: (trackId: string, anchor: DOMRect) => void
+  /** Phase 20-12 — when expanded with multiple leaf voices, the parent
+   *  passes the FIRST leaf's voice label so the header reads
+   *  `d1 · saw` instead of just `d1`. Subsequent leaves render via the
+   *  TrackLeafLabel sibling component below. */
+  voiceLabel?: string
 }
 
 function TrackHeaderRow({
@@ -269,6 +279,7 @@ function TrackHeaderRow({
   top,
   height,
   onOpenSwatch,
+  voiceLabel,
 }: TrackHeaderRowProps): React.ReactElement {
   const { meta, set } = useTrackMeta(fileId, trackId)
   const swatchRef = useRef<HTMLButtonElement>(null)
@@ -354,8 +365,49 @@ function TrackHeaderRow({
           flex: 1,
         }}
       >
-        {trackId}
+        {voiceLabel ? `${trackId} · ${voiceLabel}` : trackId}
       </span>
+    </div>
+  )
+}
+
+/**
+ * Per-leaf voice label rendered in the left rail beneath a multi-leaf
+ * track's main TrackHeaderRow. Indented past the chevron + swatch column
+ * so the visual hierarchy reads "track header → indented voices".
+ * Phase 20-12 sub-row identity rail (PV41 channel: row header).
+ */
+function TrackLeafLabel({
+  top,
+  height,
+  label,
+}: {
+  top: number
+  height: number
+  label: string
+}): React.ReactElement {
+  return (
+    <div
+      data-musical-timeline="track-leaf-label"
+      style={{
+        position: 'absolute',
+        top,
+        height,
+        width: TRACK_LABEL_WIDTH,
+        display: 'flex',
+        alignItems: 'center',
+        paddingLeft: 36, // chevron(12) + gap(4) + swatch(12) + gap(4) + leftPad(4)
+        boxSizing: 'border-box',
+        fontSize: 10,
+        lineHeight: '12px',
+        color: 'rgba(255,255,255,0.5)',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        pointerEvents: 'none',
+      }}
+    >
+      {label}
     </div>
   )
 }
@@ -744,16 +796,35 @@ export function MusicalTimeline(
                 trackIndexOf(trackId),
                 firstEventSample,
               )
+              const showLeafRows =
+                !trackLayout.collapsed && trackLayout.leaves.length > 1
+              const firstLeaf = showLeafRows
+                ? trackLayout.leaves[0]
+                : undefined
               return (
-                <TrackHeaderRow
-                  key={trackId}
-                  fileId={fileId}
-                  trackId={trackId}
-                  autoColor={autoColor}
-                  top={trackLayout.top}
-                  height={trackLayout.height}
-                  onOpenSwatch={handleOpenSwatch}
-                />
+                <React.Fragment key={trackId}>
+                  <TrackHeaderRow
+                    fileId={fileId}
+                    trackId={trackId}
+                    autoColor={autoColor}
+                    top={trackLayout.top}
+                    height={
+                      firstLeaf ? firstLeaf.height : trackLayout.height
+                    }
+                    onOpenSwatch={handleOpenSwatch}
+                    voiceLabel={firstLeaf?.label}
+                  />
+                  {showLeafRows
+                    ? trackLayout.leaves.slice(1).map((leaf) => (
+                        <TrackLeafLabel
+                          key={`${trackId}-leaf-${leaf.leafIndex}`}
+                          top={leaf.top}
+                          height={leaf.height}
+                          label={leaf.label}
+                        />
+                      ))
+                    : null}
+                </React.Fragment>
               )
             })
           )}
@@ -823,10 +894,16 @@ export function MusicalTimeline(
                   let barTop = BAR_TOP_DEFAULT
                   let barHeight = BAR_HEIGHT_DEFAULT
                   if (!trackLayout.collapsed && trackLayout.leaves.length > 0) {
-                    // For v1, layoutTrackRows pools every event onto leaf 0
-                    // when leaves > 1 (event→leaf binding deferred). Leaf 0's
-                    // band extents are what we map within.
-                    const leaf = trackLayout.leaves[0]
+                    // Phase 20-12 — pick leaf band by evt.leafIndex (set
+                    // at collect-time by editor's Stack arm). Events
+                    // without a leafIndex fall onto leaf 0; out-of-range
+                    // clamps to the last leaf.
+                    const lastLeaf = trackLayout.leaves.length - 1
+                    const leafIdx =
+                      evt.leafIndex === undefined
+                        ? 0
+                        : Math.min(Math.max(0, evt.leafIndex), lastLeaf)
+                    const leaf = trackLayout.leaves[leafIdx]
                     barHeight = LEAF_BAR_HEIGHT
                     if (leaf.melodic && leaf.pitchRange) {
                       const pitch = extractPitch(evt)

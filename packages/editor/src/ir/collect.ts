@@ -188,6 +188,15 @@ export interface CollectContext {
    * spread in makeEvent — CONTEXT pre-mortem #6).
    */
   trackId?: string
+  /**
+   * Phase 20-12 — populated by voice-defining Stack arm. Each voice-row
+   * inside a `$:` block (each `stack(...)` arg) gets a sequential leaf
+   * index 0..N-1, threaded onto produced events for chrome sub-row
+   * partitioning. RESET to undefined at Track entry so inner Tracks
+   * start a fresh leaf counter. Nested voice-defining Stacks continue
+   * the parent's counter (sequential numbering across recursion).
+   */
+  leafIndex?: number
 }
 
 const DEFAULT_CONTEXT: CollectContext = {
@@ -206,6 +215,55 @@ const DEFAULT_CONTEXT: CollectContext = {
  * - Numeric notes: treated as MIDI note number and converted to Hz
  * Returns null if the string format is unrecognised.
  */
+/**
+ * Count voice-leaves contributed by an IR subtree to its enclosing Track.
+ * Mirrors `flattenLeafVoices` in irProjection.ts (app package): voice-
+ * defining Stack (`userMethod ∈ {undefined, 'stack'}`) recurses; single-
+ * body uniform-modifier wrappers (Code-with-via, Param, FX, Fast, Slow,
+ * Elongate, Late, Degrade, Ply, Struct, Swing, Shuffle, Scramble, Chop,
+ * When, Every, Loop, Ramp) are peeled; everything else terminates as 1
+ * leaf. Used by the Stack arm to advance the leaf counter past a child
+ * subtree that may itself contribute multiple leaves (nested voice-
+ * defining Stacks). Phase 20-12 — sub-row partition support.
+ */
+function countLeavesInIR(node: PatternIR): number {
+  if (node.tag === 'Stack') {
+    if (node.userMethod === undefined || node.userMethod === 'stack') {
+      let n = 0
+      for (const t of node.tracks) n += countLeavesInIR(t)
+      return n
+    }
+    return 1
+  }
+  // Peel single-body uniform-modifier wrappers (mirrors flattenLeafVoices
+  // peel set in app's irProjection.ts).
+  if (node.tag === 'Code' && node.via?.inner) {
+    return countLeavesInIR(node.via.inner)
+  }
+  switch (node.tag) {
+    case 'Param':
+    case 'FX':
+    case 'Fast':
+    case 'Slow':
+    case 'Elongate':
+    case 'Late':
+    case 'Degrade':
+    case 'Ply':
+    case 'Struct':
+    case 'Swing':
+    case 'Shuffle':
+    case 'Scramble':
+    case 'Chop':
+    case 'When':
+    case 'Every':
+    case 'Loop':
+    case 'Ramp':
+      return countLeavesInIR(node.body)
+    default:
+      return 1
+  }
+}
+
 function noteToFreq(note: string | number): number | null {
   if (typeof note === 'number') {
     // MIDI note number → Hz (MIDI 69 = A4 = 440 Hz)
@@ -248,6 +306,7 @@ function makeEvent(ctx: CollectContext, note: string | number, params: Record<st
     // Avoids polluting IREvent with enumerable `trackId: undefined`
     // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
     ...(ctx.trackId !== undefined ? { trackId: ctx.trackId } : {}),
+    ...(ctx.leafIndex !== undefined ? { leafIndex: ctx.leafIndex } : {}),
   }
 }
 
@@ -358,7 +417,17 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // OUTERMOST wrapper, walk runs outer-first so OUTER wins. This matches
       // the source-order "last-typed-wins" convention (D-05).
       // CONTEXT pre-mortem #1 + RESEARCH G8-Trap C verified safe.
-      const childCtx: CollectContext = { ...ctx, trackId: ir.trackId }
+      // Phase 20-12 — RESET leafIndex to undefined at Track entry. Each
+      // Track scope owns its own voice-counter; nested Track must not
+      // inherit the outer's leafIndex (otherwise inner-track events
+      // would carry the outer's leaf id and chrome's sub-row partition
+      // would mis-bucket them). The first voice-defining Stack the body
+      // reaches initialises the counter at 0.
+      const childCtx: CollectContext = {
+        ...ctx,
+        trackId: ir.trackId,
+        leafIndex: undefined,
+      }
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
     }
 
@@ -501,10 +570,29 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     }
 
     case 'Stack': {
-      // Parallel: all tracks at same time
+      // Parallel: all tracks at same time.
+      // Phase 20-12 — voice-defining Stack (`userMethod ∈ {undefined,
+      // 'stack'}`) assigns sequential `leafIndex` to each child for
+      // chrome sub-row partitioning. Nested voice-defining Stacks
+      // continue the parent counter (matches flattenLeafVoices'
+      // depth-first source-order traversal in irProjection.ts). Stack
+      // with userMethod 'layer' / 'jux' / 'off' is a TRANSFORM, not
+      // parallel composition — events concatenate without leafIndex
+      // re-assignment so the ambient ctx.leafIndex carries through.
+      const isVoiceDefining =
+        ir.userMethod === undefined || ir.userMethod === 'stack'
       const events: IREvent[] = []
-      for (const track of ir.tracks) {
-        events.push(...walk(track, ctx))
+      if (isVoiceDefining) {
+        let leafIdx = ctx.leafIndex ?? 0
+        for (const track of ir.tracks) {
+          const childCtx: CollectContext = { ...ctx, leafIndex: leafIdx }
+          events.push(...walk(track, childCtx))
+          leafIdx += countLeavesInIR(track)
+        }
+      } else {
+        for (const track of ir.tracks) {
+          events.push(...walk(track, ctx))
+        }
       }
       // PV36 — synthetic Stack from layer/jux/off carries the call-site
       // range as ir.loc (parseStrudel.ts:392-397/517-522/593-599); that

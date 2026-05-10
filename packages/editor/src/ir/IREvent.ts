@@ -52,6 +52,16 @@ export interface IREvent {
   irNodeId?: string
   /** Which track/loop produced this event */
   trackId?: string
+  /** Index of the leaf voice (within its enclosing Track) that produced
+   *  this event. Set by collect.ts when walking a voice-defining Stack
+   *  (`userMethod ∈ {undefined, 'stack'}`). Sequential across nested
+   *  voice-defining Stacks — nested Stack arms continue the parent's
+   *  leaf counter (mirrors flattenLeafVoices' source-order traversal in
+   *  irProjection.ts). Absent when the Track body is a single voice
+   *  (no voice-defining Stack), or for hand-built IR that doesn't go
+   *  through Track/Stack collect arms — chrome treats absence as "all
+   *  events on leaf 0". Phase 20-12 sub-row partition support. */
+  leafIndex?: number
   /** Engine-specific extended parameters */
   params?: Record<string, unknown>
 }
