@@ -109,12 +109,20 @@ const STATUS_HEIGHT = 24
 //     padding fit within the 18px leaf band.
 const BAR_TOP_DEFAULT = 4
 const BAR_HEIGHT_DEFAULT = 16
-// Phase 20-12 — leaf bar must be thin enough that the pitch-Y mapping
-// has visible vertical room within SUB_ROW_HEIGHT (= 18). innerHeight
-// (per pitch.ts pitchToY) = SUB_ROW_HEIGHT - 2*padding - LEAF_BAR_HEIGHT
-// = 18 - 4 - LEAF_BAR_HEIGHT. With LEAF_BAR_HEIGHT=6 → 8px of pitch
-// motion, enough to show a c4..c5 melodic contour at ~0.67 px/semitone.
-const LEAF_BAR_HEIGHT = 6
+// Phase 20-12 — leaf bar height derives from the sub-row band height
+// (which itself comes from `getMusicalTimelineSubRowHeight()`, range
+// 12-48). The bar takes most of the band; ~10px is reserved for pitch
+// motion (so a melodic c4..c5 contour stays visible at any sub-row
+// height). Floor at 6px so very small sub-rows still show something.
+//
+// Wave-ε (#19 follow-up): the bar height was hardcoded at 6px so big
+// sub-rows showed tiny bars. Wave-ε scales the bar with the band so
+// the slider produces a coherent visual change.
+const LEAF_BAR_PITCH_RESERVE = 12   // px of pitch motion preserved
+const LEAF_BAR_HEIGHT_MIN = 6
+function leafBarHeight(bandHeight: number): number {
+  return Math.max(LEAF_BAR_HEIGHT_MIN, bandHeight - LEAF_BAR_PITCH_RESERVE)
+}
 const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set<string>())
 
 /**
@@ -925,7 +933,7 @@ export function MusicalTimeline(
                         ? 0
                         : Math.min(Math.max(0, evt.leafIndex), lastLeaf)
                     const leaf = trackLayout.leaves[leafIdx]
-                    barHeight = LEAF_BAR_HEIGHT
+                    barHeight = leafBarHeight(leaf.height)
                     if (leaf.melodic && leaf.pitchRange) {
                       const pitch = extractPitch(evt)
                       if (pitch != null) {
