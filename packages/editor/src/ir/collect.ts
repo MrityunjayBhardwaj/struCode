@@ -575,22 +575,65 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     }
 
     case 'Fast': {
-      // Time compression: events happen faster (more events per cycle)
+      // Strudel `pat.fast(N)` (≡ mini `pat*N`): play `body` N times per
+      // cycle. For integer N >= 1 we walk the body N times, each over a
+      // slot of width `ctx.duration / N` advancing `ctx.time` by that
+      // slot. Speed is also scaled so per-event durations shrink by 1/N.
+      // PV36 — duplicates inherit the same loc[1+] (Inspector dedupes by
+      // (loc[0], begin) pair). Non-integer factors (rare; e.g. fast(1.5))
+      // fall back to compressed-once behaviour pre-fix; full fractional
+      // semantics is deferred (would need partial-slot probabilistic
+      // sampling like Strudel runtime). factor <= 0 / non-finite is a
+      // pathological input → treat as identity.
+      const factor = ir.factor
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return withWrapperLoc(walk(ir.body, ctx), ir.loc)
+      }
+      if (Number.isInteger(factor) && factor >= 1) {
+        const events: IREvent[] = []
+        const slotDuration = ctx.duration / factor
+        for (let i = 0; i < factor; i++) {
+          const childCtx: CollectContext = {
+            ...ctx,
+            time: ctx.time + i * slotDuration,
+            duration: slotDuration,
+            // Don't scale speed: the duration shrink already encodes the
+            // "twice as fast" semantic for the iterated body. Multiplying
+            // speed too would double-shrink Play durations and Seq cursor
+            // advance (`slotDuration / ctx.speed`), leaving inter-slot
+            // gaps that violate the "fill the cycle" expectation.
+          }
+          events.push(...walk(ir.body, childCtx))
+        }
+        return withWrapperLoc(events, ir.loc)
+      }
+      // Non-integer factor: legacy compressed-once behaviour.
       const childCtx: CollectContext = {
         ...ctx,
-        speed: ctx.speed * ir.factor,
+        speed: ctx.speed * factor,
         duration: ctx.duration,
       }
-      // PV36 — .fast(N) call-site. fast(2) duplicates inherit the same
-      // loc[1+] (DV-05 — Inspector dedupes by (loc[0], begin) pair).
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
     }
 
     case 'Slow': {
-      // Time dilation: events happen slower (fewer events per cycle)
+      // Strudel `pat.slow(N)`: play body once over N cycles. For our
+      // single-cycle collect window, only the FRACTION of body's events
+      // that falls within `[ctx.begin, ctx.end)` is visible. Walking body
+      // once with `duration *= N` and `speed /= N` puts the first
+      // 1/N-fraction of body's events into the current cycle window;
+      // Play's window-clip in the leaf arm filters out events outside it.
+      // For integer N >= 2, that means only events in body's first slot
+      // appear in cycle 0. Cycle 1 sees the next 1/N. Approximation: for
+      // a single-event Play body, slow(N) shows the event in cycle 0
+      // only with longer duration. PV36 loc preserved via withWrapperLoc.
+      const factor = ir.factor
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return withWrapperLoc(walk(ir.body, ctx), ir.loc)
+      }
       const childCtx: CollectContext = {
         ...ctx,
-        speed: ctx.speed / ir.factor,
+        speed: ctx.speed / factor,
         duration: ctx.duration,
       }
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc)

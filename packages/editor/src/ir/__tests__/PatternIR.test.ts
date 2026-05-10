@@ -247,15 +247,18 @@ describe('collect', () => {
     expect(events[0].begin).toBe(events[1].begin)
   })
 
-  it('Fast compresses time', () => {
+  it('Fast replicates body N times per cycle', () => {
+    // Strudel `pat.fast(N)` (≡ mini `pat*N`): play body N times per cycle.
+    // Fast(2, Seq(c4, e4)) → seq runs twice → 4 events filling [0, 1).
     const tree = IR.fast(2, IR.seq(IR.play('c4'), IR.play('e4')))
     const events = collect(tree)
-    expect(events).toHaveLength(2)
-    // Fast(2) means speed=2, so each slot ends sooner
-    expect(events[1].begin).toBeLessThan(events[1].begin + 1) // sanity
+    expect(events).toHaveLength(4)
     expect(events[0].begin).toBeCloseTo(0)
-    // Each event in seq gets duration / speed = 1/2 cycle, seq has 2 children → slot = 0.25
-    expect(events[1].begin).toBeCloseTo(0.5 / 2) // 0.25
+    expect(events[1].begin).toBeCloseTo(0.25)
+    expect(events[2].begin).toBeCloseTo(0.5)
+    expect(events[3].begin).toBeCloseTo(0.75)
+    // Each event fills its 0.25-wide slot.
+    expect(events[0].end - events[0].begin).toBeCloseTo(0.25)
   })
 
   it('Slow dilates time', () => {
@@ -266,11 +269,18 @@ describe('collect', () => {
     expect(events[0].end).toBeCloseTo(1 / 0.5) // 2
   })
 
-  it('Nested Fast is multiplicative', () => {
-    // fast(2, fast(3, play)) → speed = 6
+  it('Nested Fast is multiplicative — fast(2, fast(3, play)) → 6 events', () => {
+    // fast(2, fast(3, play)): outer iterates 2x over slotDuration=0.5,
+    // inner iterates 3x within each outer slot → 6 events total. Each
+    // event fills its 1/6-wide slot.
     const tree = IR.fast(2, IR.fast(3, IR.play('c4')))
     const events = collect(tree)
+    expect(events).toHaveLength(6)
     expect(events[0].end - events[0].begin).toBeCloseTo(1 / 6)
+    // Begin times: i=0..5 → t = 0, 1/6, 1/3, 1/2, 2/3, 5/6
+    expect(events[0].begin).toBeCloseTo(0)
+    expect(events[3].begin).toBeCloseTo(0.5)
+    expect(events[5].begin).toBeCloseTo(5 / 6)
   })
 
   it('FX passes params to IREvent', () => {
