@@ -32910,17 +32910,23 @@ var SonicPiEngine = class {
         }
         scheduler.pauseTick();
         if (this.bridge) {
-          this.bridge.freeAllNodes();
-          this.nodeRefMap.clear();
-          for (const state4 of this.persistentFx.values()) {
+          const survivingScopes = new Set(this.fxScopeChains.keys());
+          for (const [scopeId, state4] of this.persistentFx) {
+            if (survivingScopes.has(scopeId)) continue;
+            for (const group of state4.groups) this.bridge.freeGroup(group);
             for (const bus of state4.buses) this.bridge.freeBus(bus);
+            this.persistentFx.delete(scopeId);
           }
-          this.persistentFx.clear();
           for (const state4 of this.reusableFx.values()) {
             if (state4.killTimer) clearTimeout(state4.killTimer);
+            this.bridge.freeGroup(state4.groupId);
             this.bridge.freeBus(state4.bus);
           }
           this.reusableFx.clear();
+          for (const name2 of removedLoops) {
+            this.bridge.freeLoopMonitor(name2);
+          }
+          this.nodeRefMap.clear();
         }
         await this.preCreatePersistentFx(defaultBpm);
         scheduler.reEvaluate(pendingLoops, { bpm: defaultBpm, synth: defaultSynth });
