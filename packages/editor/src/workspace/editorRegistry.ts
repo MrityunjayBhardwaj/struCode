@@ -232,6 +232,45 @@ export function applyPersistedInlineVizActionSize(): void {
   applyInlineVizActionSizeVar(readInlineVizActionSize())
 }
 
+// ── Musical Timeline sub-row height (Phase 20-12 wave-δ) ────────────
+// Sub-row band height (px) when an expanded track has multiple leaves.
+// Mockup default = 18; range 12-48 covers compact-density to "I want to
+// read pitch contours" comfortable. No CSS variable — the consumer is
+// React (layoutTrackRows + MusicalTimeline), not CSS.
+const DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT = 18
+const MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE = 'stave:musicalTimeline.subRowHeight'
+const musicalTimelineSubRowHeightListeners = new Set<(h: number) => void>()
+
+function readMusicalTimelineSubRowHeight(): number {
+  const ls = safeLocalStorage()
+  if (!ls) return DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT
+  const saved = Number(ls.getItem(MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE))
+  return Number.isFinite(saved) && saved >= 12 && saved <= 48
+    ? saved
+    : DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT
+}
+
+function writeMusicalTimelineSubRowHeight(h: number): void {
+  safeLocalStorage()?.setItem(MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE, String(h))
+}
+
+export function getMusicalTimelineSubRowHeight(): number {
+  return readMusicalTimelineSubRowHeight()
+}
+
+export function setMusicalTimelineSubRowHeight(h: number): void {
+  const clamped = Math.max(12, Math.min(48, Math.round(h)))
+  writeMusicalTimelineSubRowHeight(clamped)
+  for (const cb of Array.from(musicalTimelineSubRowHeightListeners)) cb(clamped)
+}
+
+export function onMusicalTimelineSubRowHeightChange(
+  cb: (h: number) => void,
+): () => void {
+  musicalTimelineSubRowHeightListeners.add(cb)
+  return () => { musicalTimelineSubRowHeightListeners.delete(cb) }
+}
+
 // ── Backdrop blur (code-surface legibility over viz backdrop) #39 ───
 const DEFAULT_BACKDROP_BLUR = 8
 const BACKDROP_BLUR_STORAGE = 'stave:backdropBlur'

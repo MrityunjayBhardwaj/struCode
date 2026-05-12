@@ -314,3 +314,91 @@ export function stripInnerLate(node: PatternIR): PatternIR {
       return node
   }
 }
+
+/**
+ * Phase 20-12 D-03 — flatten a Track body to its leaf voices.
+ *
+ * A leaf voice = an IR subtree that produces events in ONE conceptual
+ * sub-row. The recursion rule (RESEARCH §C.2) is one-line: recurse iff
+ * `Stack` with `userMethod ∈ {undefined, 'stack'}`.
+ *   - `undefined` covers mini polymetric `{ ... }`.
+ *   - `'stack'` covers user-typed `stack(...)`.
+ *   - Layer / jux / off Stacks are SINGLE leaves — they're transformations
+ *     attached to one voice, not parallel composition.
+ *   - Everything else (Seq, Cycle, Cat, FX, Param, Fast, Slow, Late, Choice,
+ *     Code, Play, …) is a leaf — wrappers/modifiers attached to ONE voice.
+ *
+ * Inputs: typically `track.body` (NOT the Track itself; Track is the
+ * unwrapped container).
+ * Output: a flat list of leaf nodes in source order. Returns `[body]` when
+ * `body` is a non-Stack leaf; returns `[]` when `body` is an empty Stack.
+ *
+ * Edge cases (RESEARCH §C.3, §C.4):
+ *   - Empty Stack `stack()` → [] (chevron is a visual no-op when expanded).
+ *   - Single-voice (non-Stack body) → [body] (one leaf — collapsed and
+ *     expanded views render the same row).
+ *   - `cat(a, b)` → 1 leaf (Cat is sequencing, not parallel; D-03 example).
+ *
+ * Phase 20-12 D-03 / RESEARCH §C.2; consumed by β-2 layoutTrackRows.
+ */
+export function flattenLeafVoices(body: PatternIR): readonly PatternIR[] {
+  // Recursion gate: Stack with `userMethod ∈ {undefined, 'stack'}` is the
+  // ONLY recursion case. Everything else is a leaf — UNLESS the node is a
+  // single-body wrapper (uniform modifier) hiding a Stack inside. Then we
+  // peel one layer and re-evaluate. This handles the common case
+  // `stack(...).viz(...)` / `.gain(...)` / `.fast(...)` etc., where the
+  // user's mental model is "N voices regardless of outer wrappers" but the
+  // IR puts the Stack inside an outer Code/Param/Fast/etc.
+  if (body.tag === 'Stack') {
+    const um = body.userMethod
+    if (um === undefined || um === 'stack') {
+      const leaves: PatternIR[] = []
+      for (const child of body.tracks) {
+        for (const leaf of flattenLeafVoices(child)) leaves.push(leaf)
+      }
+      return leaves
+    }
+    // Stack with userMethod 'layer'/'jux'/'off' = single leaf (transforms,
+    // not parallel composition).
+    return [body]
+  }
+  const peeled = peelSingleBodyWrapper(body)
+  if (peeled) return flattenLeafVoices(peeled)
+  return [body]
+}
+
+/**
+ * Peel one layer of a single-body wrapper. Returns the structural inner when
+ * the node is a uniform modifier (effect / time-transform / parameter /
+ * opaque-method-wrapper); returns null otherwise.
+ *
+ * NOT peeled: multi-path nodes (Choice then/else_, Pick selector/lookup),
+ * structural carriers (Stack, Seq, Cat — they ARE the voice topology), and
+ * Chunk (transform field is alternative event source, peeling would lose it).
+ * Code WITHOUT via.inner is also not peeled (parse-failure leaf, no inner).
+ */
+function peelSingleBodyWrapper(n: PatternIR): PatternIR | null {
+  if (n.tag === 'Code' && n.via?.inner) return n.via.inner
+  switch (n.tag) {
+    case 'Param':
+    case 'FX':
+    case 'Fast':
+    case 'Slow':
+    case 'Elongate':
+    case 'Late':
+    case 'Degrade':
+    case 'Ply':
+    case 'Struct':
+    case 'Swing':
+    case 'Shuffle':
+    case 'Scramble':
+    case 'Chop':
+    case 'When':
+    case 'Every':
+    case 'Loop':
+    case 'Ramp':
+      return n.body
+    default:
+      return null
+  }
+}

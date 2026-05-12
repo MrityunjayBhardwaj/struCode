@@ -3024,6 +3024,41 @@ var DEFAULT_CONTEXT = {
   speed: 1,
   params: {}
 };
+function countLeavesInIR(node) {
+  if (node.tag === "Stack") {
+    if (node.userMethod === void 0 || node.userMethod === "stack") {
+      let n = 0;
+      for (const t of node.tracks) n += countLeavesInIR(t);
+      return n;
+    }
+    return 1;
+  }
+  if (node.tag === "Code" && node.via?.inner) {
+    return countLeavesInIR(node.via.inner);
+  }
+  switch (node.tag) {
+    case "Param":
+    case "FX":
+    case "Fast":
+    case "Slow":
+    case "Elongate":
+    case "Late":
+    case "Degrade":
+    case "Ply":
+    case "Struct":
+    case "Swing":
+    case "Shuffle":
+    case "Scramble":
+    case "Chop":
+    case "When":
+    case "Every":
+    case "Loop":
+    case "Ramp":
+      return countLeavesInIR(node.body);
+    default:
+      return 1;
+  }
+}
 function noteToFreq(note2) {
   if (typeof note2 === "number") {
     return 440 * Math.pow(2, (note2 - 69) / 12);
@@ -3062,7 +3097,8 @@ function makeEvent(ctx, note2, params) {
     // ctx.trackId is undefined (hand-built IR without Track wrapper).
     // Avoids polluting IREvent with enumerable `trackId: undefined`
     // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
-    ...ctx.trackId !== void 0 ? { trackId: ctx.trackId } : {}
+    ...ctx.trackId !== void 0 ? { trackId: ctx.trackId } : {},
+    ...ctx.leafIndex !== void 0 ? { leafIndex: ctx.leafIndex } : {}
   };
 }
 function _collectRearrange(selector, n, body2, ctx, wrapperLoc) {
@@ -3112,7 +3148,11 @@ function walk(ir, ctx) {
     case "Pure":
       return [];
     case "Track": {
-      const childCtx = { ...ctx, trackId: ir.trackId };
+      const childCtx = {
+        ...ctx,
+        trackId: ir.trackId,
+        leafIndex: void 0
+      };
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Code": {
@@ -3185,9 +3225,19 @@ function walk(ir, ctx) {
       return withWrapperLoc(events, ir.loc);
     }
     case "Stack": {
+      const isVoiceDefining = ir.userMethod === void 0 || ir.userMethod === "stack";
       const events = [];
-      for (const track of ir.tracks) {
-        events.push(...walk(track, ctx));
+      if (isVoiceDefining) {
+        let leafIdx = ctx.leafIndex ?? 0;
+        for (const track of ir.tracks) {
+          const childCtx = { ...ctx, leafIndex: leafIdx };
+          events.push(...walk(track, childCtx));
+          leafIdx += countLeavesInIR(track);
+        }
+      } else {
+        for (const track of ir.tracks) {
+          events.push(...walk(track, ctx));
+        }
       }
       return withWrapperLoc(events, ir.loc);
     }
@@ -3232,17 +3282,43 @@ function walk(ir, ctx) {
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Fast": {
+      const factor = ir.factor;
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+      }
+      if (Number.isInteger(factor) && factor >= 1) {
+        const events = [];
+        const slotDuration = ctx.duration / factor;
+        for (let i2 = 0; i2 < factor; i2++) {
+          const childCtx2 = {
+            ...ctx,
+            time: ctx.time + i2 * slotDuration,
+            duration: slotDuration
+            // Don't scale speed: the duration shrink already encodes the
+            // "twice as fast" semantic for the iterated body. Multiplying
+            // speed too would double-shrink Play durations and Seq cursor
+            // advance (`slotDuration / ctx.speed`), leaving inter-slot
+            // gaps that violate the "fill the cycle" expectation.
+          };
+          events.push(...walk(ir.body, childCtx2));
+        }
+        return withWrapperLoc(events, ir.loc);
+      }
       const childCtx = {
         ...ctx,
-        speed: ctx.speed * ir.factor,
+        speed: ctx.speed * factor,
         duration: ctx.duration
       };
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Slow": {
+      const factor = ir.factor;
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+      }
       const childCtx = {
         ...ctx,
-        speed: ctx.speed / ir.factor,
+        speed: ctx.speed / factor,
         duration: ctx.duration
       };
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
@@ -3439,6 +3515,21 @@ function walk(ir, ctx) {
       return withWrapperLoc(out2, ir.loc);
     }
   }
+}
+function collectCycles(ir, startCycle, endCycle) {
+  const events = [];
+  for (let c = startCycle; c < endCycle; c++) {
+    events.push(
+      ...collect(ir, {
+        cycle: c,
+        time: c,
+        begin: c,
+        end: c + 1,
+        duration: 1
+      })
+    );
+  }
+  return events;
 }
 
 // src/ir/toStrudel.ts
@@ -4592,6 +4683,7 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "bank":
     case "scale":
     case "color":
+    case "freq":
     case "gain":
     case "velocity":
     case "pan":
@@ -4599,6 +4691,9 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
       const isSampleKey = method === "s" || method === "bank" || method === "scale";
       const parsed = parseParamArg(args2, isSampleKey, baseOffset);
       if (!parsed) {
+        return wrapAsOpaque(ir, method, args2, callSiteRange);
+      }
+      if (method === "freq" && typeof parsed.value !== "number") {
         return wrapAsOpaque(ir, method, args2, callSiteRange);
       }
       return IR.param(method, parsed.value, args2, ir, tagMeta(method, callSiteRange));
@@ -7946,6 +8041,62 @@ function subscribeToZoneOverrides(fileId, cb) {
     if (set.size === 0) zoneOverrideSubscribers.delete(fileId);
   };
 }
+var EMPTY_TRACK_META = Object.freeze({});
+var trackMetaSubscribers = /* @__PURE__ */ new Map();
+var wiredTrackMetaObservers = /* @__PURE__ */ new Set();
+function ensureTrackMetaMap(fileId) {
+  const filesMap = getFilesMap();
+  const fileMap = filesMap.get(fileId);
+  if (!fileMap) return null;
+  let meta = fileMap.get("trackMeta");
+  if (!meta) {
+    meta = new Y3.Map();
+    fileMap.set("trackMeta", meta);
+  }
+  if (!wiredTrackMetaObservers.has(fileId)) {
+    meta.observeDeep(() => {
+      const subs = trackMetaSubscribers.get(fileId);
+      if (subs) for (const cb of subs) cb();
+    });
+    wiredTrackMetaObservers.add(fileId);
+  }
+  return meta;
+}
+function getTrackMeta(fileId, trackId) {
+  ensureDoc();
+  const meta = ensureTrackMetaMap(fileId);
+  if (!meta) return EMPTY_TRACK_META;
+  return meta.get(trackId) ?? EMPTY_TRACK_META;
+}
+function setTrackMeta(fileId, trackId, partial) {
+  ensureDoc();
+  const meta = ensureTrackMetaMap(fileId);
+  if (!meta) return;
+  const doc = ensureDoc();
+  doc.transact(() => {
+    const existing = meta.get(trackId) ?? {};
+    const merged = { ...existing, ...partial };
+    if (merged.color === void 0 && merged.collapsed === void 0) {
+      meta.delete(trackId);
+    } else {
+      meta.set(trackId, merged);
+    }
+  }, STRUCT_ORIGIN);
+}
+function subscribeToTrackMeta(fileId, cb) {
+  ensureDoc();
+  ensureTrackMetaMap(fileId);
+  let set = trackMetaSubscribers.get(fileId);
+  if (!set) {
+    set = /* @__PURE__ */ new Set();
+    trackMetaSubscribers.set(fileId, set);
+  }
+  set.add(cb);
+  return () => {
+    set.delete(cb);
+    if (set.size === 0) trackMetaSubscribers.delete(fileId);
+  };
+}
 function resetFileStore() {
   for (const [id] of textObservers) {
     unwireTextObserver(id);
@@ -7957,6 +8108,8 @@ function resetFileStore() {
   folderOrderObserverWired = false;
   zoneOverrideSubscribers.clear();
   wiredZoneObservers.clear();
+  trackMetaSubscribers.clear();
+  wiredTrackMetaObservers.clear();
   resetUndoManager();
   notifyFileList();
   notifyFolderOrder();
@@ -16595,6 +16748,32 @@ function onInlineVizActionSizeChange(cb) {
 }
 function applyPersistedInlineVizActionSize() {
   applyInlineVizActionSizeVar(readInlineVizActionSize());
+}
+var DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT = 18;
+var MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE = "stave:musicalTimeline.subRowHeight";
+var musicalTimelineSubRowHeightListeners = /* @__PURE__ */ new Set();
+function readMusicalTimelineSubRowHeight() {
+  const ls = safeLocalStorage();
+  if (!ls) return DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT;
+  const saved = Number(ls.getItem(MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE));
+  return Number.isFinite(saved) && saved >= 12 && saved <= 48 ? saved : DEFAULT_MUSICAL_TIMELINE_SUB_ROW_HEIGHT;
+}
+function writeMusicalTimelineSubRowHeight(h) {
+  safeLocalStorage()?.setItem(MUSICAL_TIMELINE_SUB_ROW_HEIGHT_STORAGE, String(h));
+}
+function getMusicalTimelineSubRowHeight() {
+  return readMusicalTimelineSubRowHeight();
+}
+function setMusicalTimelineSubRowHeight(h) {
+  const clamped = Math.max(12, Math.min(48, Math.round(h)));
+  writeMusicalTimelineSubRowHeight(clamped);
+  for (const cb of Array.from(musicalTimelineSubRowHeightListeners)) cb(clamped);
+}
+function onMusicalTimelineSubRowHeightChange(cb) {
+  musicalTimelineSubRowHeightListeners.add(cb);
+  return () => {
+    musicalTimelineSubRowHeightListeners.delete(cb);
+  };
 }
 var DEFAULT_BACKDROP_BLUR = 8;
 var BACKDROP_BLUR_STORAGE = "stave:backdropBlur";
@@ -32585,13 +32764,23 @@ var SonicPiEngine = class {
         }
         scheduler.pauseTick();
         if (this.bridge) {
-          this.bridge.freeAllNodes();
-          this.nodeRefMap.clear();
-          this.persistentFx.clear();
+          const survivingScopes = new Set(this.fxScopeChains.keys());
+          for (const [scopeId, state4] of this.persistentFx) {
+            if (survivingScopes.has(scopeId)) continue;
+            for (const group of state4.groups) this.bridge.freeGroup(group);
+            for (const bus of state4.buses) this.bridge.freeBus(bus);
+            this.persistentFx.delete(scopeId);
+          }
           for (const state4 of this.reusableFx.values()) {
             if (state4.killTimer) clearTimeout(state4.killTimer);
+            this.bridge.freeGroup(state4.groupId);
+            this.bridge.freeBus(state4.bus);
           }
           this.reusableFx.clear();
+          for (const name2 of removedLoops) {
+            this.bridge.freeLoopMonitor(name2);
+          }
+          this.nodeRefMap.clear();
         }
         await this.preCreatePersistentFx(defaultBpm);
         scheduler.reEvaluate(pendingLoops, { bpm: defaultBpm, synth: defaultSynth });
@@ -32695,9 +32884,13 @@ var SonicPiEngine = class {
     this.globalStore.clear();
     this.definedFns.clear();
     this.defonceCache.clear();
+    for (const state4 of this.persistentFx.values()) {
+      for (const bus of state4.buses) this.bridge?.freeBus(bus);
+    }
     this.persistentFx.clear();
     for (const state4 of this.reusableFx.values()) {
       if (state4.killTimer) clearTimeout(state4.killTimer);
+      this.bridge?.freeBus(state4.bus);
     }
     this.reusableFx.clear();
     this.loopFxScope.clear();
@@ -33996,6 +34189,30 @@ function compilePreset(preset) {
   }
   throw new Error(`Unknown renderer: ${renderer}`);
 }
+var EMPTY_META = Object.freeze({});
+function useTrackMeta(fileId, trackId) {
+  const subscribe3 = useCallback(
+    (onStoreChange) => {
+      if (!fileId) return () => {
+      };
+      return subscribeToTrackMeta(fileId, onStoreChange);
+    },
+    [fileId]
+  );
+  const getSnapshot = useCallback(() => {
+    if (!fileId) return EMPTY_META;
+    return getTrackMeta(fileId, trackId);
+  }, [fileId, trackId]);
+  const meta = useSyncExternalStore(subscribe3, getSnapshot, getSnapshot);
+  const set = useCallback(
+    (partial) => {
+      if (!fileId) return;
+      setTrackMeta(fileId, trackId, partial);
+    },
+    [fileId, trackId]
+  );
+  return { meta, set };
+}
 var DB_NAME3 = "stave-snapshots";
 var DB_VERSION3 = 1;
 var STORE_NAME3 = "snapshots";
@@ -35036,6 +35253,6 @@ function emitFromGlobal(err2, _kind) {
   });
 }
 
-export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
+export { AUTO_SNAPSHOT_PREFIX, BACKDROP_BLUR_VAR, BOTTOM_PANEL_ACTIVE_TAB_KEY, BOTTOM_PANEL_HEIGHT_DEFAULT, BOTTOM_PANEL_HEIGHT_KEY, BOTTOM_PANEL_HEIGHT_MAX, BOTTOM_PANEL_HEIGHT_MIN, BOTTOM_PANEL_OPEN_KEY, BUNDLED_PREFIX, BottomPanel, BreakpointStore, BufferedScheduler, DARK_THEME_TOKENS, DEFAULT_VIZ_CONFIG, DEFAULT_VIZ_DESCRIPTORS, DemoEngine, EditorView, ErrorBoundary, HYDRA_DOCS_INDEX, HYDRA_VIZ, HapStream, HydraVizRenderer, INLINE_VIZ_ACTION_SIZE_VAR, IR, IREventCollectSystem, LIGHT_THEME_TOKENS, LiveCodingEditor, LiveCodingRuntime, LiveRecorder, OfflineRenderer, P5VizRenderer, P5_DOCS_INDEX, P5_VIZ, PATTERN_IR_SCHEMA_VERSION, PianorollSketch, PitchwheelSketch, PreviewView, SAMPLE_SOUND_LABEL, SAMPLE_SOUND_SOURCE_ID, SONICPI_DOCS_INDEX, SONICPI_RUNTIME, STRUDEL_DOCS_INDEX, STRUDEL_RUNTIME, ScopeSketch, SonicPiEngine2 as SonicPiEngine, SpectrumSketch, SpiralSketch, SplitPane, StrudelEditor, StrudelEngine, StrudelParseSystem, UI_ICON_SIZE_VAR, VizDropdown, VizEditor, VizPanel, VizPicker, VizPresetStore, WavEncoder, WorkspaceShell, applyPersistedBackdropBlur, applyPersistedInlineVizActionSize, applyPersistedTheme, applyPersistedUiIconSize, applyTheme, backdropQualityFactor, bumpEditorFontSize, bundledPresetId, canRedo, canUndo, captureSnapshot, clearCapture, clearIRSnapshot, clearLog, collect, collectCycles, compilePreset, createProject, createVizConfig, createWorkspaceFile, cycleEditorTheme, deleteProject, deleteSnapshot, deleteWorkspaceFile, duplicateProject, emitFixed, emitLog, extractReferenceIdentifier, filter, flushToPreset, formatFriendlyError2 as formatFriendlyError, fuzzyMatch, generateUniquePresetId, getActiveProjectId, getBackdropOpacity, getBackdropQuality, getBottomPanelTab, getCaptureBuffer, getCaptureCapacity, getChildOrder, getEditorBackdropBlur, getEditorFontSize, getEditorMinimap, getEditorTheme, getEditorUiIconSize, getFile, getFixedMarkers, getFolderOrder, getIRSnapshot, getInlineVizActionSize, getLastOpenedProject, getLogHistory, getMusicalTimelineSubRowHeight, getNamedViz, getPresetIdForFile, getPreviewProviderForExtension, getPreviewProviderForLanguage, getProject, getResolvedTheme, getRuntimeProviderForExtension, getRuntimeProviderForLanguage, getSubfolderOrder, getTrackMeta, getVizConfig, getZoneCropOverride, getZoneHeightOverride, hydraKaleidoscope, hydraPianoroll, hydraScope, initProjectDoc, initProjectDocSync, installEngineLogMarkers, installGlobalErrorCatch, isBundledPresetId, isDocReady, isSampleSoundPlaying, levenshtein, listBottomPanelTabs, listNamedVizEntries, listNamedVizNames, listProjects, listSnapshots, listWorkspaceFiles, liveCodingRuntimeRegistry, makeFixedKey, merge, mountVizRenderer, normalizeStrudelHap, noteToMidi, onBackdropOpacityChange, onBackdropQualityChange, onInlineVizActionSizeChange, onMusicalTimelineSubRowHeightChange, onNamedVizChanged, onThemeChange, onUiIconSizeChange, parseMini, parseStackLocation, parseStrudel, patternFromJSON, patternToJSON, previewProviderRegistry, propagate, pruneZoneOverrides, publishIRSnapshot, readPersistedActiveTabId, readPersistedOpen, redo, registerBottomPanelTab, registerNamedViz, registerPresetAsNamedViz, registerPreviewProvider, registerRuntimeProvider, renameProject, renameWorkspaceFile, resetFileStore, resetUndoManager, resolveDescriptor, restoreSnapshot, revealLineInFile, runChainAppliedStage, runFinalStage, runMiniExpandedStage, runPasses, runRawStage, sanitizePresetName, saveSnapshot, scaleGain, seedFromPreset, seedFromPresetId, seedWorkspaceFile, setBackdropOpacity, setBackdropQuality, setCaptureCapacity, setChildOrder, setContent, setEditorBackdropBlur, setEditorFontSize, setEditorTheme, setEditorUiIconSize, setFolderOrder, setInlineVizActionSize, setMusicalTimelineSubRowHeight, setProjectBackgroundCrop, setProjectBackgroundFileId, setSubfolderOrder, setTrackMeta, setVizConfig, setZoneCropOverride, setZoneHeightOverride, startSampleSound, stopSampleSound, subscribeCapture, subscribeFixed, subscribeIRSnapshot, subscribeLog, subscribeToBottomPanelTabs, subscribeToDocUpdate, subscribeToFileList, subscribeToFolderOrder, subscribeToTrackMeta, subscribeToUndoState, subscribe as subscribeToWorkspaceFile, subscribeToZoneOverrides, switchProject, timestretch, toStrudel, toggleEditorMinimap, touchProject, transpose, undo, unregisterBottomPanelTab, unregisterNamedViz, useTrackMeta, useWorkspaceFile, withStructBatch, workspaceAudioBus, workspaceFileIdForPreset };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

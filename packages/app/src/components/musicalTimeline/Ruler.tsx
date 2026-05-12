@@ -145,23 +145,29 @@ export function Ruler(props: RulerProps): React.ReactElement {
   )
 }
 
+// Phase 20-12 wave-ε — Ruler adopts theme CSS vars (PV43). Mockup
+// values preserved as fallbacks for isolated mounts (storybook, unit
+// tests without globals.css). Sibling of MusicalTimeline.tsx — δ-8
+// missed this surface; ε-1 closes the gap so Ruler tracks light mode
+// alongside the rest of the chrome.
+
 const styles = {
   topbar: {
     height: TOPBAR_HEIGHT,
     minHeight: TOPBAR_HEIGHT,
-    background: '#14141f',
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    background: 'var(--bg-panel, #14141f)',
+    borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
     display: 'flex',
     alignItems: 'stretch',
     fontFamily:
       '"JetBrains Mono", "Fira Code", ui-monospace, monospace',
     fontSize: 10,
-    color: 'rgba(255,255,255,0.4)',
+    color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
   },
   gutter: {
     width: GUTTER_WIDTH,
     flexShrink: 0,
-    borderRight: '1px solid rgba(255,255,255,0.08)',
+    borderRight: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'flex-end',
@@ -181,7 +187,7 @@ const styles = {
     top: 0,
     bottom: 8,
     width: 1,
-    background: 'rgba(255,255,255,0.4)',
+    background: 'var(--text-tertiary, rgba(255,255,255,0.4))',
     pointerEvents: 'none' as const,
   },
   minorTick: {
@@ -189,14 +195,14 @@ const styles = {
     bottom: 0,
     height: 6,
     width: 1,
-    background: 'rgba(255,255,255,0.18)',
+    background: 'var(--text-muted, rgba(255,255,255,0.18))',
     pointerEvents: 'none' as const,
   },
   cycleLabel: {
     position: 'absolute' as const,
     bottom: 4,
     transform: 'translateX(2px)',
-    color: '#e2e8f0',
+    color: 'var(--text-body, #e2e8f0)',
     fontSize: 10,
     pointerEvents: 'none' as const,
   },
@@ -207,7 +213,7 @@ const styles = {
     height: 0,
     borderLeft: '5px solid transparent',
     borderRight: '5px solid transparent',
-    borderTop: '7px solid rgba(255,255,255,0.55)',
+    borderTop: '7px solid var(--text-primary, rgba(255,255,255,0.55))',
     transform: 'translateX(-5px)',
     pointerEvents: 'none' as const,
   },

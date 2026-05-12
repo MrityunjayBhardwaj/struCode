@@ -56,7 +56,74 @@ let mockCurrent: IRSnapshot | null = null
 const mockListeners = new Set<(s: IRSnapshot | null) => void>()
 const revealLineInFileMock = vi.fn<[string, number], void>()
 
-vi.mock('@stave/editor', () => {
+// Phase 20-12 β-1 — useTrackMeta backing store, mock-side. Each (fileId, trackId)
+// pair gets a stable record reference; setTrackMeta merges + notifies listeners.
+// Mirrors the real store's ref-stable contract (EMPTY_TRACK_META frozen sentinel).
+type MockTrackMeta = { color?: string; collapsed?: boolean }
+const EMPTY_MOCK_META: MockTrackMeta = Object.freeze({})
+const mockTrackMetaStore = new Map<string, MockTrackMeta>()
+const mockTrackMetaListeners = new Map<string, Set<() => void>>()
+function trackMetaKey(fileId: string, trackId: string): string {
+  return `${fileId}::${trackId}`
+}
+function mockGetTrackMeta(fileId: string, trackId: string): MockTrackMeta {
+  return mockTrackMetaStore.get(trackMetaKey(fileId, trackId)) ?? EMPTY_MOCK_META
+}
+function mockSetTrackMeta(
+  fileId: string,
+  trackId: string,
+  partial: Partial<MockTrackMeta>,
+): void {
+  const key = trackMetaKey(fileId, trackId)
+  const existing = mockTrackMetaStore.get(key) ?? {}
+  const merged: MockTrackMeta = { ...existing, ...partial }
+  if (merged.color === undefined && merged.collapsed === undefined) {
+    mockTrackMetaStore.delete(key)
+  } else {
+    mockTrackMetaStore.set(key, merged)
+  }
+  const subs = mockTrackMetaListeners.get(fileId)
+  if (subs) for (const cb of subs) cb()
+}
+function mockSubscribeToTrackMeta(fileId: string, cb: () => void): () => void {
+  let set = mockTrackMetaListeners.get(fileId)
+  if (!set) {
+    set = new Set()
+    mockTrackMetaListeners.set(fileId, set)
+  }
+  set.add(cb)
+  return () => {
+    set!.delete(cb)
+    if (set!.size === 0) mockTrackMetaListeners.delete(fileId)
+  }
+}
+
+vi.mock('@stave/editor', async () => {
+  // React imported via dynamic to avoid the test mock loading multiple React
+  // copies (vitest hoists vi.mock above ES imports).
+  const React = await import('react')
+  function useTrackMeta(fileId: string | undefined, trackId: string) {
+    const subscribe = React.useCallback(
+      (onChange: () => void) => {
+        if (!fileId) return () => {}
+        return mockSubscribeToTrackMeta(fileId, onChange)
+      },
+      [fileId],
+    )
+    const getSnapshot = React.useCallback(() => {
+      if (!fileId) return EMPTY_MOCK_META
+      return mockGetTrackMeta(fileId, trackId)
+    }, [fileId, trackId])
+    const meta = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+    const set = React.useCallback(
+      (partial: Partial<MockTrackMeta>) => {
+        if (!fileId) return
+        mockSetTrackMeta(fileId, trackId, partial)
+      },
+      [fileId, trackId],
+    )
+    return { meta, set }
+  }
   return {
     getIRSnapshot: () => mockCurrent,
     subscribeIRSnapshot: (cb: (s: IRSnapshot | null) => void) => {
@@ -67,6 +134,14 @@ vi.mock('@stave/editor', () => {
     },
     revealLineInFile: (source: string, line: number) =>
       revealLineInFileMock(source, line),
+    useTrackMeta,
+    getTrackMeta: mockGetTrackMeta,
+    setTrackMeta: mockSetTrackMeta,
+    subscribeToTrackMeta: mockSubscribeToTrackMeta,
+    // Phase 20-12 wave-δ — sub-row height setting. Tests don't exercise
+    // the slider, so a static getter + a no-op subscribe suffice.
+    getMusicalTimelineSubRowHeight: () => 18,
+    onMusicalTimelineSubRowHeightChange: () => () => {},
   }
 })
 
@@ -180,6 +255,8 @@ class MockResizeObserver {
 beforeEach(() => {
   mockCurrent = null
   mockListeners.clear()
+  mockTrackMetaStore.clear()
+  mockTrackMetaListeners.clear()
   mockGridWidth = 800
   revealLineInFileMock.mockClear()
   globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver
@@ -1065,5 +1142,710 @@ describe('MusicalTimeline click-to-source — primary-loc path (Phase 20-03 / D-
     await clickFirstNote(container)
     expect(revealLineInFileMock).toHaveBeenCalledTimes(1)
     expect(revealLineInFileMock).toHaveBeenCalledWith('fixture.strudel', 1)
+  })
+})
+
+// Phase 20-12 α-4 — silent-prefix two-cycle geometry contract (D-04).
+//
+// Rule (CONTEXT D-04 rev2): silent cycles render as full-width empty cells.
+// Cycle-column geometry is invariant to event count — `pxPerCycle = width /
+// WINDOW_CYCLES` (timeAxis.ts:73). A cycle with zero events still occupies
+// the same horizontal slot as a cycle with events.
+//
+// Two-cycle fixture: events present in cycle 1 only (cycle 0 silent). The
+// `cat(silence, s("bd"))` shape from CONTEXT D-04 reaches MusicalTimeline as
+// 4 events at begins 1.0, 1.25, 1.5, 1.75 (cycle 1 stretched across the
+// whole cycle) and zero events in [0, 1). β-2's sub-row layout helper must
+// not introduce an event-count-derived width or this regression fails fast.
+describe('20-12 α-4 — silent-prefix geometry contract (D-04)', () => {
+  it('cycle 0 has zero event blocks; cycle 1 events render at expected x positions', async () => {
+    const { container } = render(<MusicalTimeline {...defaultProps()} />)
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            // Cycle 1 (silent prefix in cycle 0): bd*4 across the second cycle.
+            evt({ trackId: 'bd', s: 'bd', begin: 1.0, end: 1.05 }),
+            evt({ trackId: 'bd', s: 'bd', begin: 1.25, end: 1.30 }),
+            evt({ trackId: 'bd', s: 'bd', begin: 1.5, end: 1.55 }),
+            evt({ trackId: 'bd', s: 'bd', begin: 1.75, end: 1.80 }),
+          ],
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const blocks = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-musical-timeline-note]'),
+    )
+    // 4 events total — all in cycle 1.
+    expect(blocks).toHaveLength(4)
+    const xs = blocks.map((b) => parseFloat(b.style.left.replace('px', '')))
+    // pxPerCycle = 800 / 2 = 400. Cycle 1 starts at x=400.
+    // Cycle 0 is empty: NO blocks should land in [0, 400).
+    expect(xs.every((x) => x >= 400)).toBe(true)
+    // Beats 1.0, 1.25, 1.5, 1.75 → x ≈ 400, 500, 600, 700.
+    expect(Math.round(xs[0])).toBe(400)
+    expect(Math.round(xs[1])).toBe(500)
+    expect(Math.round(xs[2])).toBe(600)
+    expect(Math.round(xs[3])).toBe(700)
+  })
+
+  it('bar lines are drawn at cycle boundaries regardless of event count', async () => {
+    // Geometry invariance: WINDOW_CYCLES = 2 → 3 bar-line rules at left=0,
+    // pxPerCycle, 2*pxPerCycle. Holds whether cycle 0 has events or not.
+    const { container } = render(<MusicalTimeline {...defaultProps()} />)
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'bd', s: 'bd', begin: 1.0, end: 1.05 }),
+          ],
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const barLines = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-musical-timeline-bar-line]'),
+    )
+    // WINDOW_CYCLES + 1 (start, mid, end) bar lines. Implementation may
+    // emit either WINDOW_CYCLES or WINDOW_CYCLES + 1; assert "at least
+    // WINDOW_CYCLES" so this regression catches geometry collapse, not
+    // implementation-detail count.
+    expect(barLines.length).toBeGreaterThanOrEqual(2)
+    // Bar-line at index 0 starts at left=0; bar-line at index 1 must be
+    // at pxPerCycle = 400. The cycle-column slot exists even though
+    // cycle 0 has zero events.
+    const lefts = barLines.map((bl) => parseFloat(bl.style.left.replace('px', '')))
+    // First bar at left=0 (cycle boundary 0).
+    expect(Math.round(lefts[0])).toBe(0)
+    // Mid bar at left=400 (cycle 1 boundary).
+    expect(Math.round(lefts[1])).toBe(400)
+  })
+
+  it('cycle 0 silence + cycle 1 events: cycle-column widths are equal (event-count invariance)', async () => {
+    // Probe: render two snapshots — one with events ONLY in cycle 0, one
+    // with events ONLY in cycle 1. Each event's pxPerCycle = 800 / 2 = 400.
+    // The same begin offset within its cycle must map to the same column-
+    // relative position. (eventToRect is the geometry function; this test
+    // verifies the rendered output reflects it under MusicalTimeline.)
+    const { container, rerender } = render(<MusicalTimeline {...defaultProps()} />)
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd', s: 'bd', begin: 0, end: 0.05 })],
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const blockCycle0 = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    const x0 = parseFloat(blockCycle0!.style.left.replace('px', ''))
+    expect(Math.round(x0)).toBe(0)
+
+    rerender(<MusicalTimeline {...defaultProps()} />)
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd', s: 'bd', begin: 1, end: 1.05 })],
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const blockCycle1 = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    const x1 = parseFloat(blockCycle1!.style.left.replace('px', ''))
+    // Distance from cycle 1 start to event = 0; distance from cycle 0 start
+    // to event = 0. Therefore x1 - x0 = pxPerCycle = 400.
+    expect(Math.round(x1 - x0)).toBe(400)
+  })
+})
+
+// ─── Phase 20-12 β-1 — track header rail (chevron + swatch + name) ──────────
+
+describe('20-12 β-1 — track header rail', () => {
+  it('renders chevron + swatch + name for each track', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:test.strudel',
+          events: [
+            evt({ trackId: 'd1', s: 'bd' }),
+            evt({ trackId: 'd2', s: 'hh' }),
+          ],
+        }),
+      )
+    })
+    const headers = container.querySelectorAll(
+      '[data-musical-timeline="track-header"]',
+    )
+    expect(headers).toHaveLength(2)
+    for (const h of headers) {
+      expect(h.querySelector('[data-musical-timeline="track-chevron"]')).not
+        .toBeNull()
+      expect(h.querySelector('[data-musical-timeline="track-swatch"]')).not
+        .toBeNull()
+      expect(h.querySelector('[data-musical-timeline="track-name"]')).not
+        .toBeNull()
+    }
+    // First row's name reflects the trackId.
+    expect(
+      headers[0].querySelector('[data-musical-timeline="track-name"]')
+        ?.textContent,
+    ).toBe('d1')
+  })
+
+  it('chevron click toggles useTrackMeta.set({ collapsed: ... })', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:test.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevron = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevron).not.toBeNull()
+    expect(chevron!.getAttribute('data-collapsed')).toBe('false')
+
+    await act(async () => {
+      chevron!.click()
+    })
+    expect(
+      mockGetTrackMeta('file:test.strudel', 'd1').collapsed,
+    ).toBe(true)
+    // Re-read the chevron after the state change.
+    const chevron2 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevron2!.getAttribute('data-collapsed')).toBe('true')
+  })
+
+  // Regression: double-click chevron with Track-wrapped IR. Verifies BOTH
+  // the chevron data attribute AND the row layout's data-track-collapsed
+  // round-trip — earlier coverage only checked the first click.
+  it('chevron double-click round-trips collapse → uncollapse (Track-wrapped IR)', async () => {
+    const trackBody: PatternIR = { tag: 'Pure' } as PatternIR
+    const trackedIR: PatternIR = {
+      tag: 'Track',
+      trackId: 'd1',
+      body: trackBody,
+    } as PatternIR
+    const snap: IRSnapshot = {
+      ts: 0,
+      source: 'file:probe.strudel',
+      runtime: 'strudel' as IRSnapshot['runtime'],
+      code: '',
+      passes: [{ name: 'final', ir: trackedIR }],
+      ir: trackedIR,
+      events: [evt({ trackId: 'd1', s: 'bd' })],
+      irNodeIdLookup: new Map(),
+      irNodeLocLookup: new Map(),
+      irNodeIdsByLine: new Map(),
+    }
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(snap)
+    })
+
+    const chevron = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    const row = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d1"]',
+    )
+    expect(chevron).not.toBeNull()
+    expect(row).not.toBeNull()
+
+    // Initial: expanded
+    expect(chevron!.getAttribute('data-collapsed')).toBe('false')
+    expect(row!.getAttribute('data-track-collapsed')).toBe('false')
+
+    // Click 1: collapse
+    await act(async () => {
+      chevron!.click()
+    })
+    expect(mockGetTrackMeta('file:probe.strudel', 'd1').collapsed).toBe(true)
+    const chevronAfter1 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    const rowAfter1 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d1"]',
+    )
+    expect(chevronAfter1!.getAttribute('data-collapsed')).toBe('true')
+    expect(rowAfter1!.getAttribute('data-track-collapsed')).toBe('true')
+
+    // Click 2: uncollapse — THE CRITICAL CHECK
+    await act(async () => {
+      chevronAfter1!.click()
+    })
+    expect(mockGetTrackMeta('file:probe.strudel', 'd1').collapsed).toBe(false)
+    const chevronAfter2 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    const rowAfter2 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d1"]',
+    )
+    expect(chevronAfter2!.getAttribute('data-collapsed')).toBe('false')
+    expect(rowAfter2!.getAttribute('data-track-collapsed')).toBe('false')
+  })
+
+  // Regression: multi-track Stack of Tracks (matches user's #108 fixture shape).
+  // Two `$:` blocks → Stack { tracks: [Track('d1', ...), Track('d2', ...)] }.
+  // Click chevron on d2 → collapse → click again → uncollapse.
+  it('chevron double-click on d2 in multi-track Stack uncollapses cleanly', async () => {
+    const trackedIR: PatternIR = {
+      tag: 'Stack',
+      tracks: [
+        { tag: 'Track', trackId: 'd1', body: { tag: 'Pure' } },
+        { tag: 'Track', trackId: 'd2', body: { tag: 'Pure' } },
+      ],
+    } as PatternIR
+    const snap: IRSnapshot = {
+      ts: 0,
+      source: 'file:probe2.strudel',
+      runtime: 'strudel' as IRSnapshot['runtime'],
+      code: '',
+      passes: [{ name: 'final', ir: trackedIR }],
+      ir: trackedIR,
+      events: [
+        evt({ trackId: 'd1', s: 'hh' }),
+        evt({ trackId: 'd2', s: 'bd' }),
+      ],
+      irNodeIdLookup: new Map(),
+      irNodeLocLookup: new Map(),
+      irNodeIdsByLine: new Map(),
+    }
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(snap)
+    })
+
+    const chevronD2 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline-track-label="d2"] [data-musical-timeline="track-chevron"]',
+    )
+    const rowD2 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d2"]',
+    )
+    expect(chevronD2).not.toBeNull()
+    expect(rowD2).not.toBeNull()
+    expect(chevronD2!.getAttribute('data-collapsed')).toBe('false')
+    expect(rowD2!.getAttribute('data-track-collapsed')).toBe('false')
+
+    // Click 1: collapse d2
+    await act(async () => {
+      chevronD2!.click()
+    })
+    expect(mockGetTrackMeta('file:probe2.strudel', 'd2').collapsed).toBe(true)
+    const rowD2After1 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d2"]',
+    )
+    expect(rowD2After1!.getAttribute('data-track-collapsed')).toBe('true')
+
+    // Click 2: uncollapse d2
+    const chevronD2After1 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline-track-label="d2"] [data-musical-timeline="track-chevron"]',
+    )
+    await act(async () => {
+      chevronD2After1!.click()
+    })
+    expect(mockGetTrackMeta('file:probe2.strudel', 'd2').collapsed).toBe(false)
+    const rowD2After2 = container.querySelector<HTMLDivElement>(
+      '[data-musical-timeline-track-row="d2"]',
+    )
+    expect(rowD2After2!.getAttribute('data-track-collapsed')).toBe('false')
+  })
+
+  it('swatch click captures the dot rect (popover anchor available)', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:test.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const swatch = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-swatch"]',
+    )
+    expect(swatch).not.toBeNull()
+    // Stub getBoundingClientRect — jsdom returns all-zero by default; that's
+    // fine for the click-handler-fires assertion. The popover render path is
+    // β-6's domain.
+    swatch!.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 12, left: 0, right: 12, width: 12, height: 12, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    await act(async () => {
+      swatch!.click()
+    })
+    // No throw + button remains in DOM is the proof of contract; the popover
+    // appearance is asserted separately in TrackSwatchPopover.test.tsx.
+    expect(swatch!.isConnected).toBe(true)
+  })
+})
+
+// ─── Phase 20-12 β-3 — bar opacity = clamp(gain, 0.15, 1) ───────────────────
+
+describe('20-12 β-3 — bar opacity = clamp(gain, 0.15, 1)', () => {
+  async function getBarOpacity(eventOverrides: Partial<IREvent>): Promise<number> {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'd1', s: 'bd', begin: 0, end: 0.1, ...eventOverrides }),
+          ],
+        }),
+      )
+    })
+    const block = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(block).not.toBeNull()
+    return parseFloat(block!.style.opacity)
+  }
+
+  it('event with gain=1 (default) renders at opacity 1.0', async () => {
+    expect(await getBarOpacity({ gain: 1 })).toBe(1)
+  })
+
+  it('event with gain=0.5 renders at opacity 0.5', async () => {
+    expect(await getBarOpacity({ gain: 0.5 })).toBe(0.5)
+  })
+
+  it('event with gain=0 floors to opacity 0.15 (never invisible)', async () => {
+    expect(await getBarOpacity({ gain: 0 })).toBe(0.15)
+  })
+
+  it('event with gain=2 ceils to opacity 1.0', async () => {
+    expect(await getBarOpacity({ gain: 2 })).toBe(1)
+  })
+})
+
+// ─── Phase 20-12 β-5 — hover tooltip (full chain summary) ───────────────────
+
+describe('20-12 β-5 — hover tooltip extension', () => {
+  async function getTooltip(eventOverrides: Partial<IREvent>): Promise<string> {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'd1', s: 'bd', begin: 0, end: 0.1, ...eventOverrides }),
+          ],
+        }),
+      )
+    })
+    const block = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    return block!.getAttribute('title') ?? ''
+  }
+
+  it('includes a non-default gain segment when gain != 1', async () => {
+    const t = await getTooltip({ gain: 0.5 })
+    expect(t).toContain('gain 0.5')
+  })
+
+  it('omits gain segment when gain === 1 (default)', async () => {
+    const t = await getTooltip({ gain: 1 })
+    expect(t).not.toContain('gain')
+  })
+
+  it('includes chained-Param extras (n / freq / pan) when present in evt.params', async () => {
+    const t = await getTooltip({
+      params: { n: 7, freq: 440, pan: 0.5 },
+    })
+    expect(t).toContain('n 7')
+    expect(t).toContain('freq 440Hz')
+    expect(t).toContain('pan 0.5')
+  })
+
+  it('does not surface forbidden IR vocabulary on Param-rich events (PV32 lock)', async () => {
+    const t = await getTooltip({
+      gain: 0.7,
+      params: { n: 0, freq: 440, room: 0.3 },
+    })
+    expect(t).not.toMatch(FORBIDDEN_VOCABULARY)
+  })
+})
+
+// ─── Phase 20-12 γ-1 — collapse persistence (round-trip across remount) ────
+
+describe('20-12 γ-1 — collapse persistence', () => {
+  it('chevron click writes { collapsed: true } to trackMeta store', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma1.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    expect(
+      mockGetTrackMeta('file:gamma1.strudel', 'd1').collapsed,
+    ).toBeUndefined()
+
+    const chevron = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    await act(async () => {
+      chevron!.click()
+    })
+
+    expect(
+      mockGetTrackMeta('file:gamma1.strudel', 'd1').collapsed,
+    ).toBe(true)
+  })
+
+  it('reload-equivalent (re-mount with same fileId+trackId) restores collapsed state', async () => {
+    // Simulate prior session: store already has collapsed=true persisted.
+    mockSetTrackMeta('file:gamma1.strudel', 'd1', { collapsed: true })
+
+    const { container, unmount } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma1.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+
+    const chevron = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevron!.getAttribute('data-collapsed')).toBe('true')
+    expect(chevron!.getAttribute('aria-expanded')).toBe('false')
+
+    // Re-mount (reload-equivalent): unmount + render fresh + republish.
+    unmount()
+    const { container: c2 } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma1.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevron2 = c2.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevron2!.getAttribute('data-collapsed')).toBe('true')
+  })
+
+  it('switch fileId then back: each file has independent collapsed state', async () => {
+    // File A collapses d1; File B does not touch d1.
+    mockSetTrackMeta('file:A.strudel', 'd1', { collapsed: true })
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    // Mount on file B — its d1 must read uncollapsed (per-file scoping).
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:B.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevronB = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevronB!.getAttribute('data-collapsed')).toBe('false')
+
+    // Switch to file A — d1 must now read collapsed.
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:A.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevronA = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevronA!.getAttribute('data-collapsed')).toBe('true')
+
+    // Switch back to file B — still uncollapsed (no leakage).
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:B.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const chevronB2 = container.querySelector<HTMLButtonElement>(
+      '[data-musical-timeline="track-chevron"]',
+    )
+    expect(chevronB2!.getAttribute('data-collapsed')).toBe('false')
+  })
+})
+
+// ─── Phase 20-12 γ-2 — color persistence + 3-source precedence ─────────────
+
+describe('20-12 γ-2 — color persistence', () => {
+  it('setTrackMeta({ color }) persists and propagates to the bar background', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+
+    // Pre-write baseline: bar uses auto palette.
+    const barBefore = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    const autoBg = barBefore!.style.background
+    expect(autoBg).not.toBe('')
+
+    // User picks an explicit override (mirrors β-6 popover onPick path).
+    await act(async () => {
+      mockSetTrackMeta('file:gamma2.strudel', 'd1', { color: '#ff8800' })
+    })
+
+    const barAfter = container.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(barAfter!.style.background).toBe('rgb(255, 136, 0)')
+    // Header swatch dot also reflects the override.
+    const swatch = container.querySelector<HTMLElement>(
+      '[data-musical-timeline="track-swatch"]',
+    )
+    expect(swatch!.style.background).toBe('rgb(255, 136, 0)')
+  })
+
+  it('every event in the row reflects the override (not just the first bar)', async () => {
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [
+            evt({ trackId: 'd1', s: 'bd', begin: 0, end: 0.1 }),
+            evt({ trackId: 'd1', s: 'bd', begin: 0.25, end: 0.35 }),
+            evt({ trackId: 'd1', s: 'bd', begin: 0.5, end: 0.6 }),
+          ],
+        }),
+      )
+    })
+    await act(async () => {
+      mockSetTrackMeta('file:gamma2.strudel', 'd1', { color: '#00aa44' })
+    })
+
+    const bars = container.querySelectorAll<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(bars).toHaveLength(3)
+    for (const b of bars) {
+      expect(b.style.background).toBe('rgb(0, 170, 68)')
+    }
+  })
+
+  it('reload restores the custom color (auto palette is overridden post-remount)', async () => {
+    mockSetTrackMeta('file:gamma2.strudel', 'd1', { color: '#123456' })
+
+    const { unmount } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    unmount()
+
+    const { container: c2 } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [evt({ trackId: 'd1', s: 'bd' })],
+        }),
+      )
+    })
+    const bar = c2.querySelector<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(bar!.style.background).toBe('rgb(18, 52, 86)')
+  })
+
+  it('precedence: evt.color wins over meta.color wins over auto palette', async () => {
+    // Set meta.color so we can test event-level wins over it.
+    mockSetTrackMeta('file:gamma2.strudel', 'd1', { color: '#222222' })
+
+    const { container } = await renderSettled(
+      <MusicalTimeline {...defaultProps()} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          source: 'file:gamma2.strudel',
+          events: [
+            // Event-level color takes precedence over both meta and palette.
+            evt({ trackId: 'd1', s: 'bd', begin: 0, end: 0.1, color: '#ffffff' }),
+            // No event color → meta.color wins over palette.
+            evt({ trackId: 'd1', s: 'bd', begin: 0.25, end: 0.35 }),
+          ],
+        }),
+      )
+    })
+    const bars = container.querySelectorAll<HTMLElement>(
+      '[data-musical-timeline-note]',
+    )
+    expect(bars).toHaveLength(2)
+    // Bar 0: evt.color === white — wins.
+    expect(bars[0].style.background).toBe('rgb(255, 255, 255)')
+    // Bar 1: no evt.color → meta.color (dark grey) — wins over auto palette.
+    expect(bars[1].style.background).toBe('rgb(34, 34, 34)')
   })
 })

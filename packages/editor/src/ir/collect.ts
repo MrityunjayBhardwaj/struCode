@@ -188,6 +188,15 @@ export interface CollectContext {
    * spread in makeEvent — CONTEXT pre-mortem #6).
    */
   trackId?: string
+  /**
+   * Phase 20-12 — populated by voice-defining Stack arm. Each voice-row
+   * inside a `$:` block (each `stack(...)` arg) gets a sequential leaf
+   * index 0..N-1, threaded onto produced events for chrome sub-row
+   * partitioning. RESET to undefined at Track entry so inner Tracks
+   * start a fresh leaf counter. Nested voice-defining Stacks continue
+   * the parent's counter (sequential numbering across recursion).
+   */
+  leafIndex?: number
 }
 
 const DEFAULT_CONTEXT: CollectContext = {
@@ -206,6 +215,55 @@ const DEFAULT_CONTEXT: CollectContext = {
  * - Numeric notes: treated as MIDI note number and converted to Hz
  * Returns null if the string format is unrecognised.
  */
+/**
+ * Count voice-leaves contributed by an IR subtree to its enclosing Track.
+ * Mirrors `flattenLeafVoices` in irProjection.ts (app package): voice-
+ * defining Stack (`userMethod ∈ {undefined, 'stack'}`) recurses; single-
+ * body uniform-modifier wrappers (Code-with-via, Param, FX, Fast, Slow,
+ * Elongate, Late, Degrade, Ply, Struct, Swing, Shuffle, Scramble, Chop,
+ * When, Every, Loop, Ramp) are peeled; everything else terminates as 1
+ * leaf. Used by the Stack arm to advance the leaf counter past a child
+ * subtree that may itself contribute multiple leaves (nested voice-
+ * defining Stacks). Phase 20-12 — sub-row partition support.
+ */
+function countLeavesInIR(node: PatternIR): number {
+  if (node.tag === 'Stack') {
+    if (node.userMethod === undefined || node.userMethod === 'stack') {
+      let n = 0
+      for (const t of node.tracks) n += countLeavesInIR(t)
+      return n
+    }
+    return 1
+  }
+  // Peel single-body uniform-modifier wrappers (mirrors flattenLeafVoices
+  // peel set in app's irProjection.ts).
+  if (node.tag === 'Code' && node.via?.inner) {
+    return countLeavesInIR(node.via.inner)
+  }
+  switch (node.tag) {
+    case 'Param':
+    case 'FX':
+    case 'Fast':
+    case 'Slow':
+    case 'Elongate':
+    case 'Late':
+    case 'Degrade':
+    case 'Ply':
+    case 'Struct':
+    case 'Swing':
+    case 'Shuffle':
+    case 'Scramble':
+    case 'Chop':
+    case 'When':
+    case 'Every':
+    case 'Loop':
+    case 'Ramp':
+      return countLeavesInIR(node.body)
+    default:
+      return 1
+  }
+}
+
 function noteToFreq(note: string | number): number | null {
   if (typeof note === 'number') {
     // MIDI note number → Hz (MIDI 69 = A4 = 440 Hz)
@@ -248,6 +306,7 @@ function makeEvent(ctx: CollectContext, note: string | number, params: Record<st
     // Avoids polluting IREvent with enumerable `trackId: undefined`
     // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
     ...(ctx.trackId !== undefined ? { trackId: ctx.trackId } : {}),
+    ...(ctx.leafIndex !== undefined ? { leafIndex: ctx.leafIndex } : {}),
   }
 }
 
@@ -358,7 +417,17 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // OUTERMOST wrapper, walk runs outer-first so OUTER wins. This matches
       // the source-order "last-typed-wins" convention (D-05).
       // CONTEXT pre-mortem #1 + RESEARCH G8-Trap C verified safe.
-      const childCtx: CollectContext = { ...ctx, trackId: ir.trackId }
+      // Phase 20-12 — RESET leafIndex to undefined at Track entry. Each
+      // Track scope owns its own voice-counter; nested Track must not
+      // inherit the outer's leafIndex (otherwise inner-track events
+      // would carry the outer's leaf id and chrome's sub-row partition
+      // would mis-bucket them). The first voice-defining Stack the body
+      // reaches initialises the counter at 0.
+      const childCtx: CollectContext = {
+        ...ctx,
+        trackId: ir.trackId,
+        leafIndex: undefined,
+      }
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
     }
 
@@ -501,10 +570,29 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     }
 
     case 'Stack': {
-      // Parallel: all tracks at same time
+      // Parallel: all tracks at same time.
+      // Phase 20-12 — voice-defining Stack (`userMethod ∈ {undefined,
+      // 'stack'}`) assigns sequential `leafIndex` to each child for
+      // chrome sub-row partitioning. Nested voice-defining Stacks
+      // continue the parent counter (matches flattenLeafVoices'
+      // depth-first source-order traversal in irProjection.ts). Stack
+      // with userMethod 'layer' / 'jux' / 'off' is a TRANSFORM, not
+      // parallel composition — events concatenate without leafIndex
+      // re-assignment so the ambient ctx.leafIndex carries through.
+      const isVoiceDefining =
+        ir.userMethod === undefined || ir.userMethod === 'stack'
       const events: IREvent[] = []
-      for (const track of ir.tracks) {
-        events.push(...walk(track, ctx))
+      if (isVoiceDefining) {
+        let leafIdx = ctx.leafIndex ?? 0
+        for (const track of ir.tracks) {
+          const childCtx: CollectContext = { ...ctx, leafIndex: leafIdx }
+          events.push(...walk(track, childCtx))
+          leafIdx += countLeavesInIR(track)
+        }
+      } else {
+        for (const track of ir.tracks) {
+          events.push(...walk(track, ctx))
+        }
       }
       // PV36 — synthetic Stack from layer/jux/off carries the call-site
       // range as ir.loc (parseStrudel.ts:392-397/517-522/593-599); that
@@ -575,22 +663,65 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
     }
 
     case 'Fast': {
-      // Time compression: events happen faster (more events per cycle)
+      // Strudel `pat.fast(N)` (≡ mini `pat*N`): play `body` N times per
+      // cycle. For integer N >= 1 we walk the body N times, each over a
+      // slot of width `ctx.duration / N` advancing `ctx.time` by that
+      // slot. Speed is also scaled so per-event durations shrink by 1/N.
+      // PV36 — duplicates inherit the same loc[1+] (Inspector dedupes by
+      // (loc[0], begin) pair). Non-integer factors (rare; e.g. fast(1.5))
+      // fall back to compressed-once behaviour pre-fix; full fractional
+      // semantics is deferred (would need partial-slot probabilistic
+      // sampling like Strudel runtime). factor <= 0 / non-finite is a
+      // pathological input → treat as identity.
+      const factor = ir.factor
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return withWrapperLoc(walk(ir.body, ctx), ir.loc)
+      }
+      if (Number.isInteger(factor) && factor >= 1) {
+        const events: IREvent[] = []
+        const slotDuration = ctx.duration / factor
+        for (let i = 0; i < factor; i++) {
+          const childCtx: CollectContext = {
+            ...ctx,
+            time: ctx.time + i * slotDuration,
+            duration: slotDuration,
+            // Don't scale speed: the duration shrink already encodes the
+            // "twice as fast" semantic for the iterated body. Multiplying
+            // speed too would double-shrink Play durations and Seq cursor
+            // advance (`slotDuration / ctx.speed`), leaving inter-slot
+            // gaps that violate the "fill the cycle" expectation.
+          }
+          events.push(...walk(ir.body, childCtx))
+        }
+        return withWrapperLoc(events, ir.loc)
+      }
+      // Non-integer factor: legacy compressed-once behaviour.
       const childCtx: CollectContext = {
         ...ctx,
-        speed: ctx.speed * ir.factor,
+        speed: ctx.speed * factor,
         duration: ctx.duration,
       }
-      // PV36 — .fast(N) call-site. fast(2) duplicates inherit the same
-      // loc[1+] (DV-05 — Inspector dedupes by (loc[0], begin) pair).
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
     }
 
     case 'Slow': {
-      // Time dilation: events happen slower (fewer events per cycle)
+      // Strudel `pat.slow(N)`: play body once over N cycles. For our
+      // single-cycle collect window, only the FRACTION of body's events
+      // that falls within `[ctx.begin, ctx.end)` is visible. Walking body
+      // once with `duration *= N` and `speed /= N` puts the first
+      // 1/N-fraction of body's events into the current cycle window;
+      // Play's window-clip in the leaf arm filters out events outside it.
+      // For integer N >= 2, that means only events in body's first slot
+      // appear in cycle 0. Cycle 1 sees the next 1/N. Approximation: for
+      // a single-event Play body, slow(N) shows the event in cycle 0
+      // only with longer duration. PV36 loc preserved via withWrapperLoc.
+      const factor = ir.factor
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return withWrapperLoc(walk(ir.body, ctx), ir.loc)
+      }
       const childCtx: CollectContext = {
         ...ctx,
-        speed: ctx.speed / ir.factor,
+        speed: ctx.speed / factor,
         duration: ctx.duration,
       }
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
@@ -1039,4 +1170,41 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       return withWrapperLoc(out, ir.loc)
     }
   }
+}
+
+/**
+ * Collect events across N consecutive cycles. The single-cycle `collect`
+ * emits events in [0, 1); for the timeline (which displays
+ * `WINDOW_CYCLES` cycles) we want events filling [0, WINDOW_CYCLES).
+ * Loops `collect()` once per cycle with `time = begin = c, end = c + 1`
+ * and concatenates results — events from cycle `c` carry begin/end ∈
+ * [c, c+1).
+ *
+ * Promoted from `__tests__/helpers/collectCycles.ts` (extracted in
+ * Phase 19-03-08, used by parity tests). Production caller:
+ * `StrudelEditorClient` populates `IRSnapshot.events` so the timeline's
+ * cycle-1 column isn't empty for static viz patterns. Cross-cycle
+ * variation (`<a b c>` alternation, `degrade`, `shuffle`) renders
+ * its full per-cycle shape inside the visible window.
+ *
+ * Phase 20-12 chrome-fidelity fix.
+ */
+export function collectCycles(
+  ir: PatternIR,
+  startCycle: number,
+  endCycle: number,
+): IREvent[] {
+  const events: IREvent[] = []
+  for (let c = startCycle; c < endCycle; c++) {
+    events.push(
+      ...collect(ir, {
+        cycle: c,
+        time: c,
+        begin: c,
+        end: c + 1,
+        duration: 1,
+      }),
+    )
+  }
+  return events
 }

@@ -1264,22 +1264,19 @@ describe('20-10 wave γ — Param sub-IR slot-table semantics', () => {
     expect(cycles.map((e) => e.s)).toEqual(['bd', 'cp', 'bd', 'cp'])
   })
 
-  // 6. Param with mini-fast `s("hh*8")` — observed slot behavior (PINNED).
-  // Strudel runtime semantics: `hh*8` produces 8 events per cycle, so every
-  // body event finds a slot of 'hh'. Stave's current implementation lowers
-  // `*N` via parseMini to `Fast(N, Play(hh))`. The Fast collect arm at
-  // collect.ts:546 only scales ctx.speed; it does NOT repeat the body. So
-  // `Fast(8, Play(hh))` produces ONE slot event spanning [0, 0.125), and
-  // the second body event at begin=0.5 falls outside any slot → s=null.
-  // This is the same family as issue #109 (mini-shorthand handling) but
-  // reaches deeper into collect-time semantics, not just print-time. The
-  // test pins observed behavior; a future fix updates the expectation
-  // when Fast gains repeat semantics.
-  it('note("c d").s("hh*8") — first body event gets hh, second body event falls outside slot range (issue #109 family)', () => {
+  // 6. Param with mini-fast `s("hh*8")` — Fast-as-repeat semantics fixed.
+  // Strudel runtime: `hh*8` produces 8 events per cycle, so every body
+  // event finds a slot of 'hh'. Earlier the Fast collect arm only scaled
+  // ctx.speed without repeating the body, so the second body event at
+  // begin=0.5 fell outside the single 0..0.125 slot → s=null. After
+  // gaining repeat semantics (collect.ts Fast arm iterates `factor`
+  // times), 8 slots span [0..1) at width 0.125 each, and BOTH body
+  // events find a 'hh' slot. Pins the corrected behavior.
+  it('note("c d").s("hh*8") — both body events get hh after Fast-as-repeat fix', () => {
     const evs = collect(parseStrudel('note("c d").s("hh*8")'))
     expect(evs).toHaveLength(2)
     expect(evs[0].s).toBe('hh')
-    expect(evs[1].s ?? null).toBeNull()
+    expect(evs[1].s).toBe('hh')
   })
 
   // 7. Loc-position assertion (PV36 / RESEARCH Trap 10 second clause).

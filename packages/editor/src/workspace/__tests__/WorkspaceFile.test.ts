@@ -24,6 +24,9 @@ import {
   setZoneCropOverride,
   pruneZoneOverrides,
   subscribeToZoneOverrides,
+  getTrackMeta,
+  setTrackMeta,
+  subscribeToTrackMeta,
 } from '../WorkspaceFile'
 
 describe('WorkspaceFile store', () => {
@@ -206,5 +209,81 @@ describe('WorkspaceFile store', () => {
     subscribe('a', () => { further++ })
     setContent('a', 'z')
     expect(further).toBe(1)
+  })
+})
+
+// Phase 20-12 α-2 — trackMeta (D-01/D-02). Mirrors zoneOverrides; the new
+// per-file Y.Map persists track-chrome state (custom palette swatch +
+// chevron collapsed). The observer-wire-by-reference idiom protects against
+// switchProject Y.Doc swaps (feedback_observer_wire_race.md).
+describe('20-12 α-2 — trackMeta', () => {
+  beforeEach(() => {
+    __resetWorkspaceFilesForTests()
+  })
+
+  it('getTrackMeta returns {} for unknown fileId', () => {
+    expect(getTrackMeta('nope', 'd1')).toEqual({})
+  })
+
+  it('getTrackMeta returns {} for known fileId without any record', () => {
+    createWorkspaceFile('f1', 'p.strudel', 'x', 'strudel')
+    expect(getTrackMeta('f1', 'd1')).toEqual({})
+  })
+
+  it('setTrackMeta({color}) → getTrackMeta sees color', () => {
+    createWorkspaceFile('f1', 'p.strudel', 'x', 'strudel')
+    setTrackMeta('f1', 'd1', { color: '#ff0000' })
+    expect(getTrackMeta('f1', 'd1')).toEqual({ color: '#ff0000' })
+  })
+
+  it('setTrackMeta({collapsed:true}) merges with existing color (not a replace)', () => {
+    createWorkspaceFile('f1', 'p.strudel', 'x', 'strudel')
+    setTrackMeta('f1', 'd1', { color: '#ff0000' })
+    setTrackMeta('f1', 'd1', { collapsed: true })
+    expect(getTrackMeta('f1', 'd1')).toEqual({ color: '#ff0000', collapsed: true })
+  })
+
+  it('setTrackMeta with both fields undefined deletes the key (cleanup)', () => {
+    createWorkspaceFile('f1', 'p.strudel', 'x', 'strudel')
+    setTrackMeta('f1', 'd1', { color: '#ff0000' })
+    setTrackMeta('f1', 'd1', { color: undefined, collapsed: undefined })
+    expect(getTrackMeta('f1', 'd1')).toEqual({})
+  })
+
+  it('subscribeToTrackMeta fires observer on .set', () => {
+    createWorkspaceFile('f1', 'p.strudel', 'x', 'strudel')
+    const cb = vi.fn()
+    const unsub = subscribeToTrackMeta('f1', cb)
+    setTrackMeta('f1', 'd1', { collapsed: true })
+    expect(cb).toHaveBeenCalled()
+    unsub()
+  })
+
+  it('resetFileStore clears wired observers — switchProject Y.Doc swap re-wires fresh', () => {
+    // 1. Wire on file A in project 1; set color; observer fires.
+    createWorkspaceFile('a', 'p.strudel', 'x', 'strudel')
+    const cb1 = vi.fn()
+    const unsub1 = subscribeToTrackMeta('a', cb1)
+    setTrackMeta('a', 'd1', { color: '#ff0000' })
+    expect(cb1).toHaveBeenCalled()
+    unsub1()
+
+    // 2. Reset (simulates project switch) — wiredTrackMetaObservers.clear()
+    //    drops the Set entry for fileId 'a'. The OLD Y.Map (from the
+    //    destroyed Y.Doc) becomes inaccessible.
+    __resetWorkspaceFilesForTests()
+
+    // 3. New project, same fileId 'a' — fresh Y.Map under a fresh Y.Doc.
+    //    The observer must wire on the NEW map; without the .clear() the
+    //    Set still has 'a' and ensureTrackMetaMap would skip wiring →
+    //    cb2 would never fire.
+    createWorkspaceFile('a', 'p.strudel', 'y', 'strudel')
+    const cb2 = vi.fn()
+    const unsub2 = subscribeToTrackMeta('a', cb2)
+    setTrackMeta('a', 'd1', { color: '#00ff00' })
+    expect(cb2).toHaveBeenCalled()
+    // The new project starts fresh — old color is gone.
+    expect(getTrackMeta('a', 'd1')).toEqual({ color: '#00ff00' })
+    unsub2()
   })
 })

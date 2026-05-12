@@ -2,7 +2,7 @@
 export type { IREvent, SourceLocation, IRPattern } from './ir'
 export { merge, transpose, timestretch, filter, scaleGain } from './ir'
 export type { PatternIR, PlayParams, CollectContext, ComponentBag, System } from './ir'
-export { IR, collect, toStrudel, patternToJSON, patternFromJSON, PATTERN_IR_SCHEMA_VERSION } from './ir'
+export { IR, collect, collectCycles, toStrudel, patternToJSON, patternFromJSON, PATTERN_IR_SCHEMA_VERSION } from './ir'
 export { parseMini, parseStrudel, propagate, StrudelParseSystem, IREventCollectSystem } from './ir'
 
 // Phase 19-07 (#79) — parser stage helpers. PK10 propagation: re-exported
@@ -132,7 +132,15 @@ export {
   setZoneHeightOverride,
   pruneZoneOverrides,
   subscribeToZoneOverrides,
+  // Phase 20-12 α-2 — per-track UI metadata (color override + collapsed)
+  getTrackMeta,
+  setTrackMeta,
+  subscribeToTrackMeta,
 } from './workspace/WorkspaceFile'
+export type { TrackMeta } from './workspace/WorkspaceFile'
+// Phase 20-12 α-3 — React hook for trackMeta
+export { useTrackMeta } from './workspace/useTrackMeta'
+export type { UseTrackMetaResult } from './workspace/useTrackMeta'
 export { initProjectDoc, initProjectDocSync, switchProject, getActiveProjectId, isDocReady, subscribeToDocUpdate } from './workspace/projectDoc'
 export {
   undo,
@@ -160,6 +168,9 @@ export {
   onInlineVizActionSizeChange,
   applyPersistedInlineVizActionSize,
   INLINE_VIZ_ACTION_SIZE_VAR,
+  getMusicalTimelineSubRowHeight,
+  setMusicalTimelineSubRowHeight,
+  onMusicalTimelineSubRowHeightChange,
   getEditorBackdropBlur,
   setEditorBackdropBlur,
   applyPersistedBackdropBlur,

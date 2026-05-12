@@ -34,15 +34,23 @@
 'use client'
 
 import * as React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type IRSnapshot,
   type IREvent,
   type HapStream,
   type HapEvent,
+  type PatternIR,
+  type TrackMeta,
   getIRSnapshot,
+  getTrackMeta,
+  setTrackMeta,
   subscribeIRSnapshot,
+  subscribeToTrackMeta,
   revealLineInFile,
+  useTrackMeta,
+  getMusicalTimelineSubRowHeight,
+  onMusicalTimelineSubRowHeightChange,
 } from '@stave/editor'
 import { groupEventsByTrack } from './musicalTimeline/groupEventsByTrack'
 import { stableTrackOrder } from './musicalTimeline/stableTrackOrder'
@@ -54,6 +62,13 @@ import {
   cpsToBpm,
 } from './musicalTimeline/timeAxis'
 import { paletteForTrack, trackIndexOf } from './musicalTimeline/colors'
+import {
+  layoutTrackRows,
+  type TrackLayout,
+  type LeafLayout,
+} from './musicalTimeline/layoutTrackRows'
+import { extractPitch, pitchToY } from './musicalTimeline/pitch'
+import { TrackSwatchPopover } from './TrackSwatchPopover'
 import { Ruler } from './musicalTimeline/Ruler'
 import {
   EMPTY_STATE_COPY,
@@ -87,6 +102,27 @@ const TAB_ID = 'musical-timeline'
 const TRACK_LABEL_WIDTH = 90 // mockup: .daw-gutter width 90px (DV-02)
 const ROW_HEIGHT = 24
 const STATUS_HEIGHT = 24
+// β-3/β-4 — bar geometry constants.
+//   BAR_TOP_DEFAULT / BAR_HEIGHT_DEFAULT: collapsed-row + non-expanded
+//     fallback (preserves the pre-β-4 top:4 / height:16 visual baseline).
+//   LEAF_BAR_HEIGHT: smaller bar inside SUB_ROW_HEIGHT bands so the bar +
+//     padding fit within the 18px leaf band.
+const BAR_TOP_DEFAULT = 4
+const BAR_HEIGHT_DEFAULT = 16
+// Phase 20-12 — leaf bar height derives from the sub-row band height
+// (which itself comes from `getMusicalTimelineSubRowHeight()`, range
+// 12-48). The bar takes most of the band; ~10px is reserved for pitch
+// motion (so a melodic c4..c5 contour stays visible at any sub-row
+// height). Floor at 6px so very small sub-rows still show something.
+//
+// Wave-ε (#19 follow-up): the bar height was hardcoded at 6px so big
+// sub-rows showed tiny bars. Wave-ε scales the bar with the band so
+// the slider produces a coherent visual change.
+const LEAF_BAR_PITCH_RESERVE = 12   // px of pitch motion preserved
+const LEAF_BAR_HEIGHT_MIN = 6
+function leafBarHeight(bandHeight: number): number {
+  return Math.max(LEAF_BAR_HEIGHT_MIN, bandHeight - LEAF_BAR_PITCH_RESERVE)
+}
 const EMPTY_SET: ReadonlySet<string> = Object.freeze(new Set<string>())
 
 /**
@@ -106,6 +142,12 @@ function midiToName(n: number): string {
  * Build the tooltip string for a note block. Every interpolation site
  * is here so the test surface is small (Trap NEW-2: runtime-computed
  * vocabulary leaks). All segments use musician vocabulary only.
+ *
+ * Phase 20-12 β-5: extended to surface chained Param values (n / freq /
+ * pan / room / speed / bank / scale) and a non-default `gain` segment.
+ * Native `title=` carrier is retained — RESEARCH §B.4 / G.4: the browser
+ * gives `pointer-events: none` for free, mitigating CONTEXT pre-mortem
+ * #4 (tooltip-blocks-click-through).
  */
 function formatNoteTooltip(event: IREvent, fallbackTrackId: string): string {
   const sample = event.s ?? fallbackTrackId
@@ -122,9 +164,262 @@ function formatNoteTooltip(event: IREvent, fallbackTrackId: string): string {
     typeof event.velocity === 'number' && event.velocity !== 1
       ? `velocity ${event.velocity.toFixed(2)}`
       : null
-  return [sample, noteSegment, barBeat, velocitySegment]
+  // β-5: gain segment when non-default (gain 1 is the implicit default).
+  const gainSegment =
+    typeof event.gain === 'number' && event.gain !== 1
+      ? `gain ${event.gain}`
+      : null
+  // β-5: chained-Param extras (.n / .freq / .pan / .room / .speed / .bank /
+  // .scale). Uses raw value formatting; numeric `n` displays as integer-ish,
+  // `freq` includes units. Skipped when value is null/undefined.
+  const params = (event.params ?? {}) as Record<string, unknown>
+  const PARAM_KEYS_DISPLAY: readonly { key: string; format: (v: unknown) => string | null }[] = [
+    { key: 'n', format: (v) => (v == null ? null : `n ${v}`) },
+    { key: 'freq', format: (v) => (typeof v === 'number' ? `freq ${v}Hz` : v == null ? null : `freq ${v}`) },
+    { key: 'pan', format: (v) => (v == null ? null : `pan ${v}`) },
+    { key: 'room', format: (v) => (v == null ? null : `room ${v}`) },
+    { key: 'speed', format: (v) => (v == null ? null : `speed ${v}`) },
+    { key: 'bank', format: (v) => (v == null ? null : `bank ${v}`) },
+    { key: 'scale', format: (v) => (v == null ? null : `scale ${v}`) },
+  ]
+  const paramSegments = PARAM_KEYS_DISPLAY.map(({ key, format }) =>
+    format(params[key]),
+  )
+  return [
+    sample,
+    noteSegment,
+    barBeat,
+    velocitySegment,
+    gainSegment,
+    ...paramSegments,
+  ]
     .filter((s): s is string => typeof s === 'string' && s.length > 0)
     .join(' · ')
+}
+
+/**
+ * Phase 20-12 β-2 — Walk an IR tree and collect every `Track` node by trackId.
+ *
+ * Used by MusicalTimeline to map each row's trackId to its body subtree, which
+ * `layoutTrackRows` then flattens into leaf voices for sub-row expansion.
+ *
+ * The walk is shallow-recursive — it descends through every PatternIR child
+ * (mirroring `irChildren` in irProjection.ts) and records the body of every
+ * Track tag it encounters. Duplicate trackIds (which 20-11 γ-1 forbids but
+ * which the parser may still emit on edge cases) keep the FIRST occurrence;
+ * a later duplicate doesn't override since the row layout's identity is the
+ * stable trackId, and over-writing would race the cached snapshot identity.
+ */
+function collectTrackBodies(node: PatternIR): Map<string, PatternIR> {
+  const out = new Map<string, PatternIR>()
+  const visit = (n: PatternIR): void => {
+    if (n.tag === 'Track') {
+      if (!out.has(n.trackId)) out.set(n.trackId, n.body)
+      visit(n.body)
+      return
+    }
+    // Single-body wrappers + multi-child carriers — descend per the projection
+    // shape used by the inspector (irChildren). Defensive: rather than
+    // duplicating that switch, use property checks.
+    const anyN = n as unknown as Record<string, unknown>
+    if (anyN.body && typeof anyN.body === 'object' && (anyN.body as PatternIR).tag) {
+      visit(anyN.body as PatternIR)
+    }
+    if (Array.isArray(anyN.tracks)) {
+      for (const c of anyN.tracks as PatternIR[]) visit(c)
+    }
+    if (Array.isArray(anyN.children)) {
+      for (const c of anyN.children as PatternIR[]) visit(c)
+    }
+    if (anyN.then && typeof anyN.then === 'object' && (anyN.then as PatternIR).tag) {
+      visit(anyN.then as PatternIR)
+    }
+    if (anyN.else_ && typeof anyN.else_ === 'object' && (anyN.else_ as PatternIR).tag) {
+      visit(anyN.else_ as PatternIR)
+    }
+    if (anyN.transform && typeof anyN.transform === 'object' && (anyN.transform as PatternIR).tag) {
+      visit(anyN.transform as PatternIR)
+    }
+    if (anyN.selector && typeof anyN.selector === 'object' && (anyN.selector as PatternIR).tag) {
+      visit(anyN.selector as PatternIR)
+    }
+    if (Array.isArray(anyN.lookup)) {
+      for (const c of anyN.lookup as PatternIR[]) visit(c)
+    }
+    if (anyN.via && typeof anyN.via === 'object') {
+      const inner = (anyN.via as { inner?: PatternIR }).inner
+      if (inner) visit(inner)
+    }
+  }
+  visit(node)
+  return out
+}
+
+/**
+ * Phase 20-12 β-1 — Row header rail (chevron + swatch + name).
+ *
+ * Per-row component so `useTrackMeta` is called from a stable component (not
+ * from inside a `.map()` in the parent) — rules-of-hooks compliant. The
+ * parent (`MusicalTimeline`) passes `fileId` derived from `IRSnapshot.source`;
+ * this component reads/writes meta through `useTrackMeta` keyed on
+ * (fileId, trackId).
+ *
+ * Width budget (RESEARCH §B.5): chevron 12 + gap 4 + swatch 12 + gap 4 +
+ * name fills the remainder. Total = TRACK_LABEL_WIDTH (90px). aria-labels
+ * on both buttons keep the rail screen-reader navigable.
+ */
+interface TrackHeaderRowProps {
+  fileId: string | undefined
+  trackId: string
+  autoColor: string
+  top: number
+  height: number
+  onOpenSwatch: (trackId: string, anchor: DOMRect) => void
+  /** Phase 20-12 — when expanded with multiple leaf voices, the parent
+   *  passes the FIRST leaf's voice label so the header reads
+   *  `d1 · saw` instead of just `d1`. Subsequent leaves render via the
+   *  TrackLeafLabel sibling component below. */
+  voiceLabel?: string
+}
+
+function TrackHeaderRow({
+  fileId,
+  trackId,
+  autoColor,
+  top,
+  height,
+  onOpenSwatch,
+  voiceLabel,
+}: TrackHeaderRowProps): React.ReactElement {
+  const { meta, set } = useTrackMeta(fileId, trackId)
+  const swatchRef = useRef<HTMLButtonElement>(null)
+  const color = meta.color ?? autoColor
+  const collapsed = meta.collapsed ?? false
+  const handleToggle = useCallback(() => {
+    set({ collapsed: !collapsed })
+  }, [collapsed, set])
+  const handleOpenSwatch = useCallback(() => {
+    if (swatchRef.current) {
+      onOpenSwatch(trackId, swatchRef.current.getBoundingClientRect())
+    }
+  }, [onOpenSwatch, trackId])
+  return (
+    <div
+      data-musical-timeline="track-header"
+      data-musical-timeline-track-label={trackId}
+      data-track-id={trackId}
+      title={trackId}
+      style={{
+        position: 'absolute',
+        top,
+        height,
+        width: TRACK_LABEL_WIDTH,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+        paddingLeft: 4,
+        borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
+        boxSizing: 'border-box',
+      }}
+    >
+      <button
+        type="button"
+        data-musical-timeline="track-chevron"
+        data-collapsed={collapsed ? 'true' : 'false'}
+        aria-label={collapsed ? `Expand ${trackId}` : `Collapse ${trackId}`}
+        aria-expanded={!collapsed}
+        onClick={handleToggle}
+        style={{
+          width: 12,
+          height: 12,
+          border: 'none',
+          background: 'transparent',
+          color: 'var(--text-chrome, rgba(255,255,255,0.6))',
+          cursor: 'pointer',
+          padding: 0,
+          fontSize: 10,
+          lineHeight: '12px',
+          transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+          transition: 'transform 100ms',
+          flexShrink: 0,
+        }}
+      >
+        ▾
+      </button>
+      <button
+        ref={swatchRef}
+        type="button"
+        data-musical-timeline="track-swatch"
+        aria-label={`Pick color for ${trackId}`}
+        onClick={handleOpenSwatch}
+        style={{
+          width: 12,
+          height: 12,
+          padding: 0,
+          border: 'none',
+          background: color,
+          borderRadius: 6,
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      />
+      <span
+        data-musical-timeline="track-name"
+        style={{
+          fontSize: 10,
+          lineHeight: '12px',
+          color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          flex: 1,
+        }}
+      >
+        {voiceLabel ? `${trackId} · ${voiceLabel}` : trackId}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * Per-leaf voice label rendered in the left rail beneath a multi-leaf
+ * track's main TrackHeaderRow. Indented past the chevron + swatch column
+ * so the visual hierarchy reads "track header → indented voices".
+ * Phase 20-12 sub-row identity rail (PV41 channel: row header).
+ */
+function TrackLeafLabel({
+  top,
+  height,
+  label,
+}: {
+  top: number
+  height: number
+  label: string
+}): React.ReactElement {
+  return (
+    <div
+      data-musical-timeline="track-leaf-label"
+      style={{
+        position: 'absolute',
+        top,
+        height,
+        width: TRACK_LABEL_WIDTH,
+        display: 'flex',
+        alignItems: 'center',
+        paddingLeft: 36, // chevron(12) + gap(4) + swatch(12) + gap(4) + leftPad(4)
+        boxSizing: 'border-box',
+        fontSize: 10,
+        lineHeight: '12px',
+        color: 'var(--text-secondary, rgba(255,255,255,0.5))',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        pointerEvents: 'none',
+      }}
+    >
+      {label}
+    </div>
+  )
 }
 
 /**
@@ -320,7 +615,16 @@ export function MusicalTimeline(
       // Disambig within the irNodeId-group via FP-tolerant begin compare
       // (RESEARCH DEC-NEW-2). hap-side begin via Number() to unwrap
       // Strudel's Fraction objects.
-      const hapBegin = Number(event.hap?.whole?.begin ?? 0)
+      const hapBeginRaw = Number(event.hap?.whole?.begin ?? 0)
+      // Phase 20-12 — events are collected over [0, WINDOW_CYCLES) via
+      // collectCycles, but Strudel's runtime hap stream emits begin as
+      // a monotonically-increasing cycle index (cycle 2 → begin=2.x,
+      // cycle 3 → 3.x, ...). When the playhead loops back to cycle 0,
+      // hapBegin keeps climbing while event.begin stays in [0, 2). To
+      // keep highlighting working past the first window pass, fold
+      // hapBegin into the visible window via modulo. (`% N` on negative
+      // is undefined in JS for our use; hap begins are non-negative.)
+      const hapBegin = hapBeginRaw % WINDOW_CYCLES
 
       // Find the (trackId, eventIndex) row that fired. Read latest tracks
       // through the ref so the handler always sees the current snapshot.
@@ -378,6 +682,75 @@ export function MusicalTimeline(
     // re-render → orderedTracks new ref → cleanup again).
   }, [resolvedHapStream])
 
+  // ── Phase 20-12 β-1 — swatch popover anchor state ──────────────────────
+  // Single shared anchor for the row-header swatch popover; β-6 renders the
+  // popover at the parent level so it floats above all rows. `null` = closed.
+  // The anchor rect is captured at click-time from the swatch button's
+  // bounding rect (mirrors BackdropPopover.tsx anchor convention).
+  const [swatchAnchor, setSwatchAnchor] = useState<{
+    trackId: string
+    rect: DOMRect
+  } | null>(null)
+  const handleOpenSwatch = useCallback((trackId: string, rect: DOMRect) => {
+    setSwatchAnchor({ trackId, rect })
+  }, [])
+
+  const fileId = snapshot?.source
+
+  // ── Phase 20-12 β-2 — trackMeta subscription for collapsed-state reads ─
+  // The parent reads each track's `collapsed` flag to drive layoutTrackRows.
+  // useTrackMeta is per-(fileId, trackId) and lives inside TrackHeaderRow;
+  // here we subscribe ONCE to the file's trackMeta channel and use a tick
+  // counter to re-render on any meta change. `getTrackMeta` is then called
+  // synchronously per-track during layout — cheap (a Y.Map lookup).
+  const [trackMetaTick, setTrackMetaTick] = useState(0)
+  useEffect(() => {
+    if (!fileId) return
+    return subscribeToTrackMeta(fileId, () => {
+      setTrackMetaTick((t) => t + 1)
+    })
+  }, [fileId])
+  const collapsedFor = useCallback(
+    (trackId: string): boolean => {
+      if (!fileId) return false
+      return getTrackMeta(fileId, trackId).collapsed ?? false
+    },
+    // trackMetaTick is intentionally in deps — refresh the closure when the
+    // store fires, so consumers reading collapsedFor see the latest values.
+    [fileId, trackMetaTick],
+  )
+
+  // ── Phase 20-12 β-2 — Layout (collapsed = ROW; expanded = N * SUB_ROW) ─
+  const bodyByTrackId = useMemo<Map<string, PatternIR>>(() => {
+    if (!snapshot?.ir) return new Map()
+    return collectTrackBodies(snapshot.ir)
+  }, [snapshot])
+
+  const layoutInputs = useMemo(
+    () =>
+      orderedTracks.map(({ trackId, events }) => ({
+        trackId,
+        body: bodyByTrackId.get(trackId),
+        events,
+      })),
+    [orderedTracks, bodyByTrackId],
+  )
+
+  // ── Phase 20-12 wave-δ — sub-row height from editor settings ─────────
+  // Setting lives in @stave/editor; we subscribe to changes so the layout
+  // re-renders when the user drags the slider in EditorSettingsModal.
+  const [subRowHeight, setSubRowHeight] = useState<number>(() =>
+    getMusicalTimelineSubRowHeight(),
+  )
+  useEffect(() => {
+    return onMusicalTimelineSubRowHeightChange((h) => setSubRowHeight(h))
+  }, [])
+
+  const layout = useMemo(
+    () => layoutTrackRows(layoutInputs, collapsedFor, subRowHeight),
+    [layoutInputs, collapsedFor, subRowHeight],
+  )
+
   const playheadX = cycleToPlayheadX(currentCycle, { gridContentWidth })
 
   // Click-to-source — single contract per PV36 / D-02. evt.loc[0] is the
@@ -431,7 +804,10 @@ export function MusicalTimeline(
       </div>
       <Ruler currentCycle={currentCycle} gridContentWidth={gridContentWidth} />
       <div style={styles.body}>
-        <div data-musical-timeline="track-labels" style={styles.labels}>
+        <div
+          data-musical-timeline="track-labels"
+          style={{ ...styles.labels, position: 'relative' }}
+        >
           {empty ? (
             <div
               data-musical-timeline="empty-label"
@@ -440,27 +816,44 @@ export function MusicalTimeline(
               {EMPTY_STATE_COPY}
             </div>
           ) : (
-            orderedTracks.map(({ trackId, events }) => {
+            layout.tracks.map((trackLayout) => {
+              const trackId = trackLayout.trackId
+              const events =
+                orderedTracks.find((t) => t.trackId === trackId)?.events ?? []
               const firstEventSample = events[0]?.s ?? undefined
-              const dotColor = paletteForTrack(trackIndexOf(trackId), firstEventSample)
+              const autoColor = paletteForTrack(
+                trackIndexOf(trackId),
+                firstEventSample,
+              )
+              const showLeafRows =
+                !trackLayout.collapsed && trackLayout.leaves.length > 1
+              const firstLeaf = showLeafRows
+                ? trackLayout.leaves[0]
+                : undefined
               return (
-                <div
-                  key={trackId}
-                  data-musical-timeline-track-label={trackId}
-                  title={trackId}
-                  style={styles.trackLabel}
-                >
-                  <span
-                    data-musical-timeline="track-dot"
-                    style={{ ...styles.trackDot, background: dotColor }}
+                <React.Fragment key={trackId}>
+                  <TrackHeaderRow
+                    fileId={fileId}
+                    trackId={trackId}
+                    autoColor={autoColor}
+                    top={trackLayout.top}
+                    height={
+                      firstLeaf ? firstLeaf.height : trackLayout.height
+                    }
+                    onOpenSwatch={handleOpenSwatch}
+                    voiceLabel={firstLeaf?.label}
                   />
-                  <span
-                    data-musical-timeline="track-name"
-                    style={styles.trackName}
-                  >
-                    {trackId}
-                  </span>
-                </div>
+                  {showLeafRows
+                    ? trackLayout.leaves.slice(1).map((leaf) => (
+                        <TrackLeafLabel
+                          key={`${trackId}-leaf-${leaf.leafIndex}`}
+                          top={leaf.top}
+                          height={leaf.height}
+                          label={leaf.label}
+                        />
+                      ))
+                    : null}
+                </React.Fragment>
               )
             })
           )}
@@ -484,37 +877,115 @@ export function MusicalTimeline(
                 />
               )
             })}
-          {/* Track rows + note blocks */}
-          {orderedTracks.map(({ trackId, events }, slotIndex) => (
-            <div
-              key={trackId}
-              data-musical-timeline-track-row={trackId}
-              style={{ ...styles.row, top: slotIndex * ROW_HEIGHT }}
-            >
-              {events.map((evt, i) => {
-                const { x, w } = eventToRect(evt, { gridContentWidth })
-                const isActive = activeKeys.has(`${trackId}-${i}`)
-                return (
-                  <div
-                    key={`${trackId}-${i}`}
-                    data-musical-timeline-note={trackId}
-                    data-musical-timeline-active={isActive ? 'true' : undefined}
-                    title={formatNoteTooltip(evt, trackId)}
-                    onClick={() => handleNoteClick(evt)}
-                    style={{
-                      ...styles.noteBlock,
-                      left: x,
-                      width: w,
-                      background:
-                        evt.color ??
-                        paletteForTrack(trackIndexOf(trackId), evt.s ?? undefined),
-                      ...(isActive ? styles.noteBlockActive : null),
-                    }}
-                  />
-                )
-              })}
-            </div>
-          ))}
+          {/* Track rows + note blocks (β-2: layout-driven; collapsed rows
+              get a single ROW_HEIGHT band, expanded rows render N
+              SUB_ROW_HEIGHT sub-rows, one per leaf voice from
+              flattenLeafVoices). */}
+          {layout.tracks.map((trackLayout) => {
+            const trackId = trackLayout.trackId
+            const events =
+              orderedTracks.find((t) => t.trackId === trackId)?.events ?? []
+            const trackOverrideColor = (() => {
+              if (!fileId) return undefined
+              const meta: TrackMeta = getTrackMeta(fileId, trackId)
+              return meta.color
+            })()
+            return (
+              <div
+                key={trackId}
+                data-musical-timeline-track-row={trackId}
+                data-track-collapsed={trackLayout.collapsed ? 'true' : 'false'}
+                style={{
+                  ...styles.row,
+                  top: trackLayout.top,
+                  height: trackLayout.height,
+                }}
+              >
+                {events.map((evt, i) => {
+                  const { x, w } = eventToRect(evt, { gridContentWidth })
+                  const isActive = activeKeys.has(`${trackId}-${i}`)
+                  // β-3: opacity = clamp(gain, 0.15, 1). Replace, not multiply
+                  // (gain semantically dominates per RESEARCH §G.3). Floor 0.15
+                  // keeps gain(0) bars visually present (intentional —
+                  // disappearing entirely would be wrong feedback for a user
+                  // who set gain to 0 deliberately).
+                  const gainOpacity = Math.max(
+                    0.15,
+                    Math.min(1, evt.gain ?? 1),
+                  )
+                  // β-4: bar Y = pitch within the leaf's sub-row Y-band, when
+                  // the leaf is melodic and the event has an extractable pitch.
+                  // Otherwise (percussive leaf, no expansion, or no pitch)
+                  // fall through to the existing top:4 row-relative inset.
+                  // Top is computed in row-relative coordinates because the
+                  // bar div sits inside the track row whose `top` is already
+                  // trackLayout.top.
+                  let barTop = BAR_TOP_DEFAULT
+                  let barHeight = BAR_HEIGHT_DEFAULT
+                  if (!trackLayout.collapsed && trackLayout.leaves.length > 0) {
+                    // Phase 20-12 — pick leaf band by evt.leafIndex (set
+                    // at collect-time by editor's Stack arm). Events
+                    // without a leafIndex fall onto leaf 0; out-of-range
+                    // clamps to the last leaf.
+                    const lastLeaf = trackLayout.leaves.length - 1
+                    const leafIdx =
+                      evt.leafIndex === undefined
+                        ? 0
+                        : Math.min(Math.max(0, evt.leafIndex), lastLeaf)
+                    const leaf = trackLayout.leaves[leafIdx]
+                    barHeight = leafBarHeight(leaf.height)
+                    if (leaf.melodic && leaf.pitchRange) {
+                      const pitch = extractPitch(evt)
+                      if (pitch != null) {
+                        const yAbs = pitchToY(
+                          pitch.midi,
+                          { top: leaf.top, height: leaf.height },
+                          leaf.pitchRange,
+                          barHeight,
+                        )
+                        // row div is positioned at trackLayout.top, so make
+                        // the bar's top relative to that.
+                        barTop = yAbs - trackLayout.top
+                      } else {
+                        // Melodic leaf but this event has no pitch — flat
+                        // baseline within the leaf's band (defensive).
+                        barTop = leaf.top - trackLayout.top + leaf.height - barHeight - 2
+                      }
+                    } else {
+                      // Percussive leaf: flat baseline at the bottom of the
+                      // sub-row band (slight inset for visual separation).
+                      barTop = leaf.top - trackLayout.top + leaf.height - barHeight - 2
+                    }
+                  }
+                  return (
+                    <div
+                      key={`${trackId}-${i}`}
+                      data-musical-timeline-note={trackId}
+                      data-musical-timeline-active={isActive ? 'true' : undefined}
+                      title={formatNoteTooltip(evt, trackId)}
+                      onClick={() => handleNoteClick(evt)}
+                      style={{
+                        ...styles.noteBlock,
+                        left: x,
+                        width: w,
+                        top: barTop,
+                        height: barHeight,
+                        opacity: gainOpacity,
+                        background:
+                          evt.color ??
+                          trackOverrideColor ??
+                          paletteForTrack(
+                            trackIndexOf(trackId),
+                            evt.s ?? undefined,
+                          ),
+                        ...(isActive ? styles.noteBlockActive : null),
+                      }}
+                    />
+                  )
+                })}
+              </div>
+            )
+          })}
           {/* Playhead — fixed-position marker, pointer-events: none so it
               doesn't intercept click-to-source on note blocks behind it. */}
           <div
@@ -523,14 +994,44 @@ export function MusicalTimeline(
           />
         </div>
       </div>
+      {/* β-6: Track swatch popover. Single-instance at parent level (one
+          popover open at a time). Anchor + currentColor read from the
+          per-track meta resolved via getTrackMeta (synchronous; the
+          parent already subscribed to the file's trackMeta channel via
+          the trackMetaTick effect above so changes propagate). */}
+      {swatchAnchor && fileId && (
+        <TrackSwatchPopover
+          anchorRect={swatchAnchor.rect}
+          currentColor={
+            getTrackMeta(fileId, swatchAnchor.trackId).color ??
+            paletteForTrack(
+              trackIndexOf(swatchAnchor.trackId),
+              orderedTracks.find((t) => t.trackId === swatchAnchor.trackId)
+                ?.events[0]?.s ?? undefined,
+            )
+          }
+          onPick={(color) => {
+            // Direct setTrackMeta write — bypasses useTrackMeta to avoid the
+            // hook-rules dance of conditional subscription. The parent
+            // already subscribes via trackMetaTick effect, so the write
+            // propagates back to TrackHeaderRow without an extra hop. Trap
+            // #5 (write storm) is mitigated by binding to onClick (not
+            // mousemove) inside TrackSwatchPopover.
+            setTrackMeta(fileId, swatchAnchor.trackId, { color })
+          }}
+          onClose={() => setSwatchAnchor(null)}
+        />
+      )}
     </div>
   )
 }
 
 // ───── Styles ───────────────────────────────────────────────────────────────
-// Inline styles with mockup-literal values (Phase 20-02 DV-08). All CSS
-// variable references from PR #92 replaced with the mockup's color tokens.
-// No external theme dependency — the tab is a self-contained visual unit.
+// Phase 20-12 wave-δ — theme-aware. The chrome reads CSS variables from
+// the global theme (globals.css), so the timeline tracks light/dark/system
+// alongside the rest of the IDE. Each var carries a mockup-literal fallback
+// (the original Phase 20-02 DV-08 values) so the chrome remains legible if
+// loaded outside the global theme (storybook, isolated tests).
 
 const FONT_MONO = '"JetBrains Mono", "Fira Code", ui-monospace, monospace'
 
@@ -543,8 +1044,8 @@ const styles = {
     overflow: 'hidden',
     fontFamily: FONT_MONO,
     fontSize: 11, // mockup body font-size: 11px (DV-02)
-    color: '#e2e8f0',
-    background: '#090912',
+    color: 'var(--text-body, #e2e8f0)',
+    background: 'var(--bg-app, #090912)',
   },
   status: {
     height: STATUS_HEIGHT,
@@ -552,9 +1053,9 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     padding: '0 12px',
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
-    color: 'rgba(255,255,255,0.4)',
-    background: '#14141f',
+    borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
+    color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
+    background: 'var(--bg-panel, #14141f)',
     fontVariantNumeric: 'tabular-nums' as const,
     fontSize: 11,
   },
@@ -563,12 +1064,12 @@ const styles = {
     minHeight: 0,
     display: 'flex',
     overflow: 'auto',
-    background: '#090912',
+    background: 'var(--bg-app, #090912)',
   },
   labels: {
     width: TRACK_LABEL_WIDTH, // 90px (DV-02)
     flexShrink: 0,
-    borderRight: '1px solid rgba(255,255,255,0.08)',
+    borderRight: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
     display: 'flex',
     flexDirection: 'column' as const,
   },
@@ -578,7 +1079,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: 6, // mockup: .track-label gap: 6px
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
     cursor: 'pointer' as const,
   },
   trackDot: {
@@ -589,7 +1090,7 @@ const styles = {
     display: 'inline-block',
   },
   trackName: {
-    color: 'rgba(255,255,255,0.4)',
+    color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
     fontSize: 10,
     overflow: 'hidden',
     textOverflow: 'ellipsis' as const,
@@ -598,7 +1099,7 @@ const styles = {
   emptyLabel: {
     padding: 8,
     fontStyle: 'italic' as const,
-    color: 'rgba(255,255,255,0.4)',
+    color: 'var(--text-tertiary, rgba(255,255,255,0.4))',
     fontSize: 11,
     lineHeight: 1.4,
   },
@@ -607,43 +1108,52 @@ const styles = {
     minWidth: 200,
     position: 'relative' as const,
     overflow: 'hidden',
-    background: '#0f0f1a',
+    background: 'var(--bg-input, #0f0f1a)',
   },
   barLine: {
     position: 'absolute' as const,
     top: 0,
     bottom: 0,
     width: 1,
-    background: 'rgba(255,255,255,0.04)', // Trap 9 — faint cycle cue
+    // Trap 9 — faint cycle cue. Stronger contrast in light mode (uses an
+    // alpha over the body bg via `currentColor`-friendly token).
+    background: 'var(--border-subtle, rgba(255,255,255,0.04))',
+    opacity: 0.4,
     pointerEvents: 'none' as const,
   },
   row: {
+    // height is set per-row by β-2 layoutTrackRows (collapsed = ROW_HEIGHT;
+    // expanded = N * SUB_ROW_HEIGHT). The default below is a defensive
+    // fallback used when layout supplies no override (shouldn't happen).
     position: 'absolute' as const,
     left: 0,
     right: 0,
     height: ROW_HEIGHT,
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
   },
   noteBlock: {
+    // β-3 (20-12) — opacity is set per-event by `clamp(evt.gain ?? 1, 0.15, 1)`
+    // at the call site. No static opacity here so the per-event style
+    // override doesn't have to compete with a baseline `opacity: 0.85`.
     position: 'absolute' as const,
     top: 4,
     height: 16,
     borderRadius: 2,
-    opacity: 0.85,
     cursor: 'pointer' as const,
     boxSizing: 'border-box' as const,
   },
   noteBlockActive: {
-    outline: '1px solid rgba(139,92,246,0.8)',
-    boxShadow: '0 0 6px rgba(139,92,246,0.5)',
+    outline: '1px solid var(--border-accent-strong, rgba(139,92,246,0.8))',
+    boxShadow: '0 0 6px var(--border-accent, rgba(139,92,246,0.5))',
   },
   playhead: {
     position: 'absolute' as const,
     top: 0,
     bottom: 0,
     width: 1,
-    background: 'rgba(255,255,255,0.55)', // mockup: .playhead
-    boxShadow: '0 0 4px rgba(255,255,255,0.3)', // mockup: .playhead box-shadow
+    background: 'var(--text-primary, rgba(255,255,255,0.55))', // mockup: .playhead
+    opacity: 0.55,
+    boxShadow: '0 0 4px var(--text-primary, rgba(255,255,255,0.3))', // mockup: .playhead box-shadow
     pointerEvents: 'none' as const,
   },
 } satisfies Record<string, React.CSSProperties>

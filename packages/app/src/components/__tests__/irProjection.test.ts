@@ -18,6 +18,7 @@ import {
   projectedLabel,
   projectedChildren,
   stripInnerLate,
+  flattenLeafVoices,
   LOCALSTORAGE_KEY,
 } from '../irProjection'
 import { unwrapD1 } from '../../../../editor/src/ir/__tests__/helpers/unwrapD1'
@@ -681,5 +682,172 @@ describe('20-11 — Track projection (musician-track-identity / PV35 / PV32)', (
   it('stripInnerLate preserves Track wrapper (single-body recursion)', () => {
     const node: PatternIR = IR.track('d1', IR.play('c4', 1))
     expect(stripInnerLate(node)).toEqual(node)
+  })
+})
+
+// Phase 20-12 α-5 — flattenLeafVoices (D-03 / RESEARCH §C.2). Recursion gate:
+// Stack with userMethod ∈ {undefined, 'stack'} is the ONLY recursion case.
+// Everything else (incl. Stack with userMethod 'layer'/'jux'/'off') is a leaf.
+describe('20-12 α-5 — flattenLeafVoices', () => {
+  it('single-voice body (Play) returns [body] — 1 leaf', () => {
+    const body = IR.play('bd', 1)
+    const leaves = flattenLeafVoices(body)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]).toBe(body)
+  })
+
+  it('Stack with default userMethod (mini polymetric) returns [a, b, c] — 3 leaves', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const c = IR.play('sd', 1)
+    const body = IR.stack(a, b, c)
+    const leaves = flattenLeafVoices(body)
+    expect(leaves).toHaveLength(3)
+    expect(leaves[0]).toBe(a)
+    expect(leaves[1]).toBe(b)
+    expect(leaves[2]).toBe(c)
+  })
+
+  it('user-typed Stack(stack-userMethod) returns each track verbatim', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const stackTyped: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'stack' }
+    const leaves = flattenLeafVoices(stackTyped)
+    expect(leaves).toEqual([a, b])
+  })
+
+  it('nested Stack(stack(hh, bd), sawtooth) flattens to 3 leaves (inner stack dissolves)', () => {
+    const hh = IR.play('hh', 1)
+    const bd = IR.play('bd', 1)
+    const sawtooth = IR.play('sawtooth', 1)
+    const inner: PatternIR = { tag: 'Stack', tracks: [hh, bd], userMethod: 'stack' }
+    const outer: PatternIR = { tag: 'Stack', tracks: [inner, sawtooth], userMethod: 'stack' }
+    const leaves = flattenLeafVoices(outer)
+    expect(leaves).toEqual([hh, bd, sawtooth])
+  })
+
+  it('Stack with userMethod="layer" is a single leaf (NOT recursed)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const layerStack: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'layer' }
+    const leaves = flattenLeafVoices(layerStack)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]).toBe(layerStack)
+  })
+
+  it('Stack with userMethod="jux" is a single leaf', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const juxStack: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'jux' }
+    const leaves = flattenLeafVoices(juxStack)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]).toBe(juxStack)
+  })
+
+  it('empty Stack returns [] (RESEARCH §C.3 — expand-toggle is visual no-op)', () => {
+    const empty: PatternIR = { tag: 'Stack', tracks: [], userMethod: 'stack' }
+    expect(flattenLeafVoices(empty)).toEqual([])
+  })
+
+  // Wrapper-peel regression — `stack(...).viz(...)` / `.gain(...)` / `.fast(...)`
+  // wrap the Stack in single-body modifier nodes. The user's mental model is
+  // "voice count = stack arg count" regardless of outer wrappers. Without the
+  // peel, only the outer Code/Param/Fast was visible and flattenLeafVoices
+  // returned 1 leaf instead of N — observed live in /tmp/probe-collapse.mjs
+  // run on the user's 4-`$:` fixture. Stack-wrapped-in-Code-via was the live bug.
+  it('Code-with-via wrapping a Stack peels to N leaves (`stack(...).viz(...)`)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const c = IR.play('sd', 1)
+    const stack: PatternIR = { tag: 'Stack', tracks: [a, b, c], userMethod: 'stack' }
+    const wrapped: PatternIR = {
+      tag: 'Code',
+      code: 'stack(...).viz("p5test")',
+      lang: 'strudel',
+      via: {
+        method: 'viz',
+        args: '"p5test"',
+        callSiteRange: [0, 0],
+        inner: stack,
+      },
+    }
+    expect(flattenLeafVoices(wrapped)).toEqual([a, b, c])
+  })
+
+  it('Code-without-via is a leaf (no peel — parse-failure / opaque)', () => {
+    const opaque: PatternIR = {
+      tag: 'Code',
+      code: 'some(unparseable)',
+      lang: 'strudel',
+    }
+    const leaves = flattenLeafVoices(opaque)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]).toBe(opaque)
+  })
+
+  it('Param wrapping a Stack peels to N leaves (`stack(...).gain(0.5)`)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const stack: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'stack' }
+    const gainWrapped: PatternIR = {
+      tag: 'Param',
+      key: 'gain',
+      value: 0.5,
+      rawArgs: '0.5',
+      body: stack,
+    }
+    expect(flattenLeafVoices(gainWrapped)).toEqual([a, b])
+  })
+
+  it('Fast wrapping a Stack peels to N leaves (`stack(...).fast(2)`)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const stack: PatternIR = { tag: 'Stack', tracks: [a, b], userMethod: 'stack' }
+    const fastWrapped: PatternIR = { tag: 'Fast', factor: 2, body: stack }
+    expect(flattenLeafVoices(fastWrapped)).toEqual([a, b])
+  })
+
+  it('Multiple wrappers chain through to the inner Stack (`stack(...).gain(0.5).fast(2).viz(...)`)', () => {
+    const a = IR.play('hh', 1)
+    const b = IR.play('bd', 1)
+    const c = IR.play('sd', 1)
+    const stack: PatternIR = { tag: 'Stack', tracks: [a, b, c], userMethod: 'stack' }
+    const gainWrapped: PatternIR = {
+      tag: 'Param',
+      key: 'gain',
+      value: 0.5,
+      rawArgs: '0.5',
+      body: stack,
+    }
+    const fastWrapped: PatternIR = { tag: 'Fast', factor: 2, body: gainWrapped }
+    const vizWrapped: PatternIR = {
+      tag: 'Code',
+      code: 'stack(...).gain(0.5).fast(2).viz("x")',
+      lang: 'strudel',
+      via: {
+        method: 'viz',
+        args: '"x"',
+        callSiteRange: [0, 0],
+        inner: fastWrapped,
+      },
+    }
+    expect(flattenLeafVoices(vizWrapped)).toEqual([a, b, c])
+  })
+
+  it('Wrapper around a non-Stack body still terminates as 1 leaf', () => {
+    const inner = IR.play('square', 1)
+    const wrapped: PatternIR = {
+      tag: 'Code',
+      code: 'note(...).s("square").viz("pitchwheel")',
+      lang: 'strudel',
+      via: {
+        method: 'viz',
+        args: '"pitchwheel"',
+        callSiteRange: [0, 0],
+        inner,
+      },
+    }
+    const leaves = flattenLeafVoices(wrapped)
+    expect(leaves).toHaveLength(1)
   })
 })
