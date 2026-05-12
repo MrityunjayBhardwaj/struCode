@@ -827,13 +827,26 @@ function applyMethod(
       // angle-brackets, star, tilde, pipe excluded — anything mini-syntax
       // routes through wrapAsOpaque so the user's intent is preserved as a
       // typed source fragment.
+      // Phase 20-11 wave-δ — accept BOTH single and double-quoted string
+      // literals. Strudel's transpiler converts double-quoted strings
+      // to mini-notation Patterns at runtime, so `.p("name")` will
+      // CRASH at eval time (Strudel's .p calls `id.includes("$")` on
+      // the resulting Pattern object). The working idiom is single
+      // quotes: `.p('name')`. We accept both at the IR level so the
+      // Track wrap still happens even if the user types double quotes
+      // (the timeline shows the right row; the runtime fails
+      // separately and we no-op in the StrudelEngine wrapper).
       const trimmed = args.trim()
-      const strMatch = trimmed.match(/^"([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)"$/)
-      if (!strMatch || strMatch[1].length === 0) {
-        // Empty / mini-syntax / non-string / no args — preserve PV37.
+      const strMatch = trimmed.match(
+        /^(?:"([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)"|'([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)')$/,
+      )
+      const name = strMatch?.[1] ?? strMatch?.[2]
+      if (!name) {
+        // Empty / mini-syntax / non-string / no args / backtick mini —
+        // preserve PV37.
         return wrapAsOpaque(ir, method, args, callSiteRange)
       }
-      return IR.track(strMatch[1], ir, tagMeta(method, callSiteRange))
+      return IR.track(name, ir, tagMeta(method, callSiteRange))
     }
 
     case 's':

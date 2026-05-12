@@ -110,6 +110,23 @@ describe('20-11 wave α — Track wrap shape', () => {
     expect(ir.body.via?.method).toBe('p')
     expect(ir.body.via?.args).toBe('"<a b>"')
   })
+
+  it("Phase 20-11 wave-δ — .p('name') with SINGLE quotes also produces Track wrap", () => {
+    // Strudel's transpiler converts DOUBLE-quoted strings to mini-
+    // notation Patterns at runtime, so `.p("name")` would crash. The
+    // working idiom is single quotes (`.p('name')`). The IR parser
+    // must accept both quote styles so the user's correct-at-runtime
+    // single-quoted form ALSO wraps as Track at the IR level.
+    const ir = parseStrudel("$: note(\"c\").p('kick')")
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    expect(ir.trackId).toBe('d1')
+    const inner = ir.body
+    expect(inner.tag).toBe('Track')
+    if (inner.tag !== 'Track') throw new Error('unreachable')
+    expect(inner.trackId).toBe('kick')
+    expect(inner.userMethod).toBe('p')
+  })
 })
 
 // Light shape probe to keep the export surface honest — α-3 PART A widens
