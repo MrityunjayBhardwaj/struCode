@@ -396,6 +396,16 @@ interface CollectContext {
     speed: number;
     /** Inherited parameters from enclosing FX/Ramp nodes */
     params: Record<string, number | string>;
+    /**
+     * Phase 20-11 — populated by Track wrapper arm (β-1). Outer-then-inner
+     * spread: nested Track sets ctx.trackId via simple override (last walk-
+     * pass wins → outer wins → matches "last-typed-source-wins" because
+     * parser places the LAST-chained .p() as the OUTERMOST wrapper).
+     * Absent for hand-built IR without Track wrapper (test fixtures); that
+     * case yields IREvent.trackId === undefined (omitted via conditional
+     * spread in makeEvent — CONTEXT pre-mortem #6).
+     */
+    trackId?: string;
 }
 /**
  * Walk a PatternIR tree and return a flat array of IREvents.

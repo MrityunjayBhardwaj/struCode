@@ -3057,7 +3057,12 @@ function makeEvent(ctx, note2, params) {
     gain: merged.gain ?? 1,
     velocity: merged.velocity ?? 1,
     color: merged.color ?? null,
-    params: merged
+    params: merged,
+    // Phase 20-11 — conditional spread: omits the field entirely when
+    // ctx.trackId is undefined (hand-built IR without Track wrapper).
+    // Avoids polluting IREvent with enumerable `trackId: undefined`
+    // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
+    ...ctx.trackId !== void 0 ? { trackId: ctx.trackId } : {}
   };
 }
 function _collectRearrange(selector, n, body2, ctx, wrapperLoc) {
@@ -3107,7 +3112,8 @@ function walk(ir, ctx) {
     case "Pure":
       return [];
     case "Track": {
-      return withWrapperLoc(walk(ir.body, ctx), ir.loc);
+      const childCtx = { ...ctx, trackId: ir.trackId };
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
     }
     case "Code": {
       if (ir.via) {
@@ -3443,8 +3449,12 @@ function gen(ir) {
   switch (ir.tag) {
     case "Pure":
       return '""';
-    case "Track":
+    case "Track": {
+      if (ir.userMethod === "p") {
+        return `${gen(ir.body)}.p("${ir.trackId}")`;
+      }
       return gen(ir.body);
+    }
     case "Code":
       if (ir.via) {
         return `${gen(ir.via.inner)}.${ir.via.method}(${ir.via.args})`;
@@ -4257,7 +4267,8 @@ function parseStrudel(code) {
     const tracks = extractTracks(code);
     if (tracks.length === 0) {
       const trimStart = code.search(/\S/);
-      return parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0);
+      const inner = parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0);
+      return IR.track("d1", inner);
     }
     if (tracks.length === 1) {
       const t = tracks[0];
@@ -4566,11 +4577,14 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     }
     case "p": {
       const trimmed = args2.trim();
-      const strMatch = trimmed.match(/^"([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)"$/);
-      if (!strMatch || strMatch[1].length === 0) {
+      const strMatch = trimmed.match(
+        /^(?:"([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)"|'([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)')$/
+      );
+      const name2 = strMatch?.[1] ?? strMatch?.[2];
+      if (!name2) {
         return wrapAsOpaque(ir, method, args2, callSiteRange);
       }
-      return IR.track(strMatch[1], ir, tagMeta(method, callSiteRange));
+      return IR.track(name2, ir, tagMeta(method, callSiteRange));
     }
     case "s":
     case "n":
@@ -4894,7 +4908,7 @@ function runChainAppliedStage(input) {
       })
     );
   }
-  return applyOnTrack(input);
+  return IR.track("d1", applyOnTrack(input));
 }
 function applyOnTrack(node) {
   const m = node;
@@ -5620,6 +5634,7 @@ var StrudelEngine = class {
               capturedPatterns.set(captureId, effectivePattern);
               return strudelFn.call(effectivePattern, id);
             }
+            if (typeof id !== "string") return this;
             return strudelFn.call(this, id);
           }
         });
@@ -23970,15 +23985,13 @@ var ProgramBuilder = class _ProgramBuilder {
 
 // ../../../sonicPiWeb/src/engine/config.ts
 var MIXER = {
-  /** Mixer pre-amplification. Aligned to desktop SP's live value (exp-010,
-   *  /g_queryTree probe of sonic-pi-mixer node). Was 0.3 (Tau baseline). */
-  PRE_AMP: 0.32,
-  /** Mixer final amplification. Halfway between Tau (0.8) and desktop (6).
-   *  Lands web peak near desktop's pre-driver-attenuation peak without
-   *  triggering Limiter.ar — keeps the ugen's natural transient envelope
-   *  visible to the comparator. Was 6 (matched desktop, but limiter-clamped),
-   *  was 1.2 (Tau-aligned, pre-SP72-fix dynamics tuning). */
-  AMP: 2,
+  /** [TAU] Mixer pre-amplification. Sonic Tau baseline
+   *  (app.bundle.js:1786-1787) for browser WASM. */
+  PRE_AMP: 0.3,
+  /** [TAU] Mixer final amplification. Sonic Tau baseline
+   *  (app.bundle.js:1786-1787) for browser WASM — deliberately soft to
+   *  keep the signal in the linear range below Limiter.ar(0.99). */
+  AMP: 0.8,
   /** [TAU] High-pass filter cutoff (Hz). Removes subsonic rumble that can
    *  damage speakers. Desktop SP uses synthdef default. Sonic Tau sends 21
    *  explicitly (app.bundle.js:1788-1789). */
@@ -25230,7 +25243,11 @@ var _SuperSonicBridge = class _SuperSonicBridge {
     this.pendingSampleLoads = /* @__PURE__ */ new Map();
     /** Sample duration cache — populated asynchronously on first load via Web Audio decode. */
     this.sampleDurations = /* @__PURE__ */ new Map();
-    this.resolvedSampleBaseURL = "https://unpkg.com/supersonic-scsynth-samples@latest/samples/";
+    // Pinned to @0.57.0 to match the runtime SuperSonic version (SV22:
+    // CDN packages must pin together). The init() override at line 213
+    // sets this from options or to the same pinned URL — this default
+    // only matters before init() runs.
+    this.resolvedSampleBaseURL = "https://unpkg.com/supersonic-scsynth-samples@0.57.0/samples/";
     this.nextBufNum = 0;
     this.analyserNode = null;
     this.analyserL = null;
@@ -25579,6 +25596,29 @@ var _SuperSonicBridge = class _SuperSonicBridge {
       }
     }
     this.messageQueue.length = 0;
+  }
+  /**
+   * Eagerly load multiple FX synthdef binaries in parallel. Called from
+   * engine.init() to warm the synthdef cache before any FX is used —
+   * eliminates the first-use fetch latency that would otherwise add ~50-200ms
+   * to the first /s_new for a previously-unseen FX (SP5 trap). Idempotent and
+   * safe to call multiple times; ensureSynthDefLoaded de-dupes via
+   * loadedSynthDefs + pendingSynthDefLoads.
+   *
+   * Pass FX names WITHOUT the `sonic-pi-fx_` prefix (e.g. 'reverb', 'echo') —
+   * the prefix is added internally to match ensureSynthDefLoaded's contract.
+   *
+   * Failures are swallowed (per-name) so one missing synthdef doesn't block
+   * the rest. Missing FX surface at /s_new dispatch time as before (SP5).
+   */
+  async preloadFxSynthDefs(names) {
+    if (!this.sonic) return;
+    await Promise.all(
+      names.map(
+        (n) => this.ensureSynthDefLoaded(`sonic-pi-fx_${n}`).catch(() => {
+        })
+      )
+    );
   }
   ensureSynthDefLoaded(name2) {
     const fullName = name2.startsWith("sonic-pi-") ? name2 : `sonic-pi-${name2}`;
@@ -26148,6 +26188,20 @@ var Recorder = class _Recorder {
     this.source.connect(this.processor);
     this.processor.connect(this.silentSink);
     this.silentSink.connect(this.audioCtx.destination);
+    if (typeof globalThis !== "undefined" && globalThis.__recorderTrace) {
+      globalThis.__recorderTraceEvents ?? (globalThis.__recorderTraceEvents = []);
+      globalThis.__recorderTraceEvents.push({
+        event: "start",
+        t: performance.now(),
+        ctxState: this.audioCtx.state,
+        ctxTime: this.audioCtx.currentTime,
+        silentSinkGain: this.silentSink.gain.value,
+        sourceCtor: this.source.constructor.name,
+        ctxDestinationMaxChannelCount: this.audioCtx.destination.maxChannelCount,
+        ctxDestinationNumberOfInputs: this.audioCtx.destination.numberOfInputs
+      });
+      globalThis.__lastRecorder = this;
+    }
     this._state = "recording";
   }
   /** Stop recording and return the audio as a WAV Blob. */
@@ -26155,26 +26209,64 @@ var Recorder = class _Recorder {
     if (this._state !== "recording" || !this.processor) {
       throw new Error("Not recording");
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    this.processor.onaudioprocess = null;
+    const processor = this.processor;
+    const silentSink = this.silentSink;
+    const source = this.source;
+    if (typeof globalThis !== "undefined" && globalThis.__recorderTrace) {
+      globalThis.__recorderTraceEvents ?? (globalThis.__recorderTraceEvents = []);
+      const evs = globalThis.__recorderTraceEvents;
+      evs.push({
+        event: "stop:enter",
+        t: performance.now(),
+        ctxState: this.audioCtx.state,
+        ctxTime: this.audioCtx.currentTime,
+        silentSinkGain: silentSink ? silentSink.gain.value : null
+      });
+    }
+    const tailMs = SCRIPT_PROCESSOR_BUFFER_SIZE / this.audioCtx.sampleRate * 1e3;
+    await new Promise((resolve) => {
+      const prev = processor.onaudioprocess;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      processor.onaudioprocess = (e) => {
+        prev?.call(processor, e);
+        finish();
+      };
+      setTimeout(finish, tailMs + 50);
+    });
     try {
-      this.source.disconnect(this.processor);
+      source.disconnect(processor);
     } catch {
     }
     try {
-      this.processor.disconnect();
+      processor.disconnect();
     } catch {
     }
-    if (this.silentSink) {
+    if (silentSink) {
       try {
-        this.silentSink.disconnect();
+        silentSink.disconnect();
       } catch {
       }
     }
+    processor.onaudioprocess = null;
     this.processor = null;
     this.silentSink = null;
     const wavBlob = this.encodeWav(this.chunks, this.audioCtx.sampleRate);
     this._state = "stopped";
+    if (typeof globalThis !== "undefined" && globalThis.__recorderTrace) {
+      const evs = globalThis.__recorderTraceEvents;
+      evs.push({
+        event: "stop:exit",
+        t: performance.now(),
+        wavSize: wavBlob.size,
+        ctxState: this.audioCtx.state,
+        ctxTime: this.audioCtx.currentTime
+      });
+    }
     return wavBlob;
   }
   /** Stop recording and trigger a browser download. */
@@ -26188,7 +26280,8 @@ var Recorder = class _Recorder {
    * can be invoked separately from `recording_stop` (#228).
    */
   static saveBlobToDownload(blob, filename) {
-    const url = URL.createObjectURL(blob);
+    const downloadBlob = blob.type === "audio/wav" ? new Blob([blob], { type: "application/octet-stream" }) : blob;
+    const url = URL.createObjectURL(downloadBlob);
     const a = document.createElement("a");
     a.href = url;
     a.download = filename ?? `sonicpi-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[T:]/g, "-")}.wav`;
@@ -26271,6 +26364,51 @@ var Recorder = class _Recorder {
     }
   }
 };
+
+// ../../../sonicPiWeb/src/engine/FxNames.ts
+var ALL_FX_NAMES = [
+  "reverb",
+  "echo",
+  "delay",
+  "distortion",
+  "slicer",
+  "wobble",
+  "ixi_techno",
+  "compressor",
+  "rlpf",
+  "rhpf",
+  "hpf",
+  "lpf",
+  "normaliser",
+  "pan",
+  "band_eq",
+  "flanger",
+  "krush",
+  "bitcrusher",
+  "ring_mod",
+  "chorus",
+  "octaver",
+  "vowel",
+  "tanh",
+  "gverb",
+  "pitch_shift",
+  "whammy",
+  "tremolo",
+  "level",
+  "mono",
+  "ping_pong",
+  "panslicer",
+  // Filter variants — from synthinfo.rb FX classes
+  "bpf",
+  "rbpf",
+  "nbpf",
+  "nrbpf",
+  "nlpf",
+  "nrlpf",
+  "nhpf",
+  "nrhpf",
+  "eq"
+];
 
 // ../../../sonicPiWeb/src/engine/DslNames.ts
 var DSL_NAMES = [
@@ -31279,7 +31417,13 @@ var SonicPiEngine = class {
     this.currentStratum = 1 /* S1 */;
     /** Maps DSL nodeRef → SuperSonic nodeId for control messages */
     this.nodeRefMap = /* @__PURE__ */ new Map();
-    /** Reusable inner FX nodes — persists across loop iterations. See issue #70. */
+    /** Reusable inner FX nodes — persists across loop iterations. See issue #70.
+     *  `killTimer` is the pending `setTimeout` handle that frees this FX 1s after
+     *  its last iteration if no follow-up iteration cancels it. On hot-swap /
+     *  stop we MUST clearTimeout these before dropping the map entries, otherwise
+     *  the stale timer fires later and calls freeBus/freeGroup on what are by
+     *  then NEW live FX resources — corrupting the bus pool and silently killing
+     *  groups (issue #290). */
     this.reusableFx = /* @__PURE__ */ new Map();
     /** Pending volume to apply when bridge initializes */
     this.pendingVolume = null;
@@ -31390,6 +31534,8 @@ var SonicPiEngine = class {
       this.bridge.setOscTraceHandler((msg) => {
         if (this.printHandler) this.printHandler(msg);
       });
+      this.bridge.preloadFxSynthDefs(ALL_FX_NAMES).catch(() => {
+      });
     }).catch((err2) => {
       console.warn("[SonicPi] SuperSonic init failed, running without audio:", err2);
       this.bridge = null;
@@ -31427,10 +31573,13 @@ var SonicPiEngine = class {
       return { error: new Error("SonicPiEngine not initialized \u2014 call init() first") };
     }
     try {
+      const isReEvaluate = this.scheduler !== null && this.playing;
+      if (isReEvaluate && code === this.currentCode) {
+        return {};
+      }
       this.currentCode = code;
       this.currentStratum = detectStratum(code);
       this.warnDedup.clear();
-      const isReEvaluate = this.scheduler !== null && this.playing;
       if (!isReEvaluate) {
         if (this.scheduler) {
           this.scheduler.dispose();
@@ -31631,49 +31780,7 @@ var SonicPiEngine = class {
         // Note: sound_in, sound_in_stereo, live_audio require Web Audio mic permission
         //   plumbing which is not yet implemented. Track separately.
       ];
-      const fx_names_fn = () => [
-        "reverb",
-        "echo",
-        "delay",
-        "distortion",
-        "slicer",
-        "wobble",
-        "ixi_techno",
-        "compressor",
-        "rlpf",
-        "rhpf",
-        "hpf",
-        "lpf",
-        "normaliser",
-        "pan",
-        "band_eq",
-        "flanger",
-        "krush",
-        "bitcrusher",
-        "ring_mod",
-        "chorus",
-        "octaver",
-        "vowel",
-        "tanh",
-        "gverb",
-        "pitch_shift",
-        "whammy",
-        "tremolo",
-        "level",
-        "mono",
-        "ping_pong",
-        "panslicer",
-        // Filter variants — from synthinfo.rb FX classes
-        "bpf",
-        "rbpf",
-        "nbpf",
-        "nrbpf",
-        "nlpf",
-        "nrlpf",
-        "nhpf",
-        "nrhpf",
-        "eq"
-      ];
+      const fx_names_fn = () => [...ALL_FX_NAMES];
       const load_sample_fn = (_name) => {
       };
       const sample_info_fn = (name2) => {
@@ -32469,13 +32576,24 @@ var SonicPiEngine = class {
         const oldLoops = scheduler.getRunningLoopNames();
         const removedLoops = oldLoops.filter((name2) => !pendingLoops.has(name2));
         const hasNewLoops = [...pendingLoops.keys()].some((name2) => !oldLoops.includes(name2));
+        for (const name2 of removedLoops) {
+          this.loopBuilders.delete(name2);
+          this.loopSeeds.delete(name2);
+          this.loopTicks.delete(name2);
+          this.loopBeats.delete(name2);
+          this.loopSynced.delete(name2);
+        }
         scheduler.pauseTick();
         if (this.bridge) {
           this.bridge.freeAllNodes();
           this.nodeRefMap.clear();
           this.persistentFx.clear();
+          for (const state4 of this.reusableFx.values()) {
+            if (state4.killTimer) clearTimeout(state4.killTimer);
+          }
           this.reusableFx.clear();
         }
+        await this.preCreatePersistentFx(defaultBpm);
         scheduler.reEvaluate(pendingLoops, { bpm: defaultBpm, synth: defaultSynth });
         for (const [name2, defaults] of pendingDefaults) {
           const task = scheduler.getTask(name2);
@@ -32487,10 +32605,62 @@ var SonicPiEngine = class {
         }
         scheduler.resumeTick();
       }
+      if (!isReEvaluate) {
+        await this.preCreatePersistentFx(defaultBpm);
+      }
       return {};
     } catch (err2) {
       const error = err2 instanceof Error ? err2 : new Error(String(err2));
       return { error };
+    }
+  }
+  /**
+   * Synchronously pre-create persistent FX nodes for every top-level scope
+   * before any loop iteration fires audio through them. Called from BOTH the
+   * first-eval path AND the hot-swap path (after freeAllNodes + map clear).
+   *
+   * Why this exists: the lazy creation at line 612 runs INSIDE the loop's
+   * first iteration, AT virtualTime + schedAheadTime. The same iteration
+   * then queues sample /s_new with the same timetag. scsynth receives both
+   * bundles and processes them in the order they arrive at its scheduler — a
+   * sub-frame race. When the race loses, sample /s_new fires onto a bus whose
+   * FX node hasn't been created yet → silent / dry clap (user-reported
+   * "music plays wrongly" residual on Update; the same race exists on first
+   * Run but is masked because the user just clicked Play).
+   *
+   * Why this fixes it: FX nodes are CREATED HERE with audioTime=0 (immediate).
+   * scsynth processes them now, BEFORE any future-timed sample bundle can
+   * land. By the time loops start iterating, persistentFx is populated, the
+   * lazy-creation block at line 612 is skipped via .has(), and task.outBus
+   * is set to the live FX bus before any sample plays.
+   *
+   * Why only FX (not samples): FX are bus receivers — they must exist before
+   * audio flows through them. Samples are continuous per-iteration events
+   * scheduled via virtual time; pre-creating them would block real-time
+   * scheduling. FX setup is one-time per scope.
+   *
+   * Idempotent: scopes already in `persistentFx` are skipped.
+   */
+  async preCreatePersistentFx(bpm) {
+    if (!this.bridge) return;
+    for (const [scopeId, fxChain] of this.fxScopeChains) {
+      if (!fxChain || fxChain.length === 0) continue;
+      if (this.persistentFx.has(scopeId)) continue;
+      let currentOutBus = 0;
+      const buses = [];
+      const groups = [];
+      for (const fx of fxChain) {
+        const bus = this.bridge.allocateBus();
+        const groupId = this.bridge.createFxGroup();
+        const fxWarn = this.printHandler ? (m) => this.printHandler(`[Warning] with_fx :${fx.name} \u2014 ${m}`) : void 0;
+        const fxOpts = normalizeFxParams(fx.name, fx.opts, bpm, fxWarn);
+        await this.bridge.applyFx(fx.name, 0, fxOpts, bus, currentOutBus);
+        this.bridge.flushMessages(0);
+        buses.push(bus);
+        groups.push(groupId);
+        currentOutBus = bus;
+      }
+      this.persistentFx.set(scopeId, { buses, groups, outBus: currentOutBus });
     }
   }
   /** Start the scheduler. Call after the first `evaluate()`. */
@@ -32526,6 +32696,9 @@ var SonicPiEngine = class {
     this.definedFns.clear();
     this.defonceCache.clear();
     this.persistentFx.clear();
+    for (const state4 of this.reusableFx.values()) {
+      if (state4.killTimer) clearTimeout(state4.killTimer);
+    }
     this.reusableFx.clear();
     this.loopFxScope.clear();
     this.fxScopeChains.clear();
