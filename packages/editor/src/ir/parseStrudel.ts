@@ -100,14 +100,38 @@ export function parseStrudel(code: string): PatternIR {
     // `loc` (source ranges) to Play nodes.
     const tracks = extractTracks(code)
     if (tracks.length === 0) {
-      // No $: prefix — try parsing as a single expression at offset 0
+      // No $: prefix — parse as a single expression and wrap in a
+      // synthetic Track('d1', ...). 20-11 D-04 option (a): every parseStrudel
+      // result whose root is the user's musical expression carries a
+      // trackId, even when the source has no `$:` block. The wrap has
+      // NO `loc` (no $: line to point at) and NO userMethod (synthetic,
+      // distinguishes from `.p("d1")`). toStrudel's β-2 Track arm strips
+      // synthetic-d1 (userMethod === undefined) on round-trip so the
+      // input → IR → string identity is preserved for non-$: sources.
       const trimStart = code.search(/\S/)
-      return parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0)
+      const inner = parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0)
+      return IR.track('d1', inner)
     }
     if (tracks.length === 1) {
-      return parseExpression(tracks[0].expr, tracks[0].offset)
+      // Single `$:` block — Track('d1', expr) without an enclosing Stack.
+      // loc covers the `$:` line range (PV36 / D-02). Synthetic-from-$:
+      // form: no userMethod (toStrudel β-2 distinguishes from `.p()` form
+      // via `userMethod === 'p'`).
+      const t = tracks[0]
+      return IR.track('d1', parseExpression(t.expr, t.offset), {
+        loc: [{ start: t.dollarStart, end: t.end }],
+      })
     }
-    return IR.stack(...tracks.map(t => parseExpression(t.expr, t.offset)))
+    // Two+ `$:` blocks — Stack(Track('d1', ...), Track('d2', ...), ...).
+    // Each Track carries its own `$:` line range as loc. The outer Stack
+    // is synthetic (no loc / no userMethod) — same shape as today.
+    return IR.stack(
+      ...tracks.map((t, i) =>
+        IR.track(`d${i + 1}`, parseExpression(t.expr, t.offset), {
+          loc: [{ start: t.dollarStart, end: t.end }],
+        }),
+      ),
+    )
   } catch {
     return IR.code(code)
   }
@@ -127,8 +151,22 @@ export function parseStrudel(code: string): PatternIR {
  * offset within the slice is also a valid offset within `code`.
  * Returns [] if no $: lines found (caller handles single-expression case).
  */
-export function extractTracks(code: string): { expr: string; offset: number }[] {
-  const tracks: { expr: string; offset: number }[] = []
+export function extractTracks(
+  code: string,
+): { expr: string; offset: number; dollarStart: number; end: number }[] {
+  // Phase 20-11 α-2 — return shape additively widened. `dollarStart` (start
+  // of the literal `$:` token) and `end` (exclusive end of the track body
+  // slice — either the next `$:` line start or `code.length`) are exposed
+  // so α-3's parseStrudel main path can attach a loc covering the `$:` line
+  // range to each Track wrapper. Existing callers (parseStrudel main +
+  // parseStrudelStages.runRawStage) consume only `expr`/`offset` and are
+  // forward-compatible.
+  const tracks: {
+    expr: string
+    offset: number
+    dollarStart: number
+    end: number
+  }[] = []
   // Match `$:` at the start of a line (allowing leading whitespace).
   const dollarRe = /^[ \t]*\$:/gm
   const starts: { dollarStart: number; bodyStart: number }[] = []
@@ -146,12 +184,12 @@ export function extractTracks(code: string): { expr: string; offset: number }[] 
   if (starts.length === 0) return []
 
   for (let i = 0; i < starts.length; i++) {
-    const { bodyStart } = starts[i]
+    const { dollarStart, bodyStart } = starts[i]
     const end = i + 1 < starts.length ? starts[i + 1].dollarStart : code.length
     const slice = code.slice(bodyStart, end)
     // Trailing whitespace can stay — parseExpression handles it. We
     // keep the leading slice intact so offsets line up.
-    tracks.push({ expr: slice, offset: bodyStart })
+    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end })
   }
   return tracks
 }
@@ -772,12 +810,44 @@ function applyMethod(
       return IR.chop(n, ir, tagMeta(method, callSiteRange))
     }
 
-    case 'p':
-      // .p("trackId") — track assignment, intentional pass-through.
-      // Phase 20-04 T-07 (Trap 3): consumed externally (not by our parser);
-      // wrapping would break track-assignment semantics. PV37 D-07 keeps
-      // this unwrapped — confirmed Chesterton fence (existence check).
-      return ir
+    case 'p': {
+      // Phase 20-11 D-01/D-02 — `.p("name")` overrides auto `d{N}` from $:.
+      // The 20-04 Chesterton (`return ir`) was correct under the PV37
+      // REPRESENTATION model but the musician-track-identity model (PV35)
+      // needs the SEMANTICS pair — mirror Param's promotion (20-10).
+      //
+      // Single decision (P50 — no fallback ladders): `args` is a content-
+      // bearing string literal (with surrounding quotes after the parser's
+      // arg extraction) → Track wrap. Anything else (no args, non-string,
+      // empty string, mini-syntax inside the literal) falls back to
+      // wrapAsOpaque (PV37 preserved; round-trip via toStrudel `.via.method/
+      // args` still emits `.p(...)` byte-for-byte).
+      //
+      // Identifier-only quoted string with optional spaces / `:.-_`. Brackets,
+      // angle-brackets, star, tilde, pipe excluded — anything mini-syntax
+      // routes through wrapAsOpaque so the user's intent is preserved as a
+      // typed source fragment.
+      // Phase 20-11 wave-δ — accept BOTH single and double-quoted string
+      // literals. Strudel's transpiler converts double-quoted strings
+      // to mini-notation Patterns at runtime, so `.p("name")` will
+      // CRASH at eval time (Strudel's .p calls `id.includes("$")` on
+      // the resulting Pattern object). The working idiom is single
+      // quotes: `.p('name')`. We accept both at the IR level so the
+      // Track wrap still happens even if the user types double quotes
+      // (the timeline shows the right row; the runtime fails
+      // separately and we no-op in the StrudelEngine wrapper).
+      const trimmed = args.trim()
+      const strMatch = trimmed.match(
+        /^(?:"([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)"|'([a-zA-Z0-9_\-][a-zA-Z0-9_:.\- ]*?)')$/,
+      )
+      const name = strMatch?.[1] ?? strMatch?.[2]
+      if (!name) {
+        // Empty / mini-syntax / non-string / no args / backtick mini —
+        // preserve PV37.
+        return wrapAsOpaque(ir, method, args, callSiteRange)
+      }
+      return IR.track(name, ir, tagMeta(method, callSiteRange))
+    }
 
     case 's':
     case 'n':

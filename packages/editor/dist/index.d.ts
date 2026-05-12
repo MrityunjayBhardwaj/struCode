@@ -296,6 +296,12 @@ type PatternIR = {
     loc?: SourceLocation[];
     userMethod?: string;
 } | {
+    tag: 'Track';
+    trackId: string;
+    body: PatternIR;
+    loc?: SourceLocation[];
+    userMethod?: string;
+} | {
     tag: 'Loop';
     body: PatternIR;
     loc?: SourceLocation[];
@@ -345,6 +351,7 @@ declare const IR: {
     readonly when: (gate: string, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly fx: (name: string, params: Record<string, number | string>, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly param: (key: string, value: string | number | PatternIR, rawArgs: string, body: PatternIR, meta?: TagMeta) => PatternIR;
+    readonly track: (trackId: string, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly ramp: (param: string, from: number, to: number, cycles: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly fast: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;
     readonly slow: (factor: number, body: PatternIR, meta?: TagMeta) => PatternIR;
@@ -389,6 +396,16 @@ interface CollectContext {
     speed: number;
     /** Inherited parameters from enclosing FX/Ramp nodes */
     params: Record<string, number | string>;
+    /**
+     * Phase 20-11 — populated by Track wrapper arm (β-1). Outer-then-inner
+     * spread: nested Track sets ctx.trackId via simple override (last walk-
+     * pass wins → outer wins → matches "last-typed-source-wins" because
+     * parser places the LAST-chained .p() as the OUTERMOST wrapper).
+     * Absent for hand-built IR without Track wrapper (test fixtures); that
+     * case yields IREvent.trackId === undefined (omitted via conditional
+     * spread in makeEvent — CONTEXT pre-mortem #6).
+     */
+    trackId?: string;
 }
 /**
  * Walk a PatternIR tree and return a flat array of IREvents.

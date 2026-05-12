@@ -137,6 +137,18 @@ export function projectedLabel(node: PatternIR): string | undefined {
       // rationale as Code's whitelist). It is NOT a PV32 violation in
       // the normal path — that path short-circuits one frame earlier.
       return node.tag
+    case 'Track':
+      // Phase 20-11 wave γ-3 (PV35 / PV32 — musician chrome).
+      //
+      // Note: the userMethod-first short-circuit at lines 59-61 already
+      // returns 'p' for `.p()`-derived Tracks (userMethod === 'p'); this
+      // arm fires only for synthetic d{N} Tracks where userMethod is
+      // undefined. For those, the trackId IS the user-visible identity —
+      // the musician sees `d1`, `d2`, ... rendered as the row label, not
+      // the IR tag name. Distinct from Param's userMethod-first short-
+      // circuit because the synthetic case still has a meaningful name
+      // (`d{N}` from the `$:` block index) rather than a leaked tag.
+      return node.trackId
     default: {
       // Exhaustiveness check — TS error if a tag is missing.
       const _exhaustive: never = node
@@ -238,6 +250,12 @@ export function projectedChildren(node: PatternIR): readonly PatternIR[] {
     // the wrapped receiver. Parse-failure case (no via): leaf as before.
     case 'Code':
       return node.via ? [node.via.inner] : []
+    case 'Track':
+      // Phase 20-11 γ-3 — single-body wrapper; surface body so the
+      // inspector tree drills through Track. Promotion of Stack-body
+      // children (flattening the row hierarchy) is deferred to 20-12
+      // chrome polish.
+      return [node.body]
     default: {
       const _exhaustive: never = node
       return _exhaustive
@@ -286,6 +304,7 @@ export function stripInnerLate(node: PatternIR): PatternIR {
     case 'Chop':
     case 'When':
     case 'Loop':
+    case 'Track':         // Phase 20-11 — single-body wrapper; same shape as FX/Param.
       return { ...node, body: stripInnerLate(node.body) }
     default:
       // Multi-child / leaf nodes (Pure, Play, Sleep, Code, Stack, Seq,

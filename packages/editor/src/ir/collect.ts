@@ -178,6 +178,16 @@ export interface CollectContext {
   speed: number
   /** Inherited parameters from enclosing FX/Ramp nodes */
   params: Record<string, number | string>
+  /**
+   * Phase 20-11 — populated by Track wrapper arm (β-1). Outer-then-inner
+   * spread: nested Track sets ctx.trackId via simple override (last walk-
+   * pass wins → outer wins → matches "last-typed-source-wins" because
+   * parser places the LAST-chained .p() as the OUTERMOST wrapper).
+   * Absent for hand-built IR without Track wrapper (test fixtures); that
+   * case yields IREvent.trackId === undefined (omitted via conditional
+   * spread in makeEvent — CONTEXT pre-mortem #6).
+   */
+  trackId?: string
 }
 
 const DEFAULT_CONTEXT: CollectContext = {
@@ -233,6 +243,11 @@ function makeEvent(ctx: CollectContext, note: string | number, params: Record<st
     velocity: (merged.velocity as number) ?? 1,
     color: (merged.color as string | null) ?? null,
     params: merged,
+    // Phase 20-11 — conditional spread: omits the field entirely when
+    // ctx.trackId is undefined (hand-built IR without Track wrapper).
+    // Avoids polluting IREvent with enumerable `trackId: undefined`
+    // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
+    ...(ctx.trackId !== undefined ? { trackId: ctx.trackId } : {}),
   }
 }
 
@@ -330,6 +345,22 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
   switch (ir.tag) {
     case 'Pure':
       return []
+
+    case 'Track': {
+      // Phase 20-11 D-02 — musician-track-identity propagation. Mirrors
+      // Param's wrapper-arm shape: spread ctx, set trackId, walk body,
+      // thread Track's own loc onto produced events via withWrapperLoc.
+      //
+      // Outer-then-inner spread: nested Track (e.g. Track('d1', Track('lead'))
+      // from `$:` + .p()) overrides correctly — inner walk's spread of
+      // {...ctx, trackId: ir.trackId} replaces ctx.trackId in childCtx for
+      // that subtree. With parser placing the LAST-chained method as the
+      // OUTERMOST wrapper, walk runs outer-first so OUTER wins. This matches
+      // the source-order "last-typed-wins" convention (D-05).
+      // CONTEXT pre-mortem #1 + RESEARCH G8-Trap C verified safe.
+      const childCtx: CollectContext = { ...ctx, trackId: ir.trackId }
+      return withWrapperLoc(walk(ir.body, childCtx), ir.loc)
+    }
 
     case 'Code': {
       // Phase 20-04 T-09 (D-01 / PV37 / PK13 step 3).

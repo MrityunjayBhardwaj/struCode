@@ -21,6 +21,19 @@ function gen(ir: PatternIR): string {
     case 'Pure':
       return '""'
 
+    case 'Track': {
+      // Phase 20-11 D-02 — userMethod discriminates the two wrapper sources:
+      //   - 'p'      → user wrote .p("name") — re-emit `${gen(body)}.p("name")`.
+      //   - undefined → synthetic d{N} from $: or single-expression file —
+      //                 re-emit body unchanged. Multi-$: re-emission deferred
+      //                 to issue #109 (Stack-of-Track currently round-trips
+      //                 to `stack(...)` not `$: ...\n$: ...`).
+      if (ir.userMethod === 'p') {
+        return `${gen(ir.body)}.p("${ir.trackId}")`
+      }
+      return gen(ir.body)
+    }
+
     case 'Code':
       // Phase 20-04 T-10 (D-02 / PV37 clause 4).
       // Wrapper case: re-emit ${gen(via.inner)}.${method}(${args}) using

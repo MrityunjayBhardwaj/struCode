@@ -30,6 +30,7 @@ import {
 } from '../parseStrudelStages'
 import type { Pass } from '../passes'
 import { runPasses } from '../passes'
+import { unwrapD1 } from './helpers/unwrapD1'
 
 const PASSES: readonly Pass<PatternIR>[] = [
   { name: 'RAW',           run: runRawStage           },
@@ -38,6 +39,12 @@ const PASSES: readonly Pass<PatternIR>[] = [
   { name: 'Parsed',        run: runFinalStage         },
 ]
 
+// Phase 20-11 γ-4 — pipeline returns the FINAL stage's IR directly,
+// unchanged. For tests that compare `pipeline(code)` to `parseStrudel(code)`
+// (regression sentinel + Tier-4 round-trip), BOTH sides now carry the
+// synthetic Track('d1', ...) wrapper so deep-equal still holds. For tests
+// that assert on the inner-most IR tag (e.g. `pipeline(...).tag === 'Param'`),
+// callers can wrap with `unwrapD1(...)` at the call site.
 function pipeline(code: string): PatternIR {
   const seed = IR.code(code)
   const passes = runPasses(seed, PASSES)
@@ -66,6 +73,15 @@ export function assertNoStageMeta(node: PatternIR): void {
     expect(
       Object.prototype.hasOwnProperty.call(rec, 'chainOffset'),
       `node tag=${n.tag} has orphan chainOffset`,
+    ).toBe(false)
+    // Phase 20-11 α-4 — Track-loc threading metadata.
+    expect(
+      Object.prototype.hasOwnProperty.call(rec, 'dollarStart'),
+      `node tag=${n.tag} has orphan dollarStart`,
+    ).toBe(false)
+    expect(
+      Object.prototype.hasOwnProperty.call(rec, 'dollarEnd'),
+      `node tag=${n.tag} has orphan dollarEnd`,
     ).toBe(false)
     // Recurse into children based on tag shape.
     switch (n.tag) {
@@ -109,6 +125,11 @@ export function assertNoStageMeta(node: PatternIR): void {
         visit(n.body)
         if (typeof n.value === 'object' && n.value !== null) visit(n.value as PatternIR)
         break
+      case 'Track':
+        // Phase 20-11 wave α-1 — Track wraps a body; recurse into it so the
+        // orphan-meta scan reaches inner nodes. Same single-body shape as FX.
+        visit(n.body)
+        break
       case 'Chunk':
         visit(n.transform)
         visit(n.body)
@@ -137,7 +158,15 @@ function stripStageMeta(node: PatternIR): PatternIR {
   const rec = node as Record<string, unknown>
   const cloned: Record<string, unknown> = {}
   for (const k of Object.keys(rec)) {
-    if (k === 'unresolvedChain' || k === 'chainOffset') continue
+    // Phase 20-11 α-4 — Track-loc threading metadata.
+    if (
+      k === 'unresolvedChain' ||
+      k === 'chainOffset' ||
+      k === 'dollarStart' ||
+      k === 'dollarEnd'
+    ) {
+      continue
+    }
     const v = rec[k]
     cloned[k] = v
   }
@@ -183,6 +212,10 @@ function stripStageMeta(node: PatternIR): PatternIR {
       if (typeof node.value === 'object' && node.value !== null) {
         cloned.value = stripStageMeta(node.value as PatternIR)
       }
+      break
+    case 'Track':
+      // Phase 20-11 wave α-1 — single-body wrapper; clone child.
+      cloned.body = stripStageMeta(node.body)
       break
     case 'Chunk':
       cloned.transform = stripStageMeta(node.transform)
@@ -453,6 +486,7 @@ function collectLocEntries(
     case 'When': case 'FX': case 'Ramp': case 'Fast': case 'Slow':
     case 'Elongate': case 'Late': case 'Degrade': case 'Ply': case 'Struct':
     case 'Swing': case 'Shuffle': case 'Scramble': case 'Chop': case 'Loop':
+    case 'Track':
       collectLocEntries(node.body, `${path}.body`, acc)
       break
     case 'Chunk':
@@ -516,7 +550,7 @@ describe('parseStrudel stages — MINI-EXPANDED → CHAIN-APPLIED: universal loc
 describe('parseStrudel stages — PK12 dot-inclusive convention preserved (T-10.b)', () => {
   it('s("bd").fast(2).late(0.125).gain(0.5) — each tag.loc.start lands on its leading dot', () => {
     const code = 's("bd").fast(2).late(0.125).gain(0.5)'
-    const ir = pipeline(code)
+    const ir = unwrapD1(pipeline(code))
     // Phase 20-10: outermost tag is now Param (gain). Walk down: Param →
     // Late → Fast → Play. Loc convention unchanged (PK12 dot-inclusive).
     expect(ir.tag).toBe('Param')
@@ -535,8 +569,8 @@ describe('parseStrudel stages — PK12 dot-inclusive convention preserved (T-10.
 
 describe('parseStrudel stages — userMethod alias-distinguished pairs (T-10.a, PV31)', () => {
   it('Stack-from-layer ≠ Stack-from-jux', () => {
-    const layerFinal = pipeline('note("c d e").layer(x => x.add("0,2"))')
-    const juxFinal   = pipeline('s("bd hh sd cp").jux(x => x.gain(0.5))')
+    const layerFinal = unwrapD1(pipeline('note("c d e").layer(x => x.add("0,2"))'))
+    const juxFinal   = unwrapD1(pipeline('s("bd hh sd cp").jux(x => x.gain(0.5))'))
     expect(layerFinal.tag).toBe('Stack')
     expect((layerFinal as { userMethod?: string }).userMethod).toBe('layer')
     expect(juxFinal.tag).toBe('Stack')
@@ -544,8 +578,8 @@ describe('parseStrudel stages — userMethod alias-distinguished pairs (T-10.a, 
   })
 
   it('Degrade-from-degrade ≠ Degrade-from-degradeBy', () => {
-    const d  = pipeline('s("bd hh sd cp").degrade()')
-    const db = pipeline('s("bd hh sd cp").degradeBy(0.3)')
+    const d  = unwrapD1(pipeline('s("bd hh sd cp").degrade()'))
+    const db = unwrapD1(pipeline('s("bd hh sd cp").degradeBy(0.3)'))
     expect(d.tag).toBe('Degrade')
     expect((d as { userMethod?: string }).userMethod).toBe('degrade')
     expect(db.tag).toBe('Degrade')
@@ -553,8 +587,8 @@ describe('parseStrudel stages — userMethod alias-distinguished pairs (T-10.a, 
   })
 
   it('Every-from-every ≠ Every-from-sometimes', () => {
-    const e  = pipeline('s("bd").every(2, x => x.fast(2))')
-    const s  = pipeline('s("bd hh").sometimes(x => x.fast(2))')
+    const e  = unwrapD1(pipeline('s("bd").every(2, x => x.fast(2))'))
+    const s  = unwrapD1(pipeline('s("bd hh").sometimes(x => x.fast(2))'))
     // every → Every tag with userMethod 'every'
     expect(e.tag).toBe('Every')
     expect((e as { userMethod?: string }).userMethod).toBe('every')
@@ -564,7 +598,7 @@ describe('parseStrudel stages — userMethod alias-distinguished pairs (T-10.a, 
   })
 
   it('Param-from-gain has userMethod gain (not pan) — Phase 20-10 promotion', () => {
-    const g = pipeline('s("bd").gain(0.5)')
+    const g = unwrapD1(pipeline('s("bd").gain(0.5)'))
     expect(g.tag).toBe('Param')
     expect((g as { userMethod?: string }).userMethod).toBe('gain')
   })
@@ -603,7 +637,7 @@ describe('parseStrudel stages — orphan stage-metadata walk over fixtures (T-10
 describe('parseStrudel stages — parseTransform recursion (T-10.d, PRE-01)', () => {
   it('every(2, x => x.late(0.125)) preserves arrow-body Late.loc.start at absolute dot offset', () => {
     const code = 's("bd").every(2, x => x.late(0.125))'
-    const ir = pipeline(code)
+    const ir = unwrapD1(pipeline(code))
     // Walk: outer Every → inner body → Late (from arrow `x.late(0.125)`).
     expect(ir.tag).toBe('Every')
     if (ir.tag !== 'Every') throw new Error('unreachable')

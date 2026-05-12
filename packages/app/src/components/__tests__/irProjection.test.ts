@@ -11,7 +11,7 @@
  * dependencies (vitest's ESM loader can't resolve gifenc).
  */
 import { describe, it, expect } from 'vitest'
-import { parseStrudel } from '../../../../editor/src/ir/parseStrudel'
+import { parseStrudel as _parseStrudel } from '../../../../editor/src/ir/parseStrudel'
 import { IR, type PatternIR } from '../../../../editor/src/ir/PatternIR'
 import { runRawStage } from '../../../../editor/src/ir/parseStrudelStages'
 import {
@@ -20,6 +20,12 @@ import {
   stripInnerLate,
   LOCALSTORAGE_KEY,
 } from '../irProjection'
+import { unwrapD1 } from '../../../../editor/src/ir/__tests__/helpers/unwrapD1'
+
+// Phase 20-11 γ-4 — drill through the synthetic d1 Track wrapper. The
+// projection tests assert on the inner shape (Stack, Late, Degrade, ...);
+// the new γ-3 Track projection cases hand-build via IR.track(...).
+const parseStrudel = (code: string): PatternIR => unwrapD1(_parseStrudel(code))
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -75,6 +81,7 @@ function rawChildren(node: PatternIR): readonly PatternIR[] {
       if (typeof v === 'object' && v !== null) return [node.body, v as PatternIR]
       return [node.body]
     }
+    case 'Track': return [node.body]   // Phase 20-11 wave α-1 — single-body wrapper.
     case 'Chunk': return [node.body, node.transform]
     case 'Pick':  return [node.selector, ...node.lookup]
     default:      return []
@@ -638,5 +645,41 @@ describe('RAW tab projection (D-04 uniform projection — REV-3)', () => {
     expect(kids).toHaveLength(0)
     // The Code's text contains the source.
     expect((raw as { code: string }).code).toBe('note("c d")')
+  })
+})
+
+describe('20-11 — Track projection (musician-track-identity / PV35 / PV32)', () => {
+  it('projectedLabel(Track) returns trackId — synthetic d1', () => {
+    const node: PatternIR = IR.track('d1', IR.play('c4', 1))
+    expect(projectedLabel(node)).toBe('d1')
+  })
+
+  it('projectedLabel(Track) returns trackId — custom name', () => {
+    const node: PatternIR = IR.track('lead', IR.play('c4', 1))
+    expect(projectedLabel(node)).toBe('lead')
+  })
+
+  it('projectedLabel(Track) — userMethod-first short-circuit returns "p" for .p()-derived', () => {
+    // Hand-construct a Track with userMethod='p' to exercise the short-circuit
+    // path (lines 59-61). Real parser path produces this for `.p("name")`.
+    const node: PatternIR = {
+      tag: 'Track',
+      trackId: 'lead',
+      body: IR.play('c4', 1),
+      userMethod: 'p',
+    }
+    expect(projectedLabel(node)).toBe('p')
+  })
+
+  it('projectedChildren(Track) returns [body]', () => {
+    const body = IR.play('c4', 1)
+    const node: PatternIR = IR.track('lead', body)
+    const kids = projectedChildren(node)
+    expect(kids).toEqual([body])
+  })
+
+  it('stripInnerLate preserves Track wrapper (single-body recursion)', () => {
+    const node: PatternIR = IR.track('d1', IR.play('c4', 1))
+    expect(stripInnerLate(node)).toEqual(node)
   })
 })

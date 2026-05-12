@@ -54,7 +54,7 @@ export function patternFromJSON(json: string): PatternIR {
 const VALID_TAGS = new Set([
   'Pure', 'Seq', 'Stack', 'Play', 'Sleep', 'Choice', 'Every',
   'Cycle', 'When', 'FX', 'Ramp', 'Fast', 'Slow', 'Loop', 'Code',
-  'Param',
+  'Param', 'Track',
 ])
 
 function validateNode(raw: unknown, path: string): PatternIR {
@@ -241,6 +241,23 @@ function validateNode(raw: unknown, path: string): PatternIR {
         key: node.key as string,
         value,
         rawArgs: node.rawArgs as string,
+        body: validateNode(node.body, `${path}.body`),
+      }
+      if (Array.isArray(node.loc)) out.loc = node.loc as SourceLocation[]
+      if (typeof node.userMethod === 'string') out.userMethod = node.userMethod
+      return out
+    }
+
+    case 'Track': {
+      // Phase 20-11 — Track wrapper. Mirrors Param's structure (key+body) but
+      // simpler — value is just trackId, no rawArgs. Serialize MUST carry
+      // through round-trip (P33-class trap if omitted: silent-drop on
+      // deserialize like 20-04 caught for `via` and 20-10 for Param).
+      requireField(node, 'trackId', ['string'], path)
+      requireField(node, 'body', ['object'], path)
+      const out: PatternIR = {
+        tag: 'Track',
+        trackId: node.trackId as string,
         body: validateNode(node.body, `${path}.body`),
       }
       if (Array.isArray(node.loc)) out.loc = node.loc as SourceLocation[]

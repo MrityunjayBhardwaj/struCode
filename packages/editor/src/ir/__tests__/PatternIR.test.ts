@@ -3,7 +3,12 @@ import { IR, type PatternIR } from '../PatternIR'
 import { collect } from '../collect'
 import { toStrudel } from '../toStrudel'
 import { patternToJSON, patternFromJSON, PATTERN_IR_SCHEMA_VERSION } from '../serialize'
-import { parseStrudel, __test_wrapAsOpaque } from '../parseStrudel'
+import { parseStrudel as _parseStrudel, __test_wrapAsOpaque } from '../parseStrudel'
+import { unwrapD1 } from './helpers/unwrapD1'
+
+// Phase 20-11 γ-4 — drill through the synthetic d1 Track wrapper. Tests
+// that need the raw (Track-wrapped) shape import _parseStrudel directly.
+const parseStrudel = (code: string): PatternIR => unwrapD1(_parseStrudel(code))
 
 // ---------------------------------------------------------------------------
 // Type construction — every node variant via smart constructors
@@ -1004,5 +1009,64 @@ describe('20-10 — Param tag', () => {
     if (node.tag === 'Param') {
       expect(node.rawArgs).toBe('  "bd"  ')
     }
+  })
+})
+
+describe('20-11 — Track tag', () => {
+  it('IR.track constructs a Track node with trackId + body', () => {
+    const node = IR.track('d1', IR.play('c4'))
+    expect(node.tag).toBe('Track')
+    if (node.tag !== 'Track') throw new Error('unreachable')
+    expect(node.trackId).toBe('d1')
+    expect(node.body.tag).toBe('Play')
+    expect(node.loc).toBeUndefined()
+    expect(node.userMethod).toBeUndefined()
+  })
+
+  it('IR.track attaches loc via meta', () => {
+    const node = IR.track('d1', IR.play('c4'), { loc: [{ start: 0, end: 10 }] })
+    expect(node.tag).toBe('Track')
+    if (node.tag !== 'Track') throw new Error('unreachable')
+    expect(node.loc).toEqual([{ start: 0, end: 10 }])
+    expect(node.userMethod).toBeUndefined()
+  })
+
+  it('IR.track attaches userMethod via meta (for .p() form)', () => {
+    const node = IR.track('lead', IR.play('c4'), {
+      loc: [{ start: 5, end: 15 }],
+      userMethod: 'p',
+    })
+    expect(node.tag).toBe('Track')
+    if (node.tag !== 'Track') throw new Error('unreachable')
+    expect(node.trackId).toBe('lead')
+    expect(node.loc).toEqual([{ start: 5, end: 15 }])
+    expect(node.userMethod).toBe('p')
+  })
+
+  it('IR.track does not set userMethod when meta omitted (synthetic d{N} form)', () => {
+    const node = IR.track('d2', IR.play('c4'))
+    expect(node.tag).toBe('Track')
+    if (node.tag !== 'Track') throw new Error('unreachable')
+    expect(node.userMethod).toBeUndefined()
+    // Property should be absent, not just undefined-valued.
+    expect(Object.prototype.hasOwnProperty.call(node, 'userMethod')).toBe(false)
+  })
+
+  it('serialize round-trip preserves trackId + loc + userMethod', () => {
+    const node = IR.track('lead', IR.play('c4'), {
+      loc: [{ start: 5, end: 15 }],
+      userMethod: 'p',
+    })
+    const json = patternToJSON(node)
+    const recovered = patternFromJSON(json)
+    expect(recovered).toEqual(node)
+  })
+
+  it('serialize throws when trackId missing or non-string', () => {
+    const bad = JSON.stringify({
+      $schema: `patternir/${PATTERN_IR_SCHEMA_VERSION}`,
+      tree: { tag: 'Track', body: { tag: 'Pure' } },   // trackId missing
+    })
+    expect(() => patternFromJSON(bad)).toThrow(/trackId/)
   })
 })

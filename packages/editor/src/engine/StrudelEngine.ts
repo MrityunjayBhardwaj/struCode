@@ -367,6 +367,16 @@ export class StrudelEngine implements LiveCodingEngine {
               capturedPatterns.set(captureId, effectivePattern)
               return strudelFn.call(effectivePattern, id)
             }
+            // Strudel's `.p()` only accepts strings (registers pattern in
+            // D registry keyed by the id). Strudel's double-quoted-string-
+            // to-mini transformer turns `.p("name")` into `.p(<Pattern>)`
+            // at the transpiler stage — passing a Pattern blows up
+            // `k.includes("$")`. Guard the delegation: if id isn't a
+            // string, no-op (return `this`) so the chain doesn't crash.
+            // User-facing fix: use single quotes (`p('name')`) or pass a
+            // numeric orbit via `.orbit(N)`. PV35: invalid input is
+            // dropped silently here, not promoted to a runtime hap.
+            if (typeof id !== 'string') return this
             return strudelFn.call(this, id)
           },
         })

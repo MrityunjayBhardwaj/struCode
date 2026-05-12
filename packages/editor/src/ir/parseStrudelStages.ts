@@ -83,7 +83,17 @@ export function runRawStage(input: PatternIR): PatternIR {
     code: t.expr,
     lang: 'strudel' as const,
     loc: [{ start: t.offset, end: t.offset + t.expr.length }],
-  }))
+    // Phase 20-11 α-4 — stage-transition metadata. Stash the `$:` line
+    // range (dollarStart..end-of-track-body-slice) so runChainAppliedStage
+    // can construct the Track wrapper with the same loc parseStrudel main
+    // produces (line 0..15 for the first $:, 15..28 for the second, etc.).
+    // Additive narrow-union per D-03; mirrors `unresolvedChain` /
+    // `chainOffset` (PR-A precedent). Stripped from FINAL by stripStageMeta
+    // — the strip happens in applyOnTrack via stripStageMeta below + in
+    // the test-helper stripStageMeta the regression sentinel uses.
+    dollarStart: t.dollarStart,
+    dollarEnd: t.end,
+  } as PatternIR))
   return {
     tag: 'Stack' as const,
     tracks: trackCodes,
@@ -114,9 +124,21 @@ export function runMiniExpandedStage(input: PatternIR): PatternIR {
   }
   if (input.tag === 'Stack' && input.userMethod === undefined) {
     // Multi-track from RAW — apply parseRootWithChainMeta to each Code.
+    // Phase 20-11 α-4: thread the dollarStart/dollarEnd stage-meta from
+    // RAW through to the parsed root so CHAIN-APPLIED can construct the
+    // Track wrapper with the correct loc.
     const tracks = input.tracks.map((t) => {
       if (t.tag !== 'Code') return t // defensive
-      return parseRootWithChainMeta(t.code, t.loc?.[0]?.start ?? 0)
+      const parsed = parseRootWithChainMeta(t.code, t.loc?.[0]?.start ?? 0)
+      const tMeta = t as unknown as { dollarStart?: number; dollarEnd?: number }
+      if (tMeta.dollarStart !== undefined && tMeta.dollarEnd !== undefined) {
+        return {
+          ...(parsed as object),
+          dollarStart: tMeta.dollarStart,
+          dollarEnd: tMeta.dollarEnd,
+        } as unknown as PatternIR
+      }
+      return parsed
     })
     return { ...input, tracks }
   }
@@ -190,10 +212,31 @@ export function runChainAppliedStage(input: PatternIR): PatternIR {
     // for visualizing the source span, NOT a real source-correspondence
     // for the multi-track Stack node. T-05.c regression sentinel
     // enforces byte-equality.
-    return IR.stack(...input.tracks.map(applyOnTrack))
+    //
+    // Phase 20-11 α-4 — wrap each track with Track(`d${i+1}`, applied,
+    // {loc: dollarStart..dollarEnd}) so the pipeline FINAL output mirrors
+    // parseStrudel main path (line 110-115). dollarStart / dollarEnd were
+    // threaded from RAW → MINI-EXPANDED → here as stage-meta; consume +
+    // strip in applyOnTrack so the inner Track body is metadata-clean.
+    return IR.stack(
+      ...input.tracks.map((t, i) => {
+        const tMeta = t as unknown as { dollarStart?: number; dollarEnd?: number }
+        const applied = applyOnTrack(t)
+        const meta =
+          tMeta.dollarStart !== undefined && tMeta.dollarEnd !== undefined
+            ? { loc: [{ start: tMeta.dollarStart, end: tMeta.dollarEnd }] }
+            : undefined
+        return IR.track(`d${i + 1}`, applied, meta)
+      }),
+    )
   }
-  // Single-track case (or any non-multi-track shape).
-  return applyOnTrack(input)
+  // Single-track case (or any non-multi-track shape). Phase 20-11 γ-4 —
+  // wrap with synthetic Track('d1', applied) to mirror parseStrudel main
+  // path. NO loc and NO userMethod (synthetic-from-non-`$:`); toStrudel's
+  // β-2 Track arm strips the wrap on round-trip when userMethod undefined
+  // so byte identity holds. The test migration uses the unwrapD1 helper
+  // (`__tests__/helpers/unwrapD1.ts`) to drill through this wrap.
+  return IR.track('d1', applyOnTrack(input))
 }
 
 /**
@@ -220,15 +263,32 @@ function applyOnTrack(node: PatternIR): PatternIR {
 }
 
 /**
- * Drop `unresolvedChain` + `chainOffset` from a node (shallow). Returns
- * a new object; original is untouched.
+ * Drop stage-transition metadata from a node (shallow). Returns a new
+ * object; original is untouched. Strips:
+ *   - `unresolvedChain` / `chainOffset` (PR-A precedent — 19-07)
+ *   - `dollarStart` / `dollarEnd` (Phase 20-11 α-4 — Track-loc threading)
  */
 function stripStageMeta(node: PatternIR): PatternIR {
   const n = node as Record<string, unknown>
-  if (!('unresolvedChain' in n) && !('chainOffset' in n)) return node
-  const { unresolvedChain: _u, chainOffset: _o, ...clean } = n
+  if (
+    !('unresolvedChain' in n) &&
+    !('chainOffset' in n) &&
+    !('dollarStart' in n) &&
+    !('dollarEnd' in n)
+  ) {
+    return node
+  }
+  const {
+    unresolvedChain: _u,
+    chainOffset: _o,
+    dollarStart: _ds,
+    dollarEnd: _de,
+    ...clean
+  } = n
   void _u
   void _o
+  void _ds
+  void _de
   return clean as PatternIR
 }
 

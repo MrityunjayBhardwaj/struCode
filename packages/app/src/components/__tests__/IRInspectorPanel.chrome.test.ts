@@ -8,9 +8,17 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseStrudel } from '../../../../editor/src/ir/parseStrudel'
+import { parseStrudel as _parseStrudel } from '../../../../editor/src/ir/parseStrudel'
 import { IR, type PatternIR } from '../../../../editor/src/ir/PatternIR'
 import { summarize, children } from '../IRInspectorChrome'
+import { unwrapD1 } from '../../../../editor/src/ir/__tests__/helpers/unwrapD1'
+
+// Phase 20-11 γ-4 — drill through the synthetic d1 Track wrapper.
+// Tests asserting on the unwrapped (Code-with-via, Param, ...) shape
+// route through this shim; tests that need the raw Track shape (the
+// new γ-3 Track chrome cases) call _parseStrudel directly or use
+// IR.track(...) to hand-build.
+const parseStrudel = (code: string): PatternIR => unwrapD1(_parseStrudel(code))
 
 describe('20-04 — IR Inspector developer chrome (PV35 / D-05)', () => {
   it('summarize for Code-with-via returns "[opaque: .method(args)]"', () => {
@@ -105,5 +113,25 @@ describe('20-10 — Param developer chrome (sample-bucket / track-defining)', ()
     const inner = children(outer)[0]
     expect(inner.tag).toBe('Param')
     expect(summarize(inner)).toBe('s="sawtooth"')
+  })
+})
+
+describe('20-11 — Track developer chrome (musician-track-identity / PV35)', () => {
+  it('summarize(Track) emits "track: <trackId>"', () => {
+    const node = IR.track('lead', IR.play('c4', 1)) as PatternIR
+    expect(summarize(node)).toBe('track: lead')
+  })
+
+  it('summarize(Track) for synthetic d{N} emits "track: d2"', () => {
+    const node = IR.track('d2', IR.play('c4', 1)) as PatternIR
+    expect(summarize(node)).toBe('track: d2')
+  })
+
+  it('children(Track) returns [body] (single-wrapper shape)', () => {
+    const body: PatternIR = IR.play('c4', 1)
+    const node = IR.track('lead', body) as PatternIR
+    const kids = children(node)
+    expect(kids.length).toBe(1)
+    expect(kids[0]).toBe(body)
   })
 })
