@@ -4,6 +4,8 @@ import {
   clearEvalErrors,
   setLineMarker,
   clearLineMarkers,
+  refreshStrudelLintMarkers,
+  clearStrudelLintMarkers,
 } from '../diagnostics'
 import type * as Monaco from 'monaco-editor'
 
@@ -15,6 +17,33 @@ function makeModel(lineCount: number, maxCol = 80): Monaco.editor.ITextModel {
   return {
     getLineCount: () => lineCount,
     getLineMaxColumn: (_line: number) => maxCol,
+  } as unknown as Monaco.editor.ITextModel
+}
+
+/**
+ * Make a text-bearing model for the Strudel lint tests. Translates absolute
+ * char offsets to line/column the same way Monaco does (1-indexed, line
+ * number relative to \n boundaries). Sufficient for the regex-driven lint
+ * which only needs `getValue` + `getPositionAt`.
+ */
+function makeTextModel(text: string): Monaco.editor.ITextModel {
+  return {
+    getValue: () => text,
+    getPositionAt: (offset: number) => {
+      let line = 1
+      let col = 1
+      for (let i = 0; i < offset && i < text.length; i++) {
+        if (text[i] === '\n') {
+          line++
+          col = 1
+        } else {
+          col++
+        }
+      }
+      return { lineNumber: line, column: col }
+    },
+    getLineCount: () => text.split('\n').length,
+    getLineMaxColumn: () => 80,
   } as unknown as Monaco.editor.ITextModel
 }
 
@@ -273,5 +302,115 @@ describe('clearLineMarkers', () => {
     const monaco = makeMonaco(spy)
     clearLineMarkers(monaco, makeModel(3), 'stave-log')
     expect(spy).toHaveBeenCalledWith(expect.anything(), 'stave-log', [])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// F-2 — refreshStrudelLintMarkers (.p("...") double-quote lint)
+// ---------------------------------------------------------------------------
+
+describe('refreshStrudelLintMarkers (F-2)', () => {
+  it('flags a single .p("name") double-quoted call with a Warning marker', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+    const model = makeTextModel('$: s("bd*4").p("kick")')
+
+    refreshStrudelLintMarkers(monaco, model)
+
+    expect(spy).toHaveBeenCalledOnce()
+    const [, owner, markers] = spy.mock.calls[0]
+    expect(owner).toBe('stave-strudel-lint')
+    expect(markers).toHaveLength(1)
+    expect(markers[0]).toMatchObject({
+      severity: 4,
+      code: 'strudel/p-double-quoted',
+      source: 'stave',
+    })
+    expect(markers[0].message).toMatch(/single quotes/)
+    expect(markers[0].message).toContain("kick")
+  })
+
+  it('does NOT flag single-quoted .p(\'kick\') — the working idiom', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+    const model = makeTextModel("$: s(\"bd*4\").p('kick')")
+
+    refreshStrudelLintMarkers(monaco, model)
+
+    expect(spy).toHaveBeenCalledOnce()
+    const markers = spy.mock.calls[0][2]
+    expect(markers).toEqual([])
+  })
+
+  it('flags multiple .p("...") sites in the same buffer', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+    const model = makeTextModel(
+      [
+        '$: s("hh*8").p("hats")',
+        '$: s("bd*4").p("kick")',
+        "$: s(\"sd*2\").p('snare')", // already correct — should NOT add marker
+      ].join('\n'),
+    )
+
+    refreshStrudelLintMarkers(monaco, model)
+
+    const markers = spy.mock.calls[0][2]
+    expect(markers).toHaveLength(2)
+    expect(markers[0].startLineNumber).toBe(1)
+    expect(markers[1].startLineNumber).toBe(2)
+  })
+
+  it('clears markers when content goes from .p("name") to .p(\'name\')', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+
+    const bad = makeTextModel('$: s("bd*4").p("kick")')
+    refreshStrudelLintMarkers(monaco, bad)
+    expect(spy.mock.calls[0][2]).toHaveLength(1)
+
+    spy.mockClear()
+    const good = makeTextModel("$: s(\"bd*4\").p('kick')")
+    refreshStrudelLintMarkers(monaco, good)
+    expect(spy.mock.calls[0][2]).toEqual([])
+  })
+
+  it('does not flag double-quoted args to OTHER methods (s, note, etc.)', () => {
+    // Double-quoted strings ARE the right idiom for s() / note() — they
+    // genuinely want mini-notation. Only .p() is the case where mini
+    // isn't what the user wants.
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+    const model = makeTextModel(
+      's("bd*4").note("c d e f").every(2, fast(2)).color("red")',
+    )
+
+    refreshStrudelLintMarkers(monaco, model)
+
+    expect(spy.mock.calls[0][2]).toEqual([])
+  })
+
+  it('survives a Monaco throw (hetvabhasa P37 — never crash the editor)', () => {
+    const monaco = makeMonaco(
+      vi.fn(() => {
+        throw new Error('Illegal value')
+      }),
+    )
+    const model = makeTextModel('$: s("bd*4").p("kick")')
+
+    expect(() => refreshStrudelLintMarkers(monaco, model)).not.toThrow()
+  })
+})
+
+describe('clearStrudelLintMarkers', () => {
+  it('clears the lint owner with an empty array', () => {
+    const spy = vi.fn()
+    const monaco = makeMonaco(spy)
+    clearStrudelLintMarkers(monaco, makeTextModel('whatever'))
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      'stave-strudel-lint',
+      [],
+    )
   })
 })

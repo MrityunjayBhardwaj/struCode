@@ -159,3 +159,158 @@ export function clearLineMarkers(
     console.warn('[stave] clearLineMarkers failed:', markerError)
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Strudel idiom lint — F-2 (`.planning/phases/20-musician-timeline/
+// FOLLOWUPS.md`).
+//
+// Strudel's transpiler converts double-quoted string literals to mini-
+// notation Patterns at eval time. That's the right default for
+// `s("bd cp")`, `note("c d")`, etc. — but for `.p()`, which registers
+// the pattern in Strudel's `D` registry keyed by the id, the
+// double-quoted form silently becomes `.p(<Pattern>)`. Pre-wave-δ this
+// crashed `k.includes is not a function`. Wave-δ added a runtime
+// wrapper guard that no-ops on non-string ids — so the call no longer
+// throws but is also silently dropped at runtime (the user's chosen
+// track id is registered nowhere).
+//
+// This lint surfaces the gap at WRITE time: `.p("...")` gets a yellow
+// warning squiggle prompting the user to rewrite as `.p('...')`. The
+// IR-side 20-11 parser accepts both quote styles so the timeline
+// label is consistent either way; the lint exists to keep the runtime
+// + IR contracts visibly aligned to the user.
+//
+// Scan: regex over the model text. Cheap (model.getValue is O(N)
+// where N is doc size; for live-coding files this is a few KB max).
+// Stays in single-pass / no incremental re-tokenisation.
+// ─────────────────────────────────────────────────────────────────────────
+
+const STRUDEL_LINT_OWNER = 'stave-strudel-lint'
+const STRUDEL_DOUBLE_QUOTED_P_RE = /\.p\(\s*"([^"\n\r]*)"\s*\)/g
+
+/**
+ * Scan `model` for `.p("name")` (double-quoted) call sites and emit a
+ * Warning marker at each. Idempotent — repeated calls replace the
+ * previous marker set under owner `stave-strudel-lint`.
+ *
+ * Call from `model.onDidChangeContent` on Strudel models AND once on
+ * editor mount so the lint reflects the persisted file content on
+ * first paint.
+ */
+export function refreshStrudelLintMarkers(
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+): void {
+  try {
+    const text = model.getValue()
+    const markers: Monaco.editor.IMarkerData[] = []
+
+    STRUDEL_DOUBLE_QUOTED_P_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = STRUDEL_DOUBLE_QUOTED_P_RE.exec(text))) {
+      const matchStart = m.index
+      const matchEnd = matchStart + m[0].length
+      const startPos = model.getPositionAt(matchStart)
+      const endPos = model.getPositionAt(matchEnd)
+      const inner = m[1]
+      markers.push({
+        severity: monaco.MarkerSeverity.Warning,
+        message: `Strudel's transpiler converts double-quoted strings to mini-notation, so .p("${inner}") becomes .p(<Pattern>) at runtime — the track-id registration silently no-ops. Use single quotes: .p('${inner}').`,
+        startLineNumber: startPos.lineNumber,
+        startColumn: startPos.column,
+        endLineNumber: endPos.lineNumber,
+        endColumn: endPos.column,
+        source: 'stave',
+        code: 'strudel/p-double-quoted',
+      })
+    }
+
+    monaco.editor.setModelMarkers(model, STRUDEL_LINT_OWNER, markers)
+  } catch (lintError) {
+    // eslint-disable-next-line no-console
+    console.warn('[stave] refreshStrudelLintMarkers failed:', lintError)
+  }
+}
+
+/** Drop every Strudel idiom-lint marker on the model. Use on dispose. */
+export function clearStrudelLintMarkers(
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+): void {
+  try {
+    monaco.editor.setModelMarkers(model, STRUDEL_LINT_OWNER, [])
+  } catch {
+    /* swallow — see hetvabhasa P37 */
+  }
+}
+
+/**
+ * Register a one-shot Monaco code-action provider that converts the
+ * `.p("...")` warning into a quick-fix the user can accept (alt-Enter /
+ * lightbulb). Rewrites `"..."` → `'...'` at the same range.
+ *
+ * Idempotent under the `disposed` ref — multiple calls reuse a single
+ * provider registration. The provider is owned by the editor's
+ * lifetime; we don't need to unregister explicitly (Monaco's namespace
+ * persists for the page lifetime).
+ *
+ * Returns the disposable for tests / callers that want to tear down.
+ */
+let strudelLintProviderDisposable: Monaco.IDisposable | null = null
+export function ensureStrudelLintCodeActionProvider(
+  monaco: typeof Monaco,
+  languageId: string,
+): Monaco.IDisposable {
+  if (strudelLintProviderDisposable) return strudelLintProviderDisposable
+  strudelLintProviderDisposable = monaco.languages.registerCodeActionProvider(
+    languageId,
+    {
+      provideCodeActions(model, _range, context) {
+        const fixes: Monaco.languages.CodeAction[] = []
+        for (const marker of context.markers) {
+          if (marker.code !== 'strudel/p-double-quoted') continue
+          // Re-read the matched text from the model so the quick-fix
+          // mirrors the exact slice the marker covers (handles edits
+          // since marker creation gracefully — if mis-aligned, the
+          // quick-fix still rewrites what's at the range now).
+          const slice = model.getValueInRange({
+            startLineNumber: marker.startLineNumber,
+            startColumn: marker.startColumn,
+            endLineNumber: marker.endLineNumber,
+            endColumn: marker.endColumn,
+          })
+          const rewritten = slice.replace(
+            /\.p\(\s*"([^"\n\r]*)"\s*\)/,
+            ".p('$1')",
+          )
+          if (rewritten === slice) continue
+          fixes.push({
+            title: "Rewrite .p(\"...\") to .p('...') (single quotes)",
+            kind: 'quickfix',
+            isPreferred: true,
+            diagnostics: [marker],
+            edit: {
+              edits: [
+                {
+                  resource: model.uri,
+                  textEdit: {
+                    range: {
+                      startLineNumber: marker.startLineNumber,
+                      startColumn: marker.startColumn,
+                      endLineNumber: marker.endLineNumber,
+                      endColumn: marker.endColumn,
+                    },
+                    text: rewritten,
+                  },
+                  versionId: model.getVersionId(),
+                },
+              ],
+            },
+          })
+        }
+        return { actions: fixes, dispose() { /* no-op */ } }
+      },
+    },
+  )
+  return strudelLintProviderDisposable
+}

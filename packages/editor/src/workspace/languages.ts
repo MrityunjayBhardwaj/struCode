@@ -51,6 +51,7 @@ import {
   registerStrudelNoteCompletions,
 } from '../monaco/strudelCompletions'
 import { registerStrudelHover } from '../monaco/strudelDocs'
+import { ensureStrudelLintCodeActionProvider } from '../monaco/diagnostics'
 import { registerP5Providers, P5_DOCS_INDEX } from '../monaco/docs/p5'
 import { registerHydraProviders, HYDRA_DOCS_INDEX } from '../monaco/docs/hydra'
 import { registerSonicPiProviders } from '../monaco/docs/sonicpi'
@@ -330,6 +331,13 @@ export function ensureWorkspaceLanguages(monaco: typeof Monaco): void {
     registerStrudelDotCompletions(m)
     registerStrudelNoteCompletions(m)
     registerStrudelHover(m)
+    // F-2 — Strudel idiom lint for `.p("name")` (double-quoted). Code
+    // action provider supplies the rewrite-to-single-quotes quick fix
+    // attached to the warning marker that `refreshStrudelLintMarkers`
+    // publishes from EditorView per-content-change.
+    if (typeof m.languages?.registerCodeActionProvider === 'function') {
+      ensureStrudelLintCodeActionProvider(m, 'strudel')
+    }
   })
   ensureProviders('p5js', monaco, registerP5Providers)
   ensureProviders('hydra', monaco, registerHydraProviders)

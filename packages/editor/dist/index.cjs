@@ -11443,6 +11443,172 @@ function registerStrudelNoteCompletions(monaco) {
   });
 }
 
+// src/monaco/diagnostics.ts
+var MARKER_OWNER = "stave";
+function parseErrorLocation(error) {
+  const stack = error.stack ?? "";
+  const match = stack.match(/at eval[^(]*\(.*?:(\d+):(\d+)\)/);
+  if (match) {
+    return { line: parseInt(match[1], 10), col: parseInt(match[2], 10) };
+  }
+  return null;
+}
+function setEvalError(monaco, model, error) {
+  try {
+    const loc = parseErrorLocation(error);
+    const lineCount = model.getLineCount();
+    const validLine = loc && Number.isFinite(loc.line) && loc.line >= 1 && loc.line <= lineCount ? loc.line : null;
+    const validCol = loc && Number.isFinite(loc.col) && loc.col >= 1 ? loc.col : 1;
+    const lineNumber = validLine ?? 1;
+    const startColumn = validLine ? validCol : 1;
+    const endLineNumber = validLine ?? lineCount;
+    const endColumn = model.getLineMaxColumn(endLineNumber);
+    monaco.editor.setModelMarkers(model, MARKER_OWNER, [
+      {
+        severity: monaco.MarkerSeverity.Error,
+        message: error.message,
+        startLineNumber: lineNumber,
+        startColumn,
+        endLineNumber,
+        endColumn
+      }
+    ]);
+  } catch (markerError) {
+    console.warn("[stave] setEvalError failed, marker skipped:", markerError);
+  }
+}
+function clearEvalErrors(monaco, model) {
+  try {
+    monaco.editor.setModelMarkers(model, MARKER_OWNER, []);
+  } catch (markerError) {
+    console.warn("[stave] clearEvalErrors failed:", markerError);
+  }
+}
+function setLineMarker(monaco, model, opts) {
+  try {
+    const lineCount = model.getLineCount();
+    const line2 = opts.line != null && Number.isFinite(opts.line) && opts.line >= 1 && opts.line <= lineCount ? opts.line : null;
+    const col = opts.column != null && Number.isFinite(opts.column) && opts.column >= 1 ? opts.column : 1;
+    const severityMap = {
+      error: monaco.MarkerSeverity.Error,
+      warn: monaco.MarkerSeverity.Warning,
+      info: monaco.MarkerSeverity.Info
+    };
+    const severity = severityMap[opts.severity ?? "error"];
+    const startLine = line2 ?? 1;
+    const endLine = line2 ?? lineCount;
+    const startColumn = line2 ? col : 1;
+    const endColumn = model.getLineMaxColumn(endLine);
+    monaco.editor.setModelMarkers(model, opts.owner ?? MARKER_OWNER, [
+      {
+        severity,
+        message: opts.message,
+        startLineNumber: startLine,
+        startColumn,
+        endLineNumber: endLine,
+        endColumn
+      }
+    ]);
+  } catch (markerError) {
+    console.warn("[stave] setLineMarker failed, skipped:", markerError);
+  }
+}
+function clearLineMarkers(monaco, model, owner) {
+  try {
+    monaco.editor.setModelMarkers(model, owner, []);
+  } catch (markerError) {
+    console.warn("[stave] clearLineMarkers failed:", markerError);
+  }
+}
+var STRUDEL_LINT_OWNER = "stave-strudel-lint";
+var STRUDEL_DOUBLE_QUOTED_P_RE = /\.p\(\s*"([^"\n\r]*)"\s*\)/g;
+function refreshStrudelLintMarkers(monaco, model) {
+  try {
+    const text = model.getValue();
+    const markers = [];
+    STRUDEL_DOUBLE_QUOTED_P_RE.lastIndex = 0;
+    let m;
+    while (m = STRUDEL_DOUBLE_QUOTED_P_RE.exec(text)) {
+      const matchStart = m.index;
+      const matchEnd = matchStart + m[0].length;
+      const startPos = model.getPositionAt(matchStart);
+      const endPos = model.getPositionAt(matchEnd);
+      const inner = m[1];
+      markers.push({
+        severity: monaco.MarkerSeverity.Warning,
+        message: `Strudel's transpiler converts double-quoted strings to mini-notation, so .p("${inner}") becomes .p(<Pattern>) at runtime \u2014 the track-id registration silently no-ops. Use single quotes: .p('${inner}').`,
+        startLineNumber: startPos.lineNumber,
+        startColumn: startPos.column,
+        endLineNumber: endPos.lineNumber,
+        endColumn: endPos.column,
+        source: "stave",
+        code: "strudel/p-double-quoted"
+      });
+    }
+    monaco.editor.setModelMarkers(model, STRUDEL_LINT_OWNER, markers);
+  } catch (lintError) {
+    console.warn("[stave] refreshStrudelLintMarkers failed:", lintError);
+  }
+}
+function clearStrudelLintMarkers(monaco, model) {
+  try {
+    monaco.editor.setModelMarkers(model, STRUDEL_LINT_OWNER, []);
+  } catch {
+  }
+}
+var strudelLintProviderDisposable = null;
+function ensureStrudelLintCodeActionProvider(monaco, languageId) {
+  if (strudelLintProviderDisposable) return strudelLintProviderDisposable;
+  strudelLintProviderDisposable = monaco.languages.registerCodeActionProvider(
+    languageId,
+    {
+      provideCodeActions(model, _range, context) {
+        const fixes = [];
+        for (const marker of context.markers) {
+          if (marker.code !== "strudel/p-double-quoted") continue;
+          const slice = model.getValueInRange({
+            startLineNumber: marker.startLineNumber,
+            startColumn: marker.startColumn,
+            endLineNumber: marker.endLineNumber,
+            endColumn: marker.endColumn
+          });
+          const rewritten = slice.replace(
+            /\.p\(\s*"([^"\n\r]*)"\s*\)/,
+            ".p('$1')"
+          );
+          if (rewritten === slice) continue;
+          fixes.push({
+            title: `Rewrite .p("...") to .p('...') (single quotes)`,
+            kind: "quickfix",
+            isPreferred: true,
+            diagnostics: [marker],
+            edit: {
+              edits: [
+                {
+                  resource: model.uri,
+                  textEdit: {
+                    range: {
+                      startLineNumber: marker.startLineNumber,
+                      startColumn: marker.startColumn,
+                      endLineNumber: marker.endLineNumber,
+                      endColumn: marker.endColumn
+                    },
+                    text: rewritten
+                  },
+                  versionId: model.getVersionId()
+                }
+              ]
+            }
+          });
+        }
+        return { actions: fixes, dispose() {
+        } };
+      }
+    }
+  );
+  return strudelLintProviderDisposable;
+}
+
 // src/monaco/docs/data/p5.json
 var p5_default = {
   runtime: "p5js",
@@ -16081,6 +16247,9 @@ function ensureWorkspaceLanguages(monaco) {
     registerStrudelDotCompletions(m);
     registerStrudelNoteCompletions(m);
     registerStrudelHover(m);
+    if (typeof m.languages?.registerCodeActionProvider === "function") {
+      ensureStrudelLintCodeActionProvider(m, "strudel");
+    }
   });
   ensureProviders("p5js", monaco, registerP5Providers);
   ensureProviders("hydra", monaco, registerHydraProviders);
@@ -16978,84 +17147,6 @@ function onThemeChange(fn) {
 function applyPersistedTheme() {
   wireSystemMqlOnce();
   setEditorTheme(readTheme());
-}
-
-// src/monaco/diagnostics.ts
-var MARKER_OWNER = "stave";
-function parseErrorLocation(error) {
-  const stack = error.stack ?? "";
-  const match = stack.match(/at eval[^(]*\(.*?:(\d+):(\d+)\)/);
-  if (match) {
-    return { line: parseInt(match[1], 10), col: parseInt(match[2], 10) };
-  }
-  return null;
-}
-function setEvalError(monaco, model, error) {
-  try {
-    const loc = parseErrorLocation(error);
-    const lineCount = model.getLineCount();
-    const validLine = loc && Number.isFinite(loc.line) && loc.line >= 1 && loc.line <= lineCount ? loc.line : null;
-    const validCol = loc && Number.isFinite(loc.col) && loc.col >= 1 ? loc.col : 1;
-    const lineNumber = validLine ?? 1;
-    const startColumn = validLine ? validCol : 1;
-    const endLineNumber = validLine ?? lineCount;
-    const endColumn = model.getLineMaxColumn(endLineNumber);
-    monaco.editor.setModelMarkers(model, MARKER_OWNER, [
-      {
-        severity: monaco.MarkerSeverity.Error,
-        message: error.message,
-        startLineNumber: lineNumber,
-        startColumn,
-        endLineNumber,
-        endColumn
-      }
-    ]);
-  } catch (markerError) {
-    console.warn("[stave] setEvalError failed, marker skipped:", markerError);
-  }
-}
-function clearEvalErrors(monaco, model) {
-  try {
-    monaco.editor.setModelMarkers(model, MARKER_OWNER, []);
-  } catch (markerError) {
-    console.warn("[stave] clearEvalErrors failed:", markerError);
-  }
-}
-function setLineMarker(monaco, model, opts) {
-  try {
-    const lineCount = model.getLineCount();
-    const line2 = opts.line != null && Number.isFinite(opts.line) && opts.line >= 1 && opts.line <= lineCount ? opts.line : null;
-    const col = opts.column != null && Number.isFinite(opts.column) && opts.column >= 1 ? opts.column : 1;
-    const severityMap = {
-      error: monaco.MarkerSeverity.Error,
-      warn: monaco.MarkerSeverity.Warning,
-      info: monaco.MarkerSeverity.Info
-    };
-    const severity = severityMap[opts.severity ?? "error"];
-    const startLine = line2 ?? 1;
-    const endLine = line2 ?? lineCount;
-    const startColumn = line2 ? col : 1;
-    const endColumn = model.getLineMaxColumn(endLine);
-    monaco.editor.setModelMarkers(model, opts.owner ?? MARKER_OWNER, [
-      {
-        severity,
-        message: opts.message,
-        startLineNumber: startLine,
-        startColumn,
-        endLineNumber: endLine,
-        endColumn
-      }
-    ]);
-  } catch (markerError) {
-    console.warn("[stave] setLineMarker failed, skipped:", markerError);
-  }
-}
-function clearLineMarkers(monaco, model, owner) {
-  try {
-    monaco.editor.setModelMarkers(model, owner, []);
-  } catch (markerError) {
-    console.warn("[stave] clearLineMarkers failed:", markerError);
-  }
 }
 
 // src/visualizers/namedVizRegistry.ts
@@ -17967,6 +18058,20 @@ function EditorView({
         label: "Stop",
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Period],
         run: () => onStopRef.current?.()
+      });
+    }
+    const model = editor.getModel?.();
+    if (model && model.getLanguageId?.() === "strudel") {
+      refreshStrudelLintMarkers(monaco, model);
+      const lintListener = model.onDidChangeContent(() => {
+        refreshStrudelLintMarkers(monaco, model);
+      });
+      model.onWillDispose(() => {
+        try {
+          lintListener?.dispose?.();
+        } catch {
+        }
+        clearStrudelLintMarkers(monaco, model);
       });
     }
     onMount?.(editor, monaco);
