@@ -744,6 +744,39 @@ const EMPTY_TRACK_META: TrackMeta = Object.freeze({})
 const trackMetaSubscribers = new Map<string, Set<Subscriber>>()
 const wiredTrackMetaObservers = new Set<string>()
 
+/**
+ * Read-only lookup. Returns the existing trackMeta Y.Map for `fileId` or
+ * null. Wires the observer once per file (idempotent / no-doc-mutation).
+ * Safe to call during React render (no Y.Doc writes that would trigger
+ * observer cascades and a setState-in-render warning — F-4 in
+ * `.planning/phases/20-musician-timeline/FOLLOWUPS.md`).
+ */
+function getTrackMetaMap(fileId: string): Y.Map<unknown> | null {
+  const filesMap = getFilesMap()
+  const fileMap = filesMap.get(fileId) as Y.Map<unknown> | undefined
+  if (!fileMap) return null
+  const meta = fileMap.get('trackMeta') as Y.Map<unknown> | undefined
+  if (!meta) return null
+  // Observer wiring is lazy (one-shot per fileId). Wiring here is safe —
+  // `meta.observeDeep` registers a listener on the existing map, no doc
+  // mutation. (The previous bug was the `fileMap.set('trackMeta', meta)`
+  // creation path firing during a render.)
+  if (!wiredTrackMetaObservers.has(fileId)) {
+    meta.observeDeep(() => {
+      const subs = trackMetaSubscribers.get(fileId)
+      if (subs) for (const cb of subs) cb()
+    })
+    wiredTrackMetaObservers.add(fileId)
+  }
+  return meta
+}
+
+/**
+ * Create-if-absent variant. ONLY called from write paths
+ * (`setTrackMeta`). Mutates the Y.Doc when the map doesn't yet exist —
+ * which means it MUST NOT be called during React render (would trigger
+ * observer cascade → setState-in-render warning).
+ */
 function ensureTrackMetaMap(fileId: string): Y.Map<unknown> | null {
   const filesMap = getFilesMap()
   const fileMap = filesMap.get(fileId) as Y.Map<unknown> | undefined
@@ -753,11 +786,6 @@ function ensureTrackMetaMap(fileId: string): Y.Map<unknown> | null {
     meta = new Y.Map()
     fileMap.set('trackMeta', meta)
   }
-  // Wire observer once per file. observeDeep matches the zoneOverrides
-  // neighbour idiom (RESEARCH §A.5) and is forgiving for any future
-  // nested-map shape; for the current plain-object TrackMeta records the
-  // whole-record `meta.set(trackId, merged)` write at setTrackMeta also
-  // satisfies bare `.observe`. Defensive on both axes.
   if (!wiredTrackMetaObservers.has(fileId)) {
     meta.observeDeep(() => {
       const subs = trackMetaSubscribers.get(fileId)
@@ -770,7 +798,10 @@ function ensureTrackMetaMap(fileId: string): Y.Map<unknown> | null {
 
 export function getTrackMeta(fileId: string, trackId: string): TrackMeta {
   ensureDoc()
-  const meta = ensureTrackMetaMap(fileId)
+  // Read path — must not mutate the doc (F-4). getTrackMetaMap returns
+  // null when the map doesn't exist yet; we hand back the shared frozen
+  // EMPTY_TRACK_META sentinel which is ref-stable across reads.
+  const meta = getTrackMetaMap(fileId)
   if (!meta) return EMPTY_TRACK_META
   // useSyncExternalStore-safe: return the EXACT stored ref when present,
   // else the shared frozen sentinel. Allocating a new `{}` per read would
@@ -809,10 +840,17 @@ export function setTrackMeta(
 /**
  * Subscribe to ANY trackMeta change within a file. Fires after each committed
  * mutation. Returns an unsubscribe.
+ *
+ * Uses the read-only `getTrackMetaMap` for observer wiring — `subscribe` is
+ * called from React `useEffect` AND `useSyncExternalStore.subscribe`, both
+ * of which can race with first render. If the map doesn't exist yet, the
+ * subscriber is still registered; when `setTrackMeta` later creates the
+ * map, the observer wires at that point and back-fires to all existing
+ * subscribers via the trackMetaSubscribers set.
  */
 export function subscribeToTrackMeta(fileId: string, cb: Subscriber): () => void {
   ensureDoc()
-  ensureTrackMetaMap(fileId)
+  getTrackMetaMap(fileId)
   let set = trackMetaSubscribers.get(fileId)
   if (!set) {
     set = new Set()

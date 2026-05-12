@@ -3498,6 +3498,13 @@ declare function setTrackMeta(fileId: string, trackId: string, partial: Partial<
 /**
  * Subscribe to ANY trackMeta change within a file. Fires after each committed
  * mutation. Returns an unsubscribe.
+ *
+ * Uses the read-only `getTrackMetaMap` for observer wiring — `subscribe` is
+ * called from React `useEffect` AND `useSyncExternalStore.subscribe`, both
+ * of which can race with first render. If the map doesn't exist yet, the
+ * subscriber is still registered; when `setTrackMeta` later creates the
+ * map, the observer wires at that point and back-fires to all existing
+ * subscribers via the trackMetaSubscribers set.
  */
 declare function subscribeToTrackMeta(fileId: string, cb: Subscriber): () => void;
 declare function resetFileStore(): void;

@@ -8070,6 +8070,21 @@ function subscribeToZoneOverrides(fileId, cb) {
 var EMPTY_TRACK_META = Object.freeze({});
 var trackMetaSubscribers = /* @__PURE__ */ new Map();
 var wiredTrackMetaObservers = /* @__PURE__ */ new Set();
+function getTrackMetaMap(fileId) {
+  const filesMap = getFilesMap();
+  const fileMap = filesMap.get(fileId);
+  if (!fileMap) return null;
+  const meta = fileMap.get("trackMeta");
+  if (!meta) return null;
+  if (!wiredTrackMetaObservers.has(fileId)) {
+    meta.observeDeep(() => {
+      const subs = trackMetaSubscribers.get(fileId);
+      if (subs) for (const cb of subs) cb();
+    });
+    wiredTrackMetaObservers.add(fileId);
+  }
+  return meta;
+}
 function ensureTrackMetaMap(fileId) {
   const filesMap = getFilesMap();
   const fileMap = filesMap.get(fileId);
@@ -8090,7 +8105,7 @@ function ensureTrackMetaMap(fileId) {
 }
 function getTrackMeta(fileId, trackId) {
   ensureDoc();
-  const meta = ensureTrackMetaMap(fileId);
+  const meta = getTrackMetaMap(fileId);
   if (!meta) return EMPTY_TRACK_META;
   return meta.get(trackId) ?? EMPTY_TRACK_META;
 }
@@ -8111,7 +8126,7 @@ function setTrackMeta(fileId, trackId, partial) {
 }
 function subscribeToTrackMeta(fileId, cb) {
   ensureDoc();
-  ensureTrackMetaMap(fileId);
+  getTrackMetaMap(fileId);
   let set = trackMetaSubscribers.get(fileId);
   if (!set) {
     set = /* @__PURE__ */ new Set();
@@ -32792,9 +32807,13 @@ var SonicPiEngine = class {
         if (this.bridge) {
           this.bridge.freeAllNodes();
           this.nodeRefMap.clear();
+          for (const state4 of this.persistentFx.values()) {
+            for (const bus of state4.buses) this.bridge.freeBus(bus);
+          }
           this.persistentFx.clear();
           for (const state4 of this.reusableFx.values()) {
             if (state4.killTimer) clearTimeout(state4.killTimer);
+            this.bridge.freeBus(state4.bus);
           }
           this.reusableFx.clear();
         }
@@ -32900,9 +32919,13 @@ var SonicPiEngine = class {
     this.globalStore.clear();
     this.definedFns.clear();
     this.defonceCache.clear();
+    for (const state4 of this.persistentFx.values()) {
+      for (const bus of state4.buses) this.bridge?.freeBus(bus);
+    }
     this.persistentFx.clear();
     for (const state4 of this.reusableFx.values()) {
       if (state4.killTimer) clearTimeout(state4.killTimer);
+      this.bridge?.freeBus(state4.bus);
     }
     this.reusableFx.clear();
     this.loopFxScope.clear();
