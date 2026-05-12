@@ -40,7 +40,12 @@ import { workspaceAudioBus } from './WorkspaceAudioBus'
 import { useHighlighting } from '../monaco/useHighlighting'
 import { useBreakpoints } from '../monaco/useBreakpoints'
 import { registerEditor, unregisterEditor, applyPersistedEditorOptions, registerMonacoNamespace } from './editorRegistry'
-import { setEvalError, clearEvalErrors } from '../monaco/diagnostics'
+import {
+  setEvalError,
+  clearEvalErrors,
+  refreshStrudelLintMarkers,
+  clearStrudelLintMarkers,
+} from '../monaco/diagnostics'
 import { addInlineViewZones } from '../visualizers/viewZones'
 import { onNamedVizChanged } from '../visualizers/namedVizRegistry'
 import { subscribeToZoneOverrides } from './WorkspaceFile'
@@ -333,6 +338,23 @@ export function EditorView({
         label: 'Stop',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Period],
         run: () => onStopRef.current?.(),
+      })
+    }
+
+    // F-2 — refresh Strudel idiom lint markers on initial mount + every
+    // subsequent content change. Scoped to strudel-language models; other
+    // languages get a no-op (the lint regex doesn't match their syntax
+    // anyway, but the explicit guard keeps the scan off-thread for
+    // sonicpi / hydra / p5 buffers).
+    const model = editor.getModel?.()
+    if (model && model.getLanguageId?.() === 'strudel') {
+      refreshStrudelLintMarkers(monaco, model)
+      const lintListener = model.onDidChangeContent(() => {
+        refreshStrudelLintMarkers(monaco, model)
+      })
+      model.onWillDispose(() => {
+        try { lintListener?.dispose?.() } catch { /* swallow */ }
+        clearStrudelLintMarkers(monaco, model)
       })
     }
 
