@@ -121,6 +121,21 @@ export function projectedLabel(node: PatternIR): string | undefined {
     case 'Shuffle':
     case 'Scramble':
     case 'Chop':
+    case 'Param':
+      // Phase 20-10 wave β-2 (PV35 / PV32 — musician chrome).
+      //
+      // Defensive fallthrough only. The userMethod-first short-circuit at
+      // lines 59-61 returns the user-typed token ('s' / 'gain' / 'note' /
+      // 'bank' / 'scale' / 'color' / 'velocity' / 'pan' / 'speed' / 'n')
+      // for every parser-constructed Param — α-3's parseParamArg routes
+      // through tagMeta which sets userMethod unconditionally.
+      //
+      // This arm fires only when a hand-constructed Param node lacks
+      // userMethod (test fixtures, future synthesised nodes). Returning
+      // `node.tag` ('Param') here is intentionally visible so the leak
+      // is debuggable rather than silent (NEW pre-mortem #8 — same
+      // rationale as Code's whitelist). It is NOT a PV32 violation in
+      // the normal path — that path short-circuits one frame earlier.
       return node.tag
     default: {
       // Exhaustiveness check — TS error if a tag is missing.
@@ -192,6 +207,24 @@ export function projectedChildren(node: PatternIR): readonly PatternIR[] {
     case 'Chop':
     case 'Loop':
       return [node.body]
+    case 'Param': {
+      // Phase 20-10 wave β-2 (musician tree expansion / PV35).
+      //
+      // The pattern-arg sub-IR (`.s("<bd cp>")` → value = parsed cycle IR)
+      // IS a child of the projected musical tree — without it the user
+      // can't drill into nested cycles to inspect their atoms or set
+      // breakpoints. Mirrors the Code-with-via expansion at line 219
+      // (musician chrome reveals `via.inner` for the same reason).
+      //
+      // Literal-value Params (string | number) have no sub-IR — return
+      // [body] only, matching FX's single-body shape.
+      //
+      // Order: [value, body] places the sub-IR first because it is the
+      // structural child the user typed; body is the receiver chain.
+      const v = node.value
+      if (typeof v === 'object' && v !== null) return [v as PatternIR, node.body]
+      return [node.body]
+    }
     case 'Chunk':
       return [node.body, node.transform]
     case 'Pick':
@@ -238,6 +271,7 @@ export function stripInnerLate(node: PatternIR): PatternIR {
   // Single-body wrappers: recurse into body.
   switch (node.tag) {
     case 'FX':
+    case 'Param':         // Phase 20-10 — same single-body shape as FX.
     case 'Ramp':
     case 'Fast':
     case 'Slow':

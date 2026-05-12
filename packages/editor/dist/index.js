@@ -2944,6 +2944,7 @@ var IR = {
   cycle: (...items) => ({ tag: "Cycle", items }),
   when: (gate, body2, meta) => attachMeta({ tag: "When", gate, body: body2 }, meta),
   fx: (name2, params, body2, meta) => attachMeta({ tag: "FX", name: name2, params, body: body2 }, meta),
+  param: (key, value, rawArgs, body2, meta) => attachMeta({ tag: "Param", key, value, rawArgs, body: body2 }, meta),
   ramp: (param, from, to, cycles, body2, meta) => attachMeta({ tag: "Ramp", param, from, to, cycles, body: body2 }, meta),
   fast: (factor, body2, meta) => attachMeta({ tag: "Fast", factor, body: body2 }, meta),
   slow: (factor, body2, meta) => attachMeta({ tag: "Slow", factor, body: body2 }, meta),
@@ -3110,6 +3111,37 @@ function walk(ir, ctx) {
         return withWrapperLoc(innerEvents, ir.loc);
       }
       return [];
+    }
+    case "Param": {
+      if (typeof ir.value === "string" || typeof ir.value === "number") {
+        const childCtx = {
+          ...ctx,
+          params: { [ir.key]: ir.value, ...ctx.params }
+        };
+        return withWrapperLoc(walk(ir.body, childCtx), ir.loc);
+      }
+      const slotEvents = walk(ir.value, ctx);
+      const bodyEvents = walk(ir.body, ctx);
+      const isNumericKey = ir.key === "gain" || ir.key === "velocity" || ir.key === "pan" || ir.key === "speed";
+      const out2 = bodyEvents.map((e) => {
+        const slot = slotEvents.find((s) => {
+          const sEnd = s.endClipped ?? s.end;
+          return s.begin <= e.begin && e.begin < sEnd;
+        });
+        if (!slot) return e;
+        const v = isNumericKey ? typeof slot.note === "number" ? slot.note : Number(slot.note ?? 0) : slot.s ?? String(slot.note ?? "");
+        return {
+          ...e,
+          params: { ...e.params, [ir.key]: v },
+          ...ir.key === "s" ? { s: v, type: "sample" } : {},
+          ...ir.key === "gain" ? { gain: v } : {},
+          ...ir.key === "velocity" ? { velocity: v } : {},
+          ...ir.key === "color" ? { color: v } : {}
+          // n / note / bank / scale / pan / speed flow through params only;
+          // they don't have top-level event shorthand fields per IREvent.
+        };
+      });
+      return withWrapperLoc(out2, ir.loc);
     }
     case "Play": {
       if (ctx.time < ctx.begin || ctx.time >= ctx.end) return [];
@@ -3412,6 +3444,8 @@ function gen(ir) {
         return `${gen(ir.via.inner)}.${ir.via.method}(${ir.via.args})`;
       }
       return ir.code;
+    case "Param":
+      return `${gen(ir.body)}.${ir.userMethod ?? ir.key}(${ir.rawArgs})`;
     case "Play":
       return genPlay(ir.note, ir.params);
     case "Sleep":
@@ -3620,7 +3654,8 @@ var VALID_TAGS = /* @__PURE__ */ new Set([
   "Fast",
   "Slow",
   "Loop",
-  "Code"
+  "Code",
+  "Param"
 ]);
 function validateNode(raw, path) {
   if (typeof raw !== "object" || raw === null) {
@@ -3764,6 +3799,30 @@ function validateNode(raw, path) {
         factor: node.factor,
         body: validateNode(node.body, `${path}.body`)
       };
+    }
+    case "Param": {
+      requireField(node, "key", ["string"], path);
+      requireField(node, "rawArgs", ["string"], path);
+      requireField(node, "body", ["object"], path);
+      const v = node.value;
+      let value;
+      if (typeof v === "string" || typeof v === "number") {
+        value = v;
+      } else if (typeof v === "object" && v !== null) {
+        value = validateNode(v, `${path}.value`);
+      } else {
+        throw new Error(`${path}: field "value" must be string|number|object, got ${typeof v}`);
+      }
+      const out2 = {
+        tag: "Param",
+        key: node.key,
+        value,
+        rawArgs: node.rawArgs,
+        body: validateNode(node.body, `${path}.body`)
+      };
+      if (Array.isArray(node.loc)) out2.loc = node.loc;
+      if (typeof node.userMethod === "string") out2.userMethod = node.userMethod;
+      return out2;
     }
     case "Code": {
       requireField(node, "code", ["string"], path);
@@ -4256,8 +4315,13 @@ function parseRoot(root, baseOffset = 0) {
   if (stackMatch) {
     const inner = extractParenContent(trimmed, "stack(");
     if (inner !== null) {
-      const args2 = splitArgs(inner);
-      const tracks = args2.map((a) => parseExpression(a.trim()));
+      const stackKwIdx = trimmed.indexOf("stack(");
+      const innerStartInTrimmed = stackKwIdx + "stack(".length;
+      const innerAbsOffset = baseOffset + leadingWs + innerStartInTrimmed;
+      const argsWithOffsets = splitArgsWithOffsets(inner);
+      const tracks = argsWithOffsets.map(
+        (a) => parseExpression(a.value, innerAbsOffset + a.offset)
+      );
       if (tracks.length === 0) return IR.pure();
       if (tracks.length === 1) return tracks[0];
       const trimmedAbs = baseOffset + leadingWs;
@@ -4354,16 +4418,6 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
         // 'layer' — D-08 exact-token from the switch label
       };
     }
-    case "gain": {
-      const val = parseFloat(args2.trim());
-      if (!isNaN(val)) return IR.fx("gain", { gain: val }, ir, tagMeta(method, callSiteRange));
-      return wrapAsOpaque(ir, method, args2, callSiteRange);
-    }
-    case "pan": {
-      const val = parseFloat(args2.trim());
-      if (!isNaN(val)) return IR.fx("pan", { pan: val }, ir, tagMeta(method, callSiteRange));
-      return wrapAsOpaque(ir, method, args2, callSiteRange);
-    }
     case "chunk": {
       const [nStr, transformStr] = splitFirstArg(args2);
       const n = parseInt(nStr.trim(), 10);
@@ -4432,7 +4486,6 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     case "crush":
     case "distort":
     case "vowel":
-    case "speed":
     case "begin":
     case "end":
     case "cut":
@@ -4485,6 +4538,23 @@ function applyMethod(ir, method, args2, baseOffset = 0, callSiteRange = [0, 0]) 
     }
     case "p":
       return ir;
+    case "s":
+    case "n":
+    case "note":
+    case "bank":
+    case "scale":
+    case "color":
+    case "gain":
+    case "velocity":
+    case "pan":
+    case "speed": {
+      const isSampleKey = method === "s" || method === "bank" || method === "scale";
+      const parsed = parseParamArg(args2, isSampleKey, baseOffset);
+      if (!parsed) {
+        return wrapAsOpaque(ir, method, args2, callSiteRange);
+      }
+      return IR.param(method, parsed.value, args2, ir, tagMeta(method, callSiteRange));
+    }
     default:
       return wrapAsOpaque(ir, method, args2, callSiteRange);
   }
@@ -4512,6 +4582,22 @@ function parseTransform(transformStr, defaultIr, baseOffset = 0) {
     return applyChain(defaultIr, "." + arrowMatch[1], chainOffset);
   }
   return defaultIr;
+}
+function parseParamArg(args2, isSampleKey, argsOffsetAbs) {
+  const trimmed = args2.trim();
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return { value: parseFloat(trimmed) };
+  }
+  const strMatch = trimmed.match(/^"([a-zA-Z0-9#_:-]*?)"$/);
+  if (strMatch) return { value: strMatch[1] };
+  const miniMatch = trimmed.match(/^"([^"]*)"$/);
+  if (miniMatch) {
+    const innerStr = miniMatch[1];
+    const quoteIdx = args2.indexOf('"');
+    const innerOffsetAbs = quoteIdx >= 0 ? argsOffsetAbs + quoteIdx + 1 : argsOffsetAbs;
+    return { value: parseMini(innerStr, isSampleKey, innerOffsetAbs) };
+  }
+  return null;
 }
 function parseArrayLiteralElement(elem, receiverContext, baseOffset = 0) {
   const trimmed = elem.trim();
@@ -4602,11 +4688,21 @@ function extractParenContent(expr, prefix) {
   return expr.slice(parenStart + 1, closeIdx);
 }
 function splitArgs(argsStr) {
+  return splitArgsWithOffsets(argsStr).map((a) => a.value);
+}
+function splitArgsWithOffsets(argsStr) {
   const args2 = [];
   let depth = 0;
   let current2 = "";
+  let currentStart = 0;
   let inString = false;
   let stringChar = "";
+  const pushCurrent = () => {
+    if (current2.trim().length === 0) return;
+    let leading = 0;
+    while (leading < current2.length && /\s/.test(current2[leading])) leading += 1;
+    args2.push({ value: current2.trim(), offset: currentStart + leading });
+  };
   for (let i2 = 0; i2 < argsStr.length; i2++) {
     const ch = argsStr[i2];
     if (inString) {
@@ -4617,27 +4713,32 @@ function splitArgs(argsStr) {
     if (ch === '"' || ch === "'") {
       inString = true;
       stringChar = ch;
+      if (current2.length === 0) currentStart = i2;
       current2 += ch;
       continue;
     }
     if (ch === "(" || ch === "[" || ch === "{") {
       depth++;
+      if (current2.length === 0) currentStart = i2;
       current2 += ch;
       continue;
     }
     if (ch === ")" || ch === "]" || ch === "}") {
       depth--;
+      if (current2.length === 0) currentStart = i2;
       current2 += ch;
       continue;
     }
     if (ch === "," && depth === 0) {
-      args2.push(current2.trim());
+      pushCurrent();
       current2 = "";
+      currentStart = i2 + 1;
     } else {
+      if (current2.length === 0) currentStart = i2;
       current2 += ch;
     }
   }
-  if (current2.trim()) args2.push(current2.trim());
+  pushCurrent();
   return args2;
 }
 function splitFirstArg(argsStr) {
@@ -23809,7 +23910,7 @@ var MIXER = {
    *  triggering Limiter.ar — keeps the ugen's natural transient envelope
    *  visible to the comparator. Was 6 (matched desktop, but limiter-clamped),
    *  was 1.2 (Tau-aligned, pre-SP72-fix dynamics tuning). */
-  AMP: 3,
+  AMP: 2,
   /** [TAU] High-pass filter cutoff (Hz). Removes subsonic rumble that can
    *  damage speakers. Desktop SP uses synthdef default. Sonic Tau sends 21
    *  explicitly (app.bundle.js:1788-1789). */
@@ -25094,6 +25195,15 @@ var _SuperSonicBridge = class _SuperSonicBridge {
     this.monitorSynthDefLoaded = false;
     /** scsynth mixer node ID — for controlling master volume via /n_set */
     this.mixerNodeId = 0;
+    /** Runtime mixer params — initialised from MIXER (config.ts) and mutable
+     *  via setMixerAmp / setMixerPreAmp so the Prefs panel can drive them
+     *  live without an engine restart. setMasterVolume reads currentMixerPreAmp
+     *  as the per-volume baseline (so volume × pre_amp keeps composing). */
+    this.currentMixerAmp = MIXER.AMP;
+    this.currentMixerPreAmp = MIXER.PRE_AMP;
+    /** Last clamped 0..1 volume so pre_amp recomputes correctly when the user
+     *  drags pre_amp without touching volume. */
+    this.currentMasterVolume = 1;
     /** Optional callback for OSC trace logging — receives formatted trace strings like desktop Sonic Pi. */
     this.oscTraceHandler = null;
     /** SuperSonic.osc encoder (preferred) or fallback */
@@ -25157,9 +25267,9 @@ var _SuperSonicBridge = class _SuperSonicBridge {
       "in_bus",
       mixerBus,
       "amp",
-      MIXER.AMP,
+      this.currentMixerAmp,
       "pre_amp",
-      MIXER.PRE_AMP,
+      this.currentMasterVolume * this.currentMixerPreAmp,
       "hpf",
       MIXER.HPF,
       "lpf",
@@ -25225,10 +25335,30 @@ var _SuperSonicBridge = class _SuperSonicBridge {
   /** Set master volume (0-1). Controls both scsynth mixer pre_amp and Web Audio gain. */
   setMasterVolume(volume) {
     const clamped = Math.max(0, Math.min(1, volume));
-    const scaledPreAmp = clamped * MIXER.PRE_AMP;
+    this.currentMasterVolume = clamped;
+    const scaledPreAmp = clamped * this.currentMixerPreAmp;
     this.sonic?.send("/n_set", this.mixerNodeId, "pre_amp", scaledPreAmp);
     if (this.masterGainNode) {
       this.masterGainNode.gain.setTargetAtTime(clamped, this.masterGainNode.context.currentTime, 0.02);
+    }
+  }
+  /** Set mixer amp (final gain stage). Live — sends /n_set immediately if
+   *  the mixer node is alive. New value also persists for any future
+   *  resetMixer / re-init. Range typically 0.5–6 (3 lands at WASM parity
+   *  with desktop's pre-driver-attenuation peak; 6 clips Limiter.ar). */
+  setMixerAmp(amp) {
+    this.currentMixerAmp = amp;
+    if (this.sonic && this.mixerNodeId) {
+      this.sonic.send("/n_set", this.mixerNodeId, "amp", amp);
+    }
+  }
+  /** Set mixer pre_amp baseline. Effective wire value = masterVolume × preAmp,
+   *  so dragging this slider with volume<1 still attenuates proportionally. */
+  setMixerPreAmp(preAmp) {
+    this.currentMixerPreAmp = preAmp;
+    if (this.sonic && this.mixerNodeId) {
+      const scaledPreAmp = this.currentMasterVolume * preAmp;
+      this.sonic.send("/n_set", this.mixerNodeId, "pre_amp", scaledPreAmp);
     }
   }
   /**
@@ -31157,11 +31287,11 @@ var SonicPiEngine = class {
     /** Last completed recording, awaiting recording_save / recording_delete (#228). */
     this.lastRecording = null;
     /**
-     * In-flight stop+encode promise (#228). recording_stop is async — Recorder
-     * flushes the last ScriptProcessor chunk, then encodes a WAV from the
-     * accumulated float32 buffers. recording_save must await this so the natural
+     * In-flight stop+encode promise (#228). recording_stop is async — the
+     * MediaRecorder.onstop fires after a chunk flush, then we decode webm and
+     * re-encode as WAV. recording_save must await this so the natural pattern
      *   recording_start; play …; recording_stop; recording_save "x.wav"
-     * pattern does not save before the blob is ready.
+     * does not save before the blob is ready.
      */
     this.pendingRecordingStop = null;
     this.bridgeOptions = options?.bridge ?? {};
@@ -32396,6 +32526,15 @@ var SonicPiEngine = class {
   setVolume(volume) {
     this.pendingVolume = volume;
     this.bridge?.setMasterVolume(volume);
+  }
+  /** Set mixer amp (0.5–6 typical). Live — propagates to scsynth /n_set
+   *  immediately if the bridge is up; otherwise queued for next mixer init. */
+  setMixerAmp(amp) {
+    this.bridge?.setMixerAmp(amp);
+  }
+  /** Set mixer pre_amp baseline. Effective wire pre_amp = volume × pre_amp. */
+  setMixerPreAmp(preAmp) {
+    this.bridge?.setMixerPreAmp(preAmp);
   }
   /** Get a friendly version of the last error (for display in a log pane). */
   static formatError(err2) {

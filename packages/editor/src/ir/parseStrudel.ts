@@ -245,15 +245,28 @@ export function parseRoot(root: string, baseOffset = 0): PatternIR {
     return parseMini(miniMatch[1], false, innerOffset)
   }
 
-  // stack(a, b, c) — parallel composition. Argument offsets are
-  // dropped here for v0 — when a future consumer needs loc through
-  // stack(), splitArgs would need to return slice positions too.
+  // stack(a, b, c) — parallel composition. Issue #107 — each arg's
+  // absolute file offset is now threaded into parseExpression so
+  // inner atoms resolve to real file positions. Without this,
+  // `stack(s("hh*8"), s("bd"))` produced events whose `loc[0]`
+  // pointed inside the file's first line (typically a comment),
+  // collapsing click-to-source for any sample-track event.
   const stackMatch = trimmed.match(/^stack\s*\(/)
   if (stackMatch) {
     const inner = extractParenContent(trimmed, 'stack(')
     if (inner !== null) {
-      const args = splitArgs(inner)
-      const tracks = args.map(a => parseExpression(a.trim()))
+      // Position of `inner` within `trimmed`: `extractParenContent`
+      // returns content from after `stack(` up to the matching `)`.
+      // The `(` lives at `trimmed.indexOf('stack(') + 'stack('.length - 1`,
+      // so inner[0] sits at openIdx+1 within trimmed. Absolute file
+      // offset of inner[0] = baseOffset + leadingWs + (openIdx + 1).
+      const stackKwIdx = trimmed.indexOf('stack(')
+      const innerStartInTrimmed = stackKwIdx + 'stack('.length
+      const innerAbsOffset = baseOffset + leadingWs + innerStartInTrimmed
+      const argsWithOffsets = splitArgsWithOffsets(inner)
+      const tracks = argsWithOffsets.map((a) =>
+        parseExpression(a.value, innerAbsOffset + a.offset),
+      )
       if (tracks.length === 0) return IR.pure()
       if (tracks.length === 1) return tracks[0]
       // 19-05 / #74: root-level `stack(...)` outer Stack carries the call-
@@ -439,18 +452,6 @@ function applyMethod(
         loc: [{ start: layerStart, end: layerEnd }],
         userMethod: method, // 'layer' — D-08 exact-token from the switch label
       }
-    }
-
-    case 'gain': {
-      const val = parseFloat(args.trim())
-      if (!isNaN(val)) return IR.fx('gain', { gain: val }, ir, tagMeta(method, callSiteRange))
-      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
-    }
-
-    case 'pan': {
-      const val = parseFloat(args.trim())
-      if (!isNaN(val)) return IR.fx('pan', { pan: val }, ir, tagMeta(method, callSiteRange))
-      return wrapAsOpaque(ir, method, args, callSiteRange)   // D-03 (P33 / PV37)
     }
 
     case 'chunk': {
@@ -654,7 +655,6 @@ function applyMethod(
     case 'crush':
     case 'distort':
     case 'vowel':
-    case 'speed':
     case 'begin':
     case 'end':
     case 'cut':
@@ -662,8 +662,7 @@ function applyMethod(
     case 'resonance':
     case 'lpf':
     case 'hpf': {
-      // FX group (14 arms collapse to one failure line — D-03 / P33 / PV37
-      // wrap covers all 14 in a single edit).
+      // FX group — 13 arms after Phase 20-10 migrated `speed` to Param.
       const val = parseFloat(args.trim())
       if (!isNaN(val)) return IR.fx(method, { [method]: val }, ir, tagMeta(method, callSiteRange))
       return wrapAsOpaque(ir, method, args, callSiteRange)
@@ -780,6 +779,28 @@ function applyMethod(
       // this unwrapped — confirmed Chesterton fence (existence check).
       return ir
 
+    case 's':
+    case 'n':
+    case 'note':
+    case 'bank':
+    case 'scale':
+    case 'color':
+    case 'gain':
+    case 'velocity':
+    case 'pan':
+    case 'speed': {
+      // Phase 20-10 — Param tag promotion. Whitelist closes the SEMANTICS
+      // gap that 20-04 left open for REPRESENTATION. PV37 still governs
+      // everything outside this whitelist (default arm wraps as opaque).
+      const isSampleKey = method === 's' || method === 'bank' || method === 'scale'
+      const parsed = parseParamArg(args, isSampleKey, baseOffset)
+      if (!parsed) {
+        // Unrecognised arg shape — preserve PV37 (wrap-never-drop, REPRESENTATION).
+        return wrapAsOpaque(ir, method, args, callSiteRange)
+      }
+      return IR.param(method, parsed.value, args, ir, tagMeta(method, callSiteRange))
+    }
+
     default:
       // Phase 20-04 T-04 / DV-06 (D-03 / P33 / PV37): unrecognised method —
       // wrap as opaque Code carrying the call site. PV37 wrap-never-drop;
@@ -854,6 +875,48 @@ function parseTransform(transformStr: string, defaultIr: PatternIR, baseOffset =
   }
 
   return defaultIr
+}
+
+/**
+ * Phase 20-10 — recognise the arg shape for a whitelisted Param method.
+ * Returns null when the shape doesn't match; caller wraps as opaque
+ * (preserves PV37). Shapes:
+ *   - literal-number:  gain(0.3) / pan(-0.5)         → { value: 0.3 }
+ *   - literal-string:  s("sawtooth") / bank("RolandTR909")  → { value: "sawtooth" }
+ *   - mini-pattern:    s("<bd cp>") / gain("0.3 0.7")  → { value: PatternIR (sub-IR) }
+ *
+ * Boundary: any quoted string with internal whitespace OR mini-syntax
+ * characters (`<`, `>`, `[`, `]`, `*`, `?`, `~`) goes to the mini-pattern
+ * path. Strudel runtime parses it as mini at that point too. Identifier-
+ * only quoted strings (`/^"[a-zA-Z0-9#_:-]*?"$/`) take the literal path.
+ *
+ * baseOffset threading: when a quoted string parses as mini, the inner
+ * string's offset (for click-to-source on inner atoms — PV25 / PV36)
+ * is `argsOffsetAbs + args.indexOf('"') + 1`. Same convention parseRoot
+ * uses for `s(...)` at root (parseStrudel.ts:223-224).
+ */
+function parseParamArg(
+  args: string,
+  isSampleKey: boolean,
+  argsOffsetAbs: number,
+): { value: string | number | PatternIR } | null {
+  const trimmed = args.trim()
+  // 1. literal-number
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return { value: parseFloat(trimmed) }
+  }
+  // 2. literal-string (identifier-only — no spaces, no mini-syntax)
+  const strMatch = trimmed.match(/^"([a-zA-Z0-9#_:-]*?)"$/)
+  if (strMatch) return { value: strMatch[1] }
+  // 3. mini-pattern (anything else inside quotes)
+  const miniMatch = trimmed.match(/^"([^"]*)"$/)
+  if (miniMatch) {
+    const innerStr = miniMatch[1]
+    const quoteIdx = args.indexOf('"')
+    const innerOffsetAbs = quoteIdx >= 0 ? argsOffsetAbs + quoteIdx + 1 : argsOffsetAbs
+    return { value: parseMini(innerStr, isSampleKey, innerOffsetAbs) }
+  }
+  return null   // unknown shape — caller wraps as opaque
 }
 
 /**
@@ -1040,11 +1103,40 @@ function extractParenContent(expr: string, prefix: string): string | null {
  * Split comma-separated arguments, respecting balanced parens and strings.
  */
 function splitArgs(argsStr: string): string[] {
-  const args: string[] = []
+  return splitArgsWithOffsets(argsStr).map((a) => a.value)
+}
+
+/**
+ * Issue #107 — position-aware sibling of `splitArgs`. For each
+ * comma-separated arg, returns the *trimmed* value AND the byte offset
+ * of the trimmed arg's first character within `argsStr`. Callers thread
+ * the offset down to `parseExpression(value, baseOffset + offset)` so
+ * inner atom `loc` ranges resolve to absolute file positions.
+ *
+ * Without this, `stack(s("hh*8"), s("bd"))` parses each child at offset
+ * 0 within its own slice — atom positions on the resulting events
+ * collide with the file's first line (typically a comment), and
+ * click-to-source navigates to the wrong place. The original `splitArgs`
+ * comment in the stack arm ("Argument offsets are dropped here for v0")
+ * was the explicit deferral; this is the v1 lift.
+ */
+function splitArgsWithOffsets(
+  argsStr: string,
+): Array<{ value: string; offset: number }> {
+  const args: Array<{ value: string; offset: number }> = []
   let depth = 0
   let current = ''
+  let currentStart = 0 // index in argsStr where `current` began
   let inString = false
   let stringChar = ''
+
+  const pushCurrent = (): void => {
+    if (current.trim().length === 0) return
+    // Trimmed value's offset = currentStart + leadingWs-of-current.
+    let leading = 0
+    while (leading < current.length && /\s/.test(current[leading])) leading += 1
+    args.push({ value: current.trim(), offset: currentStart + leading })
+  }
 
   for (let i = 0; i < argsStr.length; i++) {
     const ch = argsStr[i]
@@ -1058,22 +1150,35 @@ function splitArgs(argsStr: string): string[] {
     if (ch === '"' || ch === "'") {
       inString = true
       stringChar = ch
+      if (current.length === 0) currentStart = i
       current += ch
       continue
     }
 
-    if (ch === '(' || ch === '[' || ch === '{') { depth++; current += ch; continue }
-    if (ch === ')' || ch === ']' || ch === '}') { depth--; current += ch; continue }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth++
+      if (current.length === 0) currentStart = i
+      current += ch
+      continue
+    }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      depth--
+      if (current.length === 0) currentStart = i
+      current += ch
+      continue
+    }
 
     if (ch === ',' && depth === 0) {
-      args.push(current.trim())
+      pushCurrent()
       current = ''
+      currentStart = i + 1
     } else {
+      if (current.length === 0) currentStart = i
       current += ch
     }
   }
 
-  if (current.trim()) args.push(current.trim())
+  pushCurrent()
   return args
 }
 

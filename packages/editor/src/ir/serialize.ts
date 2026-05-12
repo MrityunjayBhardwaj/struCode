@@ -54,6 +54,7 @@ export function patternFromJSON(json: string): PatternIR {
 const VALID_TAGS = new Set([
   'Pure', 'Seq', 'Stack', 'Play', 'Sleep', 'Choice', 'Every',
   'Cycle', 'When', 'FX', 'Ramp', 'Fast', 'Slow', 'Loop', 'Code',
+  'Param',
 ])
 
 function validateNode(raw: unknown, path: string): PatternIR {
@@ -216,6 +217,35 @@ function validateNode(raw: unknown, path: string): PatternIR {
         factor: node.factor as number,
         body: validateNode(node.body, `${path}.body`),
       }
+    }
+
+    case 'Param': {
+      // Phase 20-10 — semantics-completeness pair-of PV37 / Trap 4 mirror.
+      // Carry Param through serialize→deserialize without silently stripping
+      // value/rawArgs. value is a discriminated union (string | number |
+      // PatternIR); recurse via validateNode for the sub-IR branch.
+      requireField(node, 'key', ['string'], path)
+      requireField(node, 'rawArgs', ['string'], path)
+      requireField(node, 'body', ['object'], path)
+      const v = node.value
+      let value: string | number | PatternIR
+      if (typeof v === 'string' || typeof v === 'number') {
+        value = v
+      } else if (typeof v === 'object' && v !== null) {
+        value = validateNode(v, `${path}.value`)
+      } else {
+        throw new Error(`${path}: field "value" must be string|number|object, got ${typeof v}`)
+      }
+      const out: PatternIR = {
+        tag: 'Param',
+        key: node.key as string,
+        value,
+        rawArgs: node.rawArgs as string,
+        body: validateNode(node.body, `${path}.body`),
+      }
+      if (Array.isArray(node.loc)) out.loc = node.loc as SourceLocation[]
+      if (typeof node.userMethod === 'string') out.userMethod = node.userMethod
+      return out
     }
 
     case 'Code': {

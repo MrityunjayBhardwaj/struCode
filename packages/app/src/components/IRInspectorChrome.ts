@@ -49,6 +49,25 @@ export function summarize(node: PatternIR): string {
       // Parse-failure case (no via): render the source code as before.
       if (node.via) return `[opaque: .${node.via.method}(${node.via.args})]`
       return JSON.stringify(node.code).slice(0, 60)
+    case 'Param': {
+      // Phase 20-10 wave β-2 (developer chrome / PV35 / D-05).
+      //
+      // Three branches matching Param.value's union type:
+      //   - string → key="value"   (JSON.stringify quotes the literal)
+      //   - number → key=value     (no quotes; matches Strudel numeric arg)
+      //   - PatternIR sub-IR → key=[pattern]   (sub-IR rendered as a child;
+      //                                          children() returns it so
+      //                                          the developer can drill in)
+      //
+      // Mirrors the Code-with-via summarize convention above (key first,
+      // typed shape second). The musician-side label is short-circuited
+      // by irProjection.ts:59-61 to userMethod (e.g. 's', 'gain') — see
+      // RESEARCH G5.2; PV32 vocabulary regression remains unviolated.
+      const v = node.value
+      if (typeof v === 'string') return `${node.key}=${JSON.stringify(v)}`
+      if (typeof v === 'number') return `${node.key}=${v}`
+      return `${node.key}=[pattern]`
+    }
   }
 }
 
@@ -74,6 +93,21 @@ export function children(node: PatternIR): readonly PatternIR[] {
     case 'Scramble':
     case 'Chop':
     case 'Loop':  return [node.body]
+    case 'Param': {
+      // Phase 20-10 wave β-2 (developer tree expansion).
+      //
+      // Param wraps a receiver (`body`) AND optionally carries a sub-IR
+      // value (the pattern-arg form: `.s("<bd cp>")` parses with
+      // value = parsed PatternIR for `<bd cp>`). The developer chrome
+      // exposes BOTH so the inspector tree drills into the pattern-arg
+      // sub-IR (matches Code-with-via's via.inner expansion at line 93).
+      //
+      // Literal-value Params (string | number) have no sub-IR — return
+      // [body] only.
+      const v = node.value
+      if (typeof v === 'object' && v !== null) return [v as PatternIR, node.body]
+      return [node.body]
+    }
     case 'Chunk': return [node.body, node.transform]
     // Pick is the first IR shape with a list-of-sub-IRs alongside a
     // distinguished selector child — render selector first, then the

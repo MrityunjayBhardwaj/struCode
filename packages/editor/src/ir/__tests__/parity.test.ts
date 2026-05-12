@@ -175,29 +175,11 @@ export function normalizeStrudelPan(e: IREvent): IREvent {
   return e
 }
 
-// --------------------------------------------------------------------------
-// Multi-cycle collect — loops per-cycle calls and concatenates events.
-// Lives inline in the test for Wave 1; promoted to ir/collect.ts in
-// Task 19-03-08 when Chunk semantics need it for production callers.
-// --------------------------------------------------------------------------
-export function collectCycles(
-  ir: PatternIR,
-  startCycle: number,
-  endCycle: number,
-): IREvent[] {
-  const events: IREvent[] = []
-  for (let c = startCycle; c < endCycle; c++) {
-    const ctx: Partial<CollectContext> = {
-      cycle: c,
-      time: c,
-      begin: c,
-      end: c + 1,
-      duration: 1,
-    }
-    events.push(...collect(ir, ctx))
-  }
-  return events
-}
+// Multi-cycle collect — extracted to ./helpers/collectCycles.ts so that
+// other test files can import it without side-effect-registering this
+// suite's describe blocks (vitest treats imported test files as part of
+// the importer's suite, doubling the test surface).
+import { collectCycles } from './helpers/collectCycles'
 
 // --------------------------------------------------------------------------
 // Diff helper — sort both sides; assert lengths; per pair assert each
@@ -598,7 +580,8 @@ describe('parity harness', () => {
     expect(ir.tag).toBe('Chunk')
     if (ir.tag === 'Chunk') {
       expect(ir.n).toBe(4)
-      expect(ir.transform.tag).toBe('FX')
+      // Phase 20-10 promoted .gain to Param.
+      expect(ir.transform.tag).toBe('Param')
     }
   })
 
@@ -736,9 +719,10 @@ describe('parity harness', () => {
     expect(ir.tag).toBe('Stack')
     if (ir.tag === 'Stack') {
       expect(ir.tracks.length).toBe(2)
-      // Each track is the body wrapped in an FX node (gain, gain).
-      expect(ir.tracks[0].tag).toBe('FX')
-      expect(ir.tracks[1].tag).toBe('FX')
+      // Each track is the body wrapped in a Param node (Phase 20-10
+      // promoted .gain from FX to Param).
+      expect(ir.tracks[0].tag).toBe('Param')
+      expect(ir.tracks[1].tag).toBe('Param')
     }
   })
 
@@ -1342,13 +1326,15 @@ describe('19-05 — per-method loc containment (D-04 + D-11)', () => {
   // -------------------------------------------------------------------------
   it('3-method chain — each link carries its own .method(args) callSiteRange (PLAN §5 #12)', () => {
     const code = 's("bd").fast(2).late(0.125).gain(0.5)'
+    // Phase 20-10: .gain promoted from FX to Param. loc / userMethod
+    // contracts unchanged.
     const ir = parseStrudel(code) as {
-      tag: 'FX'
+      tag: 'Param'
       userMethod?: string
       loc?: SourceLocation[]
       body: { tag: 'Late'; userMethod?: string; loc?: SourceLocation[]; body: { tag: 'Fast'; userMethod?: string; loc?: SourceLocation[]; body: unknown } }
     }
-    expect(ir.tag).toBe('FX')
+    expect(ir.tag).toBe('Param')
     expect(ir.userMethod).toBe('gain')
     const gainStart = code.indexOf('.gain(0.5)')
     expect(ir.loc).toEqual([{ start: gainStart, end: gainStart + '.gain(0.5)'.length }])
@@ -1874,12 +1860,21 @@ describe('20-04 wave β — parser wrap probes (D-03 / P33 / PV37)', () => {
     expect(ir.via?.inner.tag).toBe('Play')
   })
 
-  it('default arm wraps with quoted args verbatim (.s("sawtooth"))', () => {
+  it('typed Param arm carries quoted args verbatim (.s("sawtooth")) — Phase 20-10 promotion', () => {
+    // Phase 20-10 promoted `s` to the typed Param tag — `.s("sawtooth")`
+    // no longer falls through to wrapAsOpaque. The original wave-β probe
+    // asserted Code-with-via for default-arm wrapping; with the Param arm
+    // present, the byte-fidelity contract carries through Param.rawArgs
+    // instead. Replace the probe with the (analogous) Param contract;
+    // the default-arm release(0.3) test above still pins PV37 wrap
+    // semantics for unrecognised methods.
     const ir = parseStrudel('note("c").s("sawtooth")')
-    expect(ir.tag).toBe('Code')
-    if (ir.tag !== 'Code') return
-    expect(ir.via?.method).toBe('s')
-    expect(ir.via?.args).toBe('"sawtooth"')    // includes surrounding quotes
+    expect(ir.tag).toBe('Param')
+    if (ir.tag !== 'Param') return
+    expect(ir.key).toBe('s')
+    expect(ir.value).toBe('sawtooth')
+    expect(ir.rawArgs).toBe('"sawtooth"')      // raw — surrounding quotes preserved
+    expect(ir.userMethod).toBe('s')
   })
 
   // --- Typed-arm parse-failure wraps (T-06 / D-03 expansion) -----------------
@@ -1892,11 +1887,18 @@ describe('20-04 wave β — parser wrap probes (D-03 / P33 / PV37)', () => {
     expect(ir.via?.args).toBe('"<2 3>"')
   })
 
-  it('gain wraps on parseFloat NaN', () => {
+  it('gain with mini-pattern arg routes to Param sub-IR (Phase 20-10 promotion)', () => {
+    // Pre-20-10 this wrapped as Code-with-via because gain's standalone arm
+    // failed parseFloat on `"0.3 0.7"`. Post-20-10 the Param arm recognises
+    // the quoted-mini shape and parses it into a sub-IR via parseMini. The
+    // default arm still wraps unrecognised methods (release(0.3) probe
+    // above) — PV37 preserved for the non-whitelisted case.
     const ir = parseStrudel('note("c").gain("0.3 0.7")')
-    expect(ir.tag).toBe('Code')
-    if (ir.tag !== 'Code') return
-    expect(ir.via?.method).toBe('gain')
+    expect(ir.tag).toBe('Param')
+    if (ir.tag !== 'Param') return
+    expect(ir.key).toBe('gain')
+    expect(typeof ir.value).toBe('object')     // sub-IR (PatternIR)
+    expect(ir.rawArgs).toBe('"0.3 0.7"')
   })
 
   it('lpf wraps on parseFloat NaN (FX group line 618)', () => {
@@ -2070,5 +2072,216 @@ describe('20-04 wave δ — PV37 opaque-fragment wrapper end-to-end corpus', () 
         expect(e.loc!.length).toBeGreaterThanOrEqual(2)   // atom + ≥1 wrapper
       }
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 wave α — issue #108 regression (collect-level gate).
+// ---------------------------------------------------------------------------
+
+describe('20-10 wave α — issue #108 regression', () => {
+  const FIXTURE = `$: stack(
+  note("c4 e4 g4 b4 c5 b4 g4 e4").s("sawtooth").gain(0.3).lpf(2400).release(0.12),
+  note("e3 g3 b3 e4").s("sine").gain(0.15).release(0.3)
+).viz("pianoroll")
+
+$: note("<c2 [g2 c2] f2 [g2 eb2]>").s("square").gain(0.4).lpf(500).release(0.2).viz("pitchwheel")
+
+$: stack(
+  s("hh*8").gain(0.3),
+  s("bd [~ bd] ~ bd").gain(0.5),
+  s("~ sd ~ [sd cp]").gain(0.4)
+).viz("p5test")`
+
+  it('collect(parseStrudel(<#108 fixture>)) produces evt.s set of 7 distinct values', () => {
+    const ir = parseStrudel(FIXTURE)
+    const events = collect(ir)
+    const sValues = new Set(
+      events.map(e => e.s).filter((s): s is string => typeof s === 'string')
+    )
+    expect(sValues).toEqual(new Set(['sawtooth', 'sine', 'square', 'hh', 'bd', 'sd', 'cp']))
+  })
+
+  it('the three note(...) tracks each have a distinct evt.s', () => {
+    const ir = parseStrudel(FIXTURE)
+    const events = collect(ir)
+    const sawtoothCount = events.filter(e => e.s === 'sawtooth').length
+    const sineCount = events.filter(e => e.s === 'sine').length
+    const squareCount = events.filter(e => e.s === 'square').length
+    expect(sawtoothCount).toBeGreaterThan(0)
+    expect(sineCount).toBeGreaterThan(0)
+    expect(squareCount).toBeGreaterThan(0)
+  })
+
+  it('no event has evt.s === null where a chained .s was applied (root-cause assertion)', () => {
+    // Excludes the root-form s("hh*8") which already worked pre-20-10.
+    // Asserts the SEMANTICS root cause: chained .s populates evt.s.
+    const noteIr = parseStrudel('note("c4 e4 g4 b4").s("sawtooth").gain(0.3)')
+    const events = collect(noteIr)
+    events.forEach(e => expect(e.s).toBe('sawtooth'))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 wave β — Param round-trip byte-fidelity (PLAN §4 β-1).
+//
+// Mirrors the Phase 20-04 wave-δ Code-with-via round-trip discipline above.
+// The toStrudel `case 'Param'` arm landed in α-4 (toStrudel.ts:36-42); these
+// tests pin its behaviour:
+//   - Literal-value params (string | number) round-trip byte-equal.
+//   - Pattern-arg sub-IR params (`.s("<bd cp>")`) preserve the raw inner
+//     string verbatim (rawArgs is untrimmed per CONTEXT D-03 / 20-04 D-02).
+//   - Whitespace inside parens is preserved (rawArgs whitespace contract).
+//   - Chained Params (`.s(...).gain(...)`) and Param-wrapping-FX shapes
+//     compose correctly under recursion.
+//   - serialize → deserialize → toStrudel survives the Param shape across
+//     JSON round-trip (PatternIR-valued .value as well).
+// ---------------------------------------------------------------------------
+
+describe('20-10 wave β — Param round-trip byte-fidelity', () => {
+  it('round-trips note("c").s("sawtooth") byte-equal', () => {
+    const code = 'note("c").s("sawtooth")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").gain(0.3) byte-equal', () => {
+    const code = 'note("c").gain(0.3)'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").s("<bd cp>") byte-equal (pattern-arg form)', () => {
+    const code = 'note("c").s("<bd cp>")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips with whitespace inside parens — note("c").s( "sawtooth" )', () => {
+    // CONTEXT D-03 / 20-04 D-02 — rawArgs preserved untrimmed. Pre-mortem
+    // Trap 5 (β-1 #4 / RESEARCH G3.4 "rawArgs whitespace").
+    const code = 'note("c").s( "sawtooth" )'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c d").s("<bd cp>").gain(0.3) byte-equal (chained Param)', () => {
+    const code = 'note("c d").s("<bd cp>").gain(0.3)'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").s("sawtooth").lpf(2400) byte-equal (Param wrapping FX-wrapping body)', () => {
+    // Param's body can be any IR — here it wraps the Param(s) which wraps
+    // the FX(lpf). Recursion through gen() must compose correctly.
+    const code = 'note("c").s("sawtooth").lpf(2400)'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips note("c").gain("0.3 0.7") byte-equal (numeric pattern-arg)', () => {
+    const code = 'note("c").gain("0.3 0.7")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips s("bd").s("cp") byte-equal (shadow chain — D-05 last-typed-wins)', () => {
+    const code = 's("bd").s("cp")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('round-trips full track-defining metadata chain byte-equal', () => {
+    // Exercises the parametric / track-bucket params (n / bank / scale /
+    // color) at the wider end of the wave-α whitelist.
+    const code = 'note("c").n(0).bank("RolandTR909").scale("major").color("red")'
+    expect(toStrudel(parseStrudel(code))).toBe(code)
+  })
+
+  it('serialize → deserialize → toStrudel byte-equal — note("c").s("<bd cp>")', () => {
+    // Mirrors the wave-δ corpus convention at parity.test.ts:2074-2078.
+    // Critical for PatternIR-valued Param.value: Param's `value` field is
+    // the sub-IR for pattern-args, so JSON round-trip must preserve the
+    // nested PatternIR shape (RESEARCH G4.3 / Trap 14 — nodesEqual JSON-
+    // string fragility on Param.value=PatternIR).
+    const code = 'note("c").s("<bd cp>")'
+    const ir1 = parseStrudel(code)
+    const ir2 = patternFromJSON(patternToJSON(ir1))
+    expect(toStrudel(ir2)).toBe(code)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 wave γ — issue #108 user fixture (narrow) round-trip (PLAN §5 γ-1).
+//
+// Narrow fixture per γ-1 scope decision. The full multi-line #108 fixture
+// CANNOT round-trip byte-equal because parseStrudel lowers several surface
+// forms structurally and toStrudel re-emits the lowered shape:
+//   - Mini-shorthand `*N` at root → Fast(N, ...) → re-emits as `.fast(N)`.
+//   - Bracketed mini `[~ bd]` at root → grouped sub-tree → re-emits with
+//     different bracket / spacing shape.
+//   - Nested angle-with-brackets `<g2 [g2 eb2]>` at root → Cycle/Stack/Seq
+//     nodes with no `rawMini` field → re-emits semantically equivalent but
+//     byte-different.
+//   - `$:` block syntax → parseRoot splits and re-roots into `stack(...)` →
+//     re-emits as a single `stack(\n  ..., ...\n)` call (loses `$:` lines).
+// All four are PRE-EXISTING parser/printer asymmetries (not 20-10
+// regressions). They surfaced when 20-10 wave-γ tried to round-trip the
+// full #108 fixture and are tracked by issue #109
+// (https://github.com/MrityunjayBhardwaj/stave-code/issues/109).
+//
+// γ-1 here pins what 20-10 explicitly delivers: Param + PV37 Code-with-via
+// cooperation through chained methods. The fixture exercises:
+//   - Param-whitelisted methods (.s, .gain) — typed Param IR tag.
+//   - Non-whitelisted methods (.lpf, .release, .viz) — Code-with-via wrap
+//     (PV37 — opaque-fragment, semantics-deferred).
+//   - Simple sequence root-form notes (no `*N`, no `[]`, no `<>`, no `$:`).
+//   - Two parallel voices via an explicit `stack(...)` so the multi-voice
+//     compositional wiring is exercised without triggering `$:` lowering.
+// ---------------------------------------------------------------------------
+
+describe('20-10 wave γ — issue #108 user fixture (narrow) round-trip', () => {
+  const fixture = `stack(
+  note("c4 e4 g4").s("sawtooth").gain(0.3).lpf(2400).release(0.12).viz("pianoroll"),
+  note("c4 e4").s("sine").gain(0.15).release(0.3)
+)`
+
+  it('round-trips byte-equal — Param + PV37 Code-with-via cooperation through chained methods', () => {
+    expect(toStrudel(parseStrudel(fixture))).toBe(fixture)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 wave γ — Param-shadow merge direction parity vs Strudel runtime
+// (PLAN §5 γ-3). Converts α-1's local probe into a permanent runtime-parity
+// test. D-05 LOCKED 2026-05-09 (α-1 executed): last-typed-wins. The α-1
+// console output confirmed haps[0].gain and haps[0].s are top-level (no
+// `value.gain` fallback ladder needed; per the prompt "drop ?? haps[0].
+// value?.gain fallback since α-1 confirmed top-level"). normalizeStrudelHap
+// (engine/NormalizedHap.ts) flattens haps to the IREvent shape used here.
+// ---------------------------------------------------------------------------
+
+describe('20-10 wave γ — Param-shadow merge direction parity', () => {
+  it('note("c").gain(0.3).gain(0.7) — IR collect matches Strudel runtime', async () => {
+    const code = 'note("c").gain(0.3).gain(0.7)'
+    const haps = await strudelEventsFromCode(code, 1)
+    const ours = collect(parseStrudel(code))
+    expect(ours).toHaveLength(haps.length)
+    expect(ours[0].gain).toBeCloseTo(haps[0].gain ?? 0)
+  })
+
+  it('s("bd").s("cp") — IR collect matches Strudel runtime', async () => {
+    const code = 's("bd").s("cp")'
+    const haps = await strudelEventsFromCode(code, 1)
+    const ours = collect(parseStrudel(code))
+    expect(ours).toHaveLength(haps.length)
+    expect(ours[0].s).toBe(haps[0].s)
+  })
+
+  it('note("c d").s("<bd cp>") — IR collect matches Strudel runtime per-cycle over 4 cycles', async () => {
+    const code = 'note("c d").s("<bd cp>")'
+    const expected = await strudelEventsFromCode(code, 4)
+    const ours = collectCycles(parseStrudel(code), 0, 4)
+    expect(ours.length).toBe(expected.length)
+    // Sort both by (begin, note) to compare like-for-like; Strudel may emit
+    // boundary-clipped pairs. The Param-shadow assertion is per-event s.
+    const sortKey = (e: IREvent) => `${e.begin.toFixed(6)}|${e.note ?? ''}`
+    const exp = [...expected].sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+    const act = [...ours].sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+    act.forEach((e, i) => {
+      expect(e.s).toBe(exp[i].s)
+    })
   })
 })

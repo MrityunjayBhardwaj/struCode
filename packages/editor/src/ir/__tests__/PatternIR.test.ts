@@ -943,3 +943,66 @@ describe('patternToJSON / patternFromJSON', () => {
     expect(() => patternFromJSON(json)).toThrow(/tracks\[0\]/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Phase 20-10 — Param tag shape (α-2)
+// ---------------------------------------------------------------------------
+
+describe('20-10 — Param tag', () => {
+  it('IR.param constructs a Param node with literal value', () => {
+    const node = IR.param('s', 'sawtooth', '"sawtooth"', IR.play('c4'))
+    expect(node.tag).toBe('Param')
+    if (node.tag === 'Param') {
+      expect(node.key).toBe('s')
+      expect(node.value).toBe('sawtooth')
+      expect(node.rawArgs).toBe('"sawtooth"')
+      expect(node.body.tag).toBe('Play')
+    }
+  })
+
+  it('IR.param accepts numeric value', () => {
+    const node = IR.param('gain', 0.3, '0.3', IR.play('c4'))
+    if (node.tag === 'Param') {
+      expect(node.value).toBe(0.3)
+      expect(node.key).toBe('gain')
+    }
+  })
+
+  it('IR.param accepts PatternIR value (pattern-arg form)', () => {
+    const inner = IR.play('bd')
+    const node = IR.param('s', inner, '"bd"', IR.play('c4'))
+    if (node.tag === 'Param') {
+      expect(typeof node.value).toBe('object')
+      if (typeof node.value === 'object') {
+        expect((node.value as PatternIR).tag).toBe('Play')
+      }
+    }
+  })
+
+  it('IR.param attaches loc + userMethod via meta', () => {
+    const body = IR.play('c4')
+    const node = IR.param('s', 'bd', '"bd"', body, {
+      loc: [{ start: 5, end: 14 }],
+      userMethod: 's',
+    })
+    if (node.tag === 'Param') {
+      expect(node.loc).toEqual([{ start: 5, end: 14 }])
+      expect(node.userMethod).toBe('s')
+    }
+  })
+
+  it('IR.param does not set userMethod when meta omitted', () => {
+    const node = IR.param('s', 'bd', '"bd"', IR.play('c4'))
+    if (node.tag === 'Param') {
+      expect(node.userMethod).toBeUndefined()
+      expect(node.loc).toBeUndefined()
+    }
+  })
+
+  it('IR.param preserves rawArgs untrimmed', () => {
+    const node = IR.param('s', 'bd', '  "bd"  ', IR.play('c4'))
+    if (node.tag === 'Param') {
+      expect(node.rawArgs).toBe('  "bd"  ')
+    }
+  })
+})
