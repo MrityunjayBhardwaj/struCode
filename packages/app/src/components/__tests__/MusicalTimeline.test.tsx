@@ -495,6 +495,206 @@ describe('MusicalTimeline file-switch reset (Trap NEW-5)', () => {
   })
 })
 
+describe('MusicalTimeline transport-stop slot map reset (20-12.1)', () => {
+  // Helper: read the track labels currently rendered in order.
+  const labelsOf = (container: HTMLElement): (string | null)[] =>
+    Array.from(
+      container.querySelectorAll('[data-musical-timeline-track-label]'),
+    ).map((el) => el.getAttribute('data-musical-timeline-track-label'))
+
+  // Helper: drive the rAF loop a few ticks so the playhead state catches
+  // up to the current `getCycle` accessor. The rAF in jsdom is backed by
+  // setTimeout; 50ms is the pattern used elsewhere in this file (search
+  // "rAF gating (Trap NEW-1)").
+  const flushRaf = async (): Promise<void> => {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+  }
+
+  it('stop → play with same IR yields the same row order', async () => {
+    // 1. Mount playing with three tracks.
+    const playingProps = {
+      ...defaultProps(),
+      getCycle: () => 0.5,
+    }
+    const { container, rerender } = await renderSettled(
+      <MusicalTimeline {...playingProps} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'bd' }),
+            evt({ trackId: 'hh' }),
+            evt({ trackId: 'cp' }),
+          ],
+        }),
+      )
+    })
+    // Let the rAF loop observe `getCycle() === 0.5` so `currentCycle`
+    // moves off `null`. Without this, the non-null → null edge below
+    // would not fire (we would go null → null).
+    await flushRaf()
+    expect(labelsOf(container)).toEqual(['bd', 'hh', 'cp'])
+
+    // 2. Flip transport to stopped. rAF picks up the new `getCycle` via
+    //    accessorsRef and writes `currentCycle = null`, which triggers
+    //    the in-render stop-edge reset. Then push the same snapshot.
+    const stoppedProps = { ...defaultProps(), getCycle: () => null }
+    rerender(<MusicalTimeline {...stoppedProps} />)
+    await flushRaf()
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'bd' }),
+            evt({ trackId: 'hh' }),
+            evt({ trackId: 'cp' }),
+          ],
+        }),
+      )
+    })
+    expect(labelsOf(container)).toEqual(['bd', 'hh', 'cp'])
+
+    // 3. Flip back to playing + push same snapshot. Row order preserved.
+    rerender(<MusicalTimeline {...playingProps} />)
+    await flushRaf()
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [
+            evt({ trackId: 'bd' }),
+            evt({ trackId: 'hh' }),
+            evt({ trackId: 'cp' }),
+          ],
+        }),
+      )
+    })
+    expect(labelsOf(container)).toEqual(['bd', 'hh', 'cp'])
+  })
+
+  it('stop → play after commenting $: drops the ghost row', async () => {
+    // Production sequence (T-8 plan steps 4-7): user plays [bd, hh]
+    // (snapshot 1), comments out the hh line and re-evals WHILE STILL
+    // PLAYING (snapshot 2 = [bd]; D-04 keeps the hh ghost row), then
+    // presses Stop. The stop edge clears the slot map; the next render
+    // uses the [bd] snapshot alone, so the ghost row drops.
+    const playingProps = {
+      ...defaultProps(),
+      getCycle: () => 0.5,
+    }
+    const { container, rerender } = await renderSettled(
+      <MusicalTimeline {...playingProps} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd' }), evt({ trackId: 'hh' })],
+        }),
+      )
+    })
+    // Drive `currentCycle` off null so the upcoming stop is an edge.
+    await flushRaf()
+    expect(labelsOf(container)).toEqual(['bd', 'hh'])
+
+    // Re-eval while playing — user comments out hh's $: line. D-04
+    // says the ghost row stays because the transport hasn't stopped.
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd' })],
+        }),
+      )
+    })
+    expect(labelsOf(container)).toEqual(['bd', 'hh'])
+
+    // User presses Stop. The stop edge clears slotMapRef; the next
+    // render observes only [bd] in the snapshot.
+    const stoppedProps = { ...defaultProps(), getCycle: () => null }
+    rerender(<MusicalTimeline {...stoppedProps} />)
+    await flushRaf()
+    expect(labelsOf(container)).toEqual(['bd'])
+  })
+
+  it('hot-reload while playing keeps the ghost row (D-04 audition case unchanged)', async () => {
+    const playingProps = {
+      ...defaultProps(),
+      getCycle: () => 0.5,
+    }
+    const { container } = await renderSettled(
+      <MusicalTimeline {...playingProps} />,
+    )
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd' }), evt({ trackId: 'hh' })],
+        }),
+      )
+    })
+    await flushRaf()
+    expect(labelsOf(container)).toEqual(['bd', 'hh'])
+
+    // Hot-reload while playing — drop hh from the IR but keep playing.
+    // The audition workflow expects hh's row to remain reserved (no
+    // non-null → null edge fires; `currentCycle` stays 0.5).
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd' })],
+        }),
+      )
+    })
+    await flushRaf()
+    expect(labelsOf(container)).toEqual(['bd', 'hh'])
+
+    // Another hot-reload — same expectation.
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd' })],
+        }),
+      )
+    })
+    await flushRaf()
+    expect(labelsOf(container)).toEqual(['bd', 'hh'])
+  })
+
+  it('re-eval while stopped grows insertion order without resetting between evals', async () => {
+    // Goal-clause witness: "the next re-eval while stopped re-derives
+    // slots from scratch." Also guards two properties at once:
+    //   (i) first-mount does NOT trigger a spurious reset
+    //       (prevCycleNullRef initialises to true)
+    //   (ii) null → null re-renders are not edges (no second reset)
+    const stoppedProps = { ...defaultProps(), getCycle: () => null }
+    const { container } = await renderSettled(
+      <MusicalTimeline {...stoppedProps} />,
+    )
+
+    await act(async () => {
+      pushSnapshot(makeSnapshot({ events: [evt({ trackId: 'bd' })] }))
+    })
+    expect(labelsOf(container)).toEqual(['bd'])
+
+    await act(async () => {
+      pushSnapshot(
+        makeSnapshot({
+          events: [evt({ trackId: 'bd' }), evt({ trackId: 'hh' })],
+        }),
+      )
+    })
+    expect(labelsOf(container)).toEqual(['bd', 'hh'])
+
+    // hh disappears from the IR but the slot stays reserved because no
+    // stop edge fires (we never transitioned non-null → null after the
+    // initial mount-as-stopped).
+    await act(async () => {
+      pushSnapshot(makeSnapshot({ events: [evt({ trackId: 'hh' })] }))
+    })
+    expect(labelsOf(container)).toEqual(['bd', 'hh'])
+  })
+})
+
 describe('MusicalTimeline note-block positions (PV28 / Trap 4)', () => {
   it('places s("bd*4") events at beats 0, 0.25, 0.5, 0.75 → x ≈ 0/100/200/300 px at width 800', async () => {
     const { container } = render(<MusicalTimeline {...defaultProps()} />)
