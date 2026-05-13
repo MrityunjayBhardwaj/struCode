@@ -245,7 +245,12 @@ test.describe('MusicalTimeline — slice β (Phase 20-01 PR-B)', () => {
     await stopStrudel(page)
   })
 
-  test('stable track order across re-evals (Trap 5)', async ({ page }) => {
+  test('stable track order across re-evals (Trap 5 + Phase 20-12.1 D-04 scope)', async ({ page }) => {
+    // Phase 20-12.1 amended D-04 so "stable across snapshots" is scoped to
+    // within a single transport session. This test exercises the audition
+    // workflow (hot-reload WHILE PLAYING) to preserve the ghost-row
+    // semantics — re-evals without `Cmd+.` in between. The transport-stop
+    // edge has its own coverage in MusicalTimeline.test.tsx (T-3 case 2).
     await clearDrawerStorage(page)
     await preOpenDrawer(page)
     await bootShell(page)
@@ -257,9 +262,11 @@ test.describe('MusicalTimeline — slice β (Phase 20-01 PR-B)', () => {
       page.locator('[data-musical-timeline-track-row]'),
     ).toHaveCount(3, { timeout: 5000 })
 
-    // Stop + re-eval with hh missing; row should still be reserved.
+    // Hot-reload WHILE PLAYING with hh missing; row should still be reserved
+    // (D-04 audition case — keeps the transport non-null → null edge from
+    // firing, so slotMapRef retains the hh slot).
     await setStrudelCode(page, 's("bd cp")')
-    await reEvalStrudel(page)
+    await evalStrudel(page)
     await expect(
       page.locator('[data-musical-timeline-track-row]'),
     ).toHaveCount(3)
@@ -271,7 +278,7 @@ test.describe('MusicalTimeline — slice β (Phase 20-01 PR-B)', () => {
 
     // Add a new track — sn should append at slot 3, not in the middle.
     await setStrudelCode(page, 's("bd hh sn cp")')
-    await reEvalStrudel(page)
+    await evalStrudel(page)
     const labels = await page
       .locator('[data-musical-timeline-track-label]')
       .evaluateAll((els) =>
@@ -350,5 +357,52 @@ test.describe('MusicalTimeline — slice β (Phase 20-01 PR-B)', () => {
     await expect(gutter).toHaveText('CYCLES')
 
     await stopStrudel(page)
+  })
+
+  test('Phase 20-12.1 — transport stop clears the slot map (drops ghost row)', async ({
+    page,
+  }) => {
+    // Direct-observation gate for Phase 20-12.1 (T-8). Mirrors the manual
+    // gesture sequence from the plan:
+    //   1. Play `s("bd hh")` → 2 rows.
+    //   2. Hot-reload while playing with `s("bd")` → hh row stays
+    //      reserved (D-04 audition case unchanged).
+    //   3. Press Stop (Cmd+.). The non-null → null edge of `getCycle()`
+    //      clears `slotMapRef`. The DOM now reflects the current IR
+    //      alone → only the `bd` row remains.
+    await clearDrawerStorage(page)
+    await preOpenDrawer(page)
+    await bootShell(page)
+    await page.locator('.monaco-editor').waitFor({ timeout: 15_000 })
+
+    await setStrudelCode(page, 's("bd hh")')
+    await evalStrudel(page)
+    await expect(
+      page.locator('[data-musical-timeline-track-row]'),
+    ).toHaveCount(2, { timeout: 5000 })
+
+    // Audition workflow: re-eval while playing — hh ghost row stays.
+    await setStrudelCode(page, 's("bd")')
+    await evalStrudel(page)
+    await expect(
+      page.locator('[data-musical-timeline-track-row]'),
+    ).toHaveCount(2)
+    await expect(
+      page.locator(
+        '[data-musical-timeline-track-row="hh"] [data-musical-timeline-note]',
+      ),
+    ).toHaveCount(0)
+
+    // Stop — the stop-edge reset fires and the ghost row drops.
+    await stopStrudel(page)
+    // Allow the 250ms poke interval to sample getCycle() if needed, plus
+    // a render tick. 600ms is generous.
+    await page.waitForTimeout(600)
+    await expect(
+      page.locator('[data-musical-timeline-track-row]'),
+    ).toHaveCount(1)
+    await expect(
+      page.locator('[data-musical-timeline-track-row="bd"]'),
+    ).toHaveCount(1)
   })
 })
