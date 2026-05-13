@@ -586,12 +586,19 @@ export function MusicalTimeline(
   // Initial value `true` ("we start in the stopped state") avoids a
   // spurious first-mount reset of an already-empty map.
   const prevCycleNullRef = useRef<boolean>(true)
+  // Phase 20-12.1 follow-up — "has ever had events this session" set.
+  // Combined with always-seed-from-IR-top-level below, this is what lets
+  // commented `$:` lines render as ghosts during a live session but drop
+  // entirely on stop+play. Cleared alongside slotMapRef on file switch
+  // and on the transport-stop edge.
+  const hasHadEventsRef = useRef<Set<string>>(new Set())
 
   // File-switch reset: run BEFORE slot-map derivation so the new file's
   // tracks claim slots starting from 0 instead of inheriting the prior
   // file's row order.
   if (snapshot && snapshot.source !== lastSourceRef.current) {
     slotMapRef.current = new Map()
+    hasHadEventsRef.current = new Set()
     lastSourceRef.current = snapshot.source
   }
 
@@ -599,46 +606,60 @@ export function MusicalTimeline(
   // On the non-null → null edge of currentCycle (transport just stopped),
   // clear slotMapRef so the next play snaps to the current IR's tracks.
   // D-04's "stable across snapshots" is scoped to a single transport
-  // session; this edge ends the session. See FOLLOWUPS.md#F-1.
+  // session; this edge ends the session. See FOLLOWUPS.md#F-1. Also clear
+  // hasHadEventsRef so commented rows that ghosted during the prior
+  // session don't carry their visibility flag into the next.
   const cycleIsNull = currentCycle === null
   if (!prevCycleNullRef.current && cycleIsNull) {
     slotMapRef.current = new Map()
+    hasHadEventsRef.current = new Set()
   }
   prevCycleNullRef.current = cycleIsNull
 
   const groups = snapshot ? groupEventsByTrack(snapshot.events) : []
-  // Phase 20-12.1 follow-up — derive trackIds from BOTH the IR's TOP-LEVEL
-  // Track wrappers AND from event-group derivation, but ONLY when the slot
-  // map already has entries (mid-session hot-reload). IR-only trackIds (e.g.
-  // commented `$:` lines that emit an empty-body Track with no events)
-  // claim a slot during a live session so commenting `$:` mid-fixture
-  // renders a ghost row in place instead of shifting subsequent rows up.
+  // Phase 20-12.1 follow-up — seed the slot map from BOTH the IR's
+  // top-level Track wrappers AND event-derived trackIds, ALWAYS (not just
+  // mid-session). The IR-side seed gives every `$:` line — including
+  // commented-out ones whose parser fix wraps them as empty-body Tracks —
+  // a stable source-order slot. Combined with the `hasHadEventsRef`
+  // filter below, this satisfies three otherwise-conflicting behaviors:
   //
-  // On a FRESH seed — first play of a session, or first re-play after the
-  // stop-edge reset cleared the map — only event-derived trackIds seed the
-  // map. This is what makes stop→play actually drop the commented-row
-  // ghost: post-stop the slot map is empty, so the next render's seed
-  // skips IR-only Tracks (their bodies are IR.pure() with no events) and
-  // only the still-active rows claim slots. Without this gate, the IR
-  // union would re-introduce the ghost on every render, defeating the
-  // stop-edge reset from PR #119.
+  //   - Comment a `$:` mid-play (hot-reload): row keeps its slot, renders
+  //     as ghost (was in hasHadEvents, no events now → filter keeps it).
+  //   - Stop+play: stop-edge clears hasHadEvents AND slot map; on next
+  //     play, slot map re-seeds from IR top-level (including commented
+  //     empty Tracks), but only rows whose trackIds enter hasHadEvents
+  //     via the current play's events render. Commented rows stay out
+  //     of the set → invisible.
+  //   - Uncomment a row later: events return for its trackId; trackId
+  //     re-enters hasHadEvents; row re-renders in its ORIGINAL source-
+  //     order slot (no rearrangement).
   //
   // The walk is intentionally SHALLOW — it only visits the outer Stack's
   // direct Track children (the d{N} from $:). Nested Tracks from `.p()`
   // are inside those bodies and would be DIFFERENT trackIds; including
   // them here would produce phantom slots when events already flow under
   // the inner .p() name.
-  const slotMapHasEntries = slotMapRef.current.size > 0
-  const irTrackIds =
-    slotMapHasEntries && snapshot?.ir
-      ? collectTopLevelTrackIds(snapshot.ir)
-      : []
+  const irTrackIds = snapshot?.ir ? collectTopLevelTrackIds(snapshot.ir) : []
   const currentIds = [...irTrackIds, ...groups.map((g) => g.trackId)]
   slotMapRef.current = stableTrackOrder(slotMapRef.current, currentIds)
   const slotMap = slotMapRef.current
+  // Track which trackIds have ever produced events in the current
+  // session. Cleared alongside the slot map on the stop-edge reset above
+  // and on file switch (also above). This is the filter that distinguishes
+  // "ghost in place during live edit" from "drop entirely on stop+play".
+  for (const g of groups) hasHadEventsRef.current.add(g.trackId)
 
+  // Filter to trackIds that have ever produced events this session.
+  // Commented `$:` lines have a slot (from IR top-level seed) but no
+  // events; if they were never active before, they're invisible until
+  // they emit events. Within a session, once a row has fired events,
+  // it stays visible as a ghost across hot-reload comment toggles
+  // (D-04 audition workflow). On stop, hasHadEventsRef clears, so the
+  // next play starts a fresh visibility set.
   const orderedTracks = Array.from(slotMap.entries())
     .sort(([, a], [, b]) => a - b)
+    .filter(([trackId]) => hasHadEventsRef.current.has(trackId))
     .map(([trackId]) => ({
       trackId,
       events: groups.find((g) => g.trackId === trackId)?.events ?? [],
