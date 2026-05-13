@@ -210,6 +210,32 @@ function formatNoteTooltip(event: IREvent, fallbackTrackId: string): string {
  * a later duplicate doesn't override since the row layout's identity is the
  * stable trackId, and over-writing would race the cached snapshot identity.
  */
+/**
+ * Phase 20-12.1 follow-up — enumerate the top-level `$:`-derived Track
+ * trackIds in source order. Used to seed the slot map so commented-out
+ * `$:` lines (empty-body Tracks per the parser fix) still claim a slot.
+ *
+ * SHALLOW: only the outer Stack's direct Track children. Inner Tracks
+ * from `.p()` are not enumerated here — they share their slot with the
+ * outer `$:` wrap once `.p()` rename-in-place is properly substrate-fixed.
+ *
+ * Shapes handled:
+ *   - Stack(Track(d1, ...), Track(d2, ...), ...)  — multi-`$:`
+ *   - Track(d1, ...)                              — single-`$:` or synthetic
+ *   - Anything else                               — no top-level Tracks; []
+ */
+function collectTopLevelTrackIds(node: PatternIR): string[] {
+  if (node.tag === 'Track') return [node.trackId]
+  if (node.tag === 'Stack') {
+    const out: string[] = []
+    for (const child of node.tracks) {
+      if (child.tag === 'Track') out.push(child.trackId)
+    }
+    return out
+  }
+  return []
+}
+
 function collectTrackBodies(node: PatternIR): Map<string, PatternIR> {
   const out = new Map<string, PatternIR>()
   const visit = (n: PatternIR): void => {
@@ -581,16 +607,20 @@ export function MusicalTimeline(
   prevCycleNullRef.current = cycleIsNull
 
   const groups = snapshot ? groupEventsByTrack(snapshot.events) : []
-  // Phase 20-12.1 follow-up — derive trackIds from BOTH the IR's Track
-  // wrappers AND from event-group derivation. IR-only trackIds (e.g.
+  // Phase 20-12.1 follow-up — derive trackIds from BOTH the IR's TOP-LEVEL
+  // Track wrappers AND from event-group derivation. IR-only trackIds (e.g.
   // commented `$:` lines that emit an empty-body Track with no events)
-  // still claim a slot, so commenting a `$:` mid-fixture renders a
-  // ghost row in place instead of shifting subsequent rows up. IR
-  // trackIds are first so source order drives initial slot assignment;
-  // event groups for the same trackId reuse the existing slot.
-  const irTrackIds = snapshot?.ir
-    ? Array.from(collectTrackBodies(snapshot.ir).keys())
-    : []
+  // still claim a slot, so commenting a `$:` mid-fixture renders a ghost
+  // row in place instead of shifting subsequent rows up.
+  //
+  // The walk is intentionally SHALLOW — it only visits the outer Stack's
+  // direct Track children (the d{N} from $:). Nested Tracks from `.p()`
+  // are inside those bodies and would be DIFFERENT trackIds; including
+  // them here would produce phantom slots when events already flow
+  // under the inner .p() name. (#3 — `.p()` rename-in-place — needs a
+  // separate substrate change in collect.ts and is tracked outside
+  // this follow-up batch.)
+  const irTrackIds = snapshot?.ir ? collectTopLevelTrackIds(snapshot.ir) : []
   const currentIds = [...irTrackIds, ...groups.map((g) => g.trackId)]
   slotMapRef.current = stableTrackOrder(slotMapRef.current, currentIds)
   const slotMap = slotMapRef.current
