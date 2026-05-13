@@ -117,20 +117,28 @@ export function parseStrudel(code: string): PatternIR {
       // loc covers the `$:` line range (PV36 / D-02). Synthetic-from-$:
       // form: no userMethod (toStrudel β-2 distinguishes from `.p()` form
       // via `userMethod === 'p'`).
+      //
+      // Phase 20-12.1 follow-up — commented `$:` lines produce an
+      // empty-body Track wrapper so d{N} numbering stays stable when
+      // the user toggles a line's comment prefix.
       const t = tracks[0]
-      return IR.track('d1', parseExpression(t.expr, t.offset), {
+      const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset)
+      return IR.track('d1', body, {
         loc: [{ start: t.dollarStart, end: t.end }],
       })
     }
     // Two+ `$:` blocks — Stack(Track('d1', ...), Track('d2', ...), ...).
     // Each Track carries its own `$:` line range as loc. The outer Stack
     // is synthetic (no loc / no userMethod) — same shape as today.
+    // Commented `$:` lines get Track wrappers with IR.pure() bodies so
+    // they keep their slot in the numbering.
     return IR.stack(
-      ...tracks.map((t, i) =>
-        IR.track(`d${i + 1}`, parseExpression(t.expr, t.offset), {
+      ...tracks.map((t, i) => {
+        const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset)
+        return IR.track(`d${i + 1}`, body, {
           loc: [{ start: t.dollarStart, end: t.end }],
-        }),
-      ),
+        })
+      }),
     )
   } catch {
     return IR.code(code)
@@ -153,7 +161,7 @@ export function parseStrudel(code: string): PatternIR {
  */
 export function extractTracks(
   code: string,
-): { expr: string; offset: number; dollarStart: number; end: number }[] {
+): { expr: string; offset: number; dollarStart: number; end: number; commented: boolean }[] {
   // Phase 20-11 α-2 — return shape additively widened. `dollarStart` (start
   // of the literal `$:` token) and `end` (exclusive end of the track body
   // slice — either the next `$:` line start or `code.length`) are exposed
@@ -161,15 +169,25 @@ export function extractTracks(
   // range to each Track wrapper. Existing callers (parseStrudel main +
   // parseStrudelStages.runRawStage) consume only `expr`/`offset` and are
   // forward-compatible.
+  //
+  // Phase 20-12.1 follow-up — commented `$:` lines (// $:) are now matched
+  // and emitted as `commented: true`. parseStrudel maps these to empty-body
+  // Tracks, so d{N} numbering stays stable when the user comments out a $:
+  // line during live editing. Without this, the IR renumbers (commenting
+  // line 4 of a 6-line fixture shifts d5/d6 down to d4/d5, leaving a
+  // disconnected d6 ghost from the slot map).
   const tracks: {
     expr: string
     offset: number
     dollarStart: number
     end: number
+    commented: boolean
   }[] = []
-  // Match `$:` at the start of a line (allowing leading whitespace).
-  const dollarRe = /^[ \t]*\$:/gm
-  const starts: { dollarStart: number; bodyStart: number }[] = []
+  // Match `$:` at the start of a line, allowing leading whitespace and an
+  // optional `//` line-comment prefix. Group 1 captures the `//...` if
+  // present; its presence flips `commented` for that entry.
+  const dollarRe = /^[ \t]*(\/\/[ \t]*)?\$:/gm
+  const starts: { dollarStart: number; bodyStart: number; commented: boolean }[] = []
   let m: RegExpExecArray | null
   while ((m = dollarRe.exec(code))) {
     // bodyStart points after `$:` and any post-colon whitespace on the
@@ -179,17 +197,29 @@ export function extractTracks(
     while (bodyStart < code.length && (code[bodyStart] === ' ' || code[bodyStart] === '\t')) {
       bodyStart++
     }
-    starts.push({ dollarStart: m.index, bodyStart })
+    const commented = !!m[1]
+    // dollarStart anchors at the LINE START (m.index) — consistent across
+    // commented vs uncommented forms since the regex matches from `^`.
+    // This keeps slice boundaries clean (`end` of one entry == line start
+    // of the next entry) regardless of comment toggling.
+    starts.push({ dollarStart: m.index, bodyStart, commented })
   }
   if (starts.length === 0) return []
 
   for (let i = 0; i < starts.length; i++) {
-    const { dollarStart, bodyStart } = starts[i]
+    const { dollarStart, bodyStart, commented } = starts[i]
     const end = i + 1 < starts.length ? starts[i + 1].dollarStart : code.length
+    if (commented) {
+      // Commented `$:` — emit an empty-body track. Body extent is irrelevant
+      // (we don't parse it), but slot-map identity for this position is
+      // preserved so the timeline shows a ghost row in place.
+      tracks.push({ expr: '', offset: bodyStart, dollarStart, end, commented: true })
+      continue
+    }
     const slice = code.slice(bodyStart, end)
     // Trailing whitespace can stay — parseExpression handles it. We
     // keep the leading slice intact so offsets line up.
-    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end })
+    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end, commented: false })
   }
   return tracks
 }

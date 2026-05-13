@@ -581,7 +581,17 @@ export function MusicalTimeline(
   prevCycleNullRef.current = cycleIsNull
 
   const groups = snapshot ? groupEventsByTrack(snapshot.events) : []
-  const currentIds = groups.map((g) => g.trackId)
+  // Phase 20-12.1 follow-up — derive trackIds from BOTH the IR's Track
+  // wrappers AND from event-group derivation. IR-only trackIds (e.g.
+  // commented `$:` lines that emit an empty-body Track with no events)
+  // still claim a slot, so commenting a `$:` mid-fixture renders a
+  // ghost row in place instead of shifting subsequent rows up. IR
+  // trackIds are first so source order drives initial slot assignment;
+  // event groups for the same trackId reuse the existing slot.
+  const irTrackIds = snapshot?.ir
+    ? Array.from(collectTrackBodies(snapshot.ir).keys())
+    : []
+  const currentIds = [...irTrackIds, ...groups.map((g) => g.trackId)]
   slotMapRef.current = stableTrackOrder(slotMapRef.current, currentIds)
   const slotMap = slotMapRef.current
 
