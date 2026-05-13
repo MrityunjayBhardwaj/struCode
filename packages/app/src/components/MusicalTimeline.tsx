@@ -608,19 +608,31 @@ export function MusicalTimeline(
 
   const groups = snapshot ? groupEventsByTrack(snapshot.events) : []
   // Phase 20-12.1 follow-up — derive trackIds from BOTH the IR's TOP-LEVEL
-  // Track wrappers AND from event-group derivation. IR-only trackIds (e.g.
+  // Track wrappers AND from event-group derivation, but ONLY when the slot
+  // map already has entries (mid-session hot-reload). IR-only trackIds (e.g.
   // commented `$:` lines that emit an empty-body Track with no events)
-  // still claim a slot, so commenting a `$:` mid-fixture renders a ghost
-  // row in place instead of shifting subsequent rows up.
+  // claim a slot during a live session so commenting `$:` mid-fixture
+  // renders a ghost row in place instead of shifting subsequent rows up.
+  //
+  // On a FRESH seed — first play of a session, or first re-play after the
+  // stop-edge reset cleared the map — only event-derived trackIds seed the
+  // map. This is what makes stop→play actually drop the commented-row
+  // ghost: post-stop the slot map is empty, so the next render's seed
+  // skips IR-only Tracks (their bodies are IR.pure() with no events) and
+  // only the still-active rows claim slots. Without this gate, the IR
+  // union would re-introduce the ghost on every render, defeating the
+  // stop-edge reset from PR #119.
   //
   // The walk is intentionally SHALLOW — it only visits the outer Stack's
   // direct Track children (the d{N} from $:). Nested Tracks from `.p()`
   // are inside those bodies and would be DIFFERENT trackIds; including
-  // them here would produce phantom slots when events already flow
-  // under the inner .p() name. (#3 — `.p()` rename-in-place — needs a
-  // separate substrate change in collect.ts and is tracked outside
-  // this follow-up batch.)
-  const irTrackIds = snapshot?.ir ? collectTopLevelTrackIds(snapshot.ir) : []
+  // them here would produce phantom slots when events already flow under
+  // the inner .p() name.
+  const slotMapHasEntries = slotMapRef.current.size > 0
+  const irTrackIds =
+    slotMapHasEntries && snapshot?.ir
+      ? collectTopLevelTrackIds(snapshot.ir)
+      : []
   const currentIds = [...irTrackIds, ...groups.map((g) => g.trackId)]
   slotMapRef.current = stableTrackOrder(slotMapRef.current, currentIds)
   const slotMap = slotMapRef.current
