@@ -525,6 +525,14 @@ export function MusicalTimeline(
       ) {
         rafHandle = requestAnimationFrame(tick)
       }
+      // Drawer-closed stop-edge sampling (Phase 20-12.1): while the rAF
+      // loop is suspended (drawer closed or tab inactive), getCycle() is
+      // not read each frame. Sample it here so a transport stop
+      // propagates to component state within ≤250ms and the stop-edge
+      // reset block below fires on the next render. Cheap: one accessor
+      // call per 250ms.
+      const sampled = accessorsRef.current.getCycle()
+      setCurrentCycle((prev) => (prev === sampled ? prev : sampled))
     }, 250)
 
     return () => {
@@ -547,6 +555,11 @@ export function MusicalTimeline(
   // ── Slot-map derivation (Trap 5 + Trap NEW-5 file-switch reset) ─────────
   const slotMapRef = useRef<Map<string, number>>(new Map())
   const lastSourceRef = useRef<string | undefined>(undefined)
+  // Phase 20-12.1 — edge tracker for `currentCycle` (non-null → null) so
+  // we can clear `slotMapRef` exactly on the moment the transport stops.
+  // Initial value `true` ("we start in the stopped state") avoids a
+  // spurious first-mount reset of an already-empty map.
+  const prevCycleNullRef = useRef<boolean>(true)
 
   // File-switch reset: run BEFORE slot-map derivation so the new file's
   // tracks claim slots starting from 0 instead of inheriting the prior
@@ -555,6 +568,17 @@ export function MusicalTimeline(
     slotMapRef.current = new Map()
     lastSourceRef.current = snapshot.source
   }
+
+  // ── Transport-stop reset (Phase 20-12.1) ───────────────────────────────
+  // On the non-null → null edge of currentCycle (transport just stopped),
+  // clear slotMapRef so the next play snaps to the current IR's tracks.
+  // D-04's "stable across snapshots" is scoped to a single transport
+  // session; this edge ends the session. See FOLLOWUPS.md#F-1.
+  const cycleIsNull = currentCycle === null
+  if (!prevCycleNullRef.current && cycleIsNull) {
+    slotMapRef.current = new Map()
+  }
+  prevCycleNullRef.current = cycleIsNull
 
   const groups = snapshot ? groupEventsByTrack(snapshot.events) : []
   const currentIds = groups.map((g) => g.trackId)
