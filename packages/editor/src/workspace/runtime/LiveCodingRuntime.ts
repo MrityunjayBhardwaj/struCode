@@ -639,6 +639,11 @@ export class LiveCodingRuntime implements LiveCodingRuntimeInterface {
    * Phase 19-08 (#85). RESEARCH §2.
    */
   getCurrentCycle(): number | null {
+    // Phase 20-12.1 follow-up — gate on isPlayingState. Strudel's
+    // scheduler keeps returning the last cycle value after stop, so
+    // without this gate `getCycle()` never goes null and MusicalTimeline's
+    // stop-edge slot-map reset never fires.
+    if (!this.isPlayingState) return null
     const v = this.engine.components.queryable?.scheduler?.now()
     return Number.isFinite(v) ? (v as number) : null
   }
