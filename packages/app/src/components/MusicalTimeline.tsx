@@ -211,29 +211,52 @@ function formatNoteTooltip(event: IREvent, fallbackTrackId: string): string {
  * stable trackId, and over-writing would race the cached snapshot identity.
  */
 /**
- * Phase 20-12.1 follow-up — enumerate the top-level `$:`-derived Track
- * trackIds in source order. Used to seed the slot map so commented-out
- * `$:` lines (empty-body Tracks per the parser fix) still claim a slot.
+ * Phase 20-12.1 follow-up — enumerate the top-level `$:`-derived Tracks
+ * in source order. Each entry exposes a stable `slotKey` (based on the
+ * outer Track's source position) and a `displayLabel` (the `.p()` name
+ * if the body is a nested `.p()` Track, else the outer Track's trackId).
  *
- * SHALLOW: only the outer Stack's direct Track children. Inner Tracks
- * from `.p()` are not enumerated here — they share their slot with the
- * outer `$:` wrap once `.p()` rename-in-place is properly substrate-fixed.
+ * The slot key is what the timeline uses for row identity, so adding or
+ * changing `.p("name")` on a line doesn't relocate its row — only the
+ * label updates.
  *
- * Shapes handled:
- *   - Stack(Track(d1, ...), Track(d2, ...), ...)  — multi-`$:`
- *   - Track(d1, ...)                              — single-`$:` or synthetic
- *   - Anything else                               — no top-level Tracks; []
+ * SHALLOW: only the outer Stack's direct Track children. The label
+ * derivation peeks ONE level into the body to detect a `.p()` wrap, but
+ * doesn't recurse deeper.
  */
-function collectTopLevelTrackIds(node: PatternIR): string[] {
-  if (node.tag === 'Track') return [node.trackId]
+function collectTopLevelSlots(
+  node: PatternIR,
+): { slotKey: string; displayLabel: string }[] {
+  const summarize = (t: PatternIR): { slotKey: string; displayLabel: string } => {
+    const outer = t as Extract<PatternIR, { tag: 'Track' }>
+    const pos = outer.loc?.[0]?.start
+    const slotKey = pos !== undefined ? `$${pos}` : outer.trackId
+    // Peek one level for a `.p()`-wrapped inner Track; that name becomes
+    // the row label.
+    const body = outer.body
+    if (body.tag === 'Track' && body.userMethod === 'p') {
+      return { slotKey, displayLabel: body.trackId }
+    }
+    return { slotKey, displayLabel: outer.trackId }
+  }
+  if (node.tag === 'Track') return [summarize(node)]
   if (node.tag === 'Stack') {
-    const out: string[] = []
+    const out: { slotKey: string; displayLabel: string }[] = []
     for (const child of node.tracks) {
-      if (child.tag === 'Track') out.push(child.trackId)
+      if (child.tag === 'Track') out.push(summarize(child))
     }
     return out
   }
   return []
+}
+
+/** Compute the slot key for an event-derived group. The first event's
+ *  `dollarPos` is the canonical identity; falling back to trackId
+ *  matches the pre-`dollarPos` behavior for hand-built fixtures. */
+function groupSlotKey(group: { trackId: string; events: readonly IREvent[] }): string {
+  const first = group.events[0]
+  const pos = first?.dollarPos
+  return pos !== undefined ? `$${pos}` : group.trackId
 }
 
 function collectTrackBodies(node: PatternIR): Map<string, PatternIR> {
@@ -622,52 +645,67 @@ export function MusicalTimeline(
   prevCycleNullRef.current = cycleIsNull
 
   const groups = snapshot ? groupEventsByTrack(snapshot.events) : []
-  // Phase 20-12.1 follow-up — seed the slot map from BOTH the IR's
-  // top-level Track wrappers AND event-derived trackIds, ALWAYS (not just
-  // mid-session). The IR-side seed gives every `$:` line — including
-  // commented-out ones whose parser fix wraps them as empty-body Tracks —
-  // a stable source-order slot. Combined with the `hasHadEventsRef`
-  // filter below, this satisfies three otherwise-conflicting behaviors:
+  // Phase 20-12.1 follow-up — slot map is keyed by `slotKey`, a stable
+  // source-anchored identity:
+  //   - For events from a `$:`-wrapped Track: `slotKey = "$" + dollarPos`
+  //     where dollarPos is the source offset of the OUTER `$:` Track.
+  //   - For hand-built / non-`$:` events: `slotKey = trackId` (fallback).
   //
-  //   - Comment a `$:` mid-play (hot-reload): row keeps its slot, renders
-  //     as ghost (was in hasHadEvents, no events now → filter keeps it).
-  //   - Stop+play: stop-edge clears hasHadEvents AND slot map; on next
-  //     play, slot map re-seeds from IR top-level (including commented
-  //     empty Tracks), but only rows whose trackIds enter hasHadEvents
-  //     via the current play's events render. Commented rows stay out
-  //     of the set → invisible.
-  //   - Uncomment a row later: events return for its trackId; trackId
-  //     re-enters hasHadEvents; row re-renders in its ORIGINAL source-
-  //     order slot (no rearrangement).
+  // Using the source anchor (not the inner trackId) means `.p("name")`
+  // rename-in-place doesn't relocate the row: the OUTER Track's loc is
+  // unchanged by adding/changing/removing `.p()` inside its body. The
+  // display label still comes from the inner trackId (per the `.p()`
+  // wave-δ contract) — see the display map below.
   //
-  // The walk is intentionally SHALLOW — it only visits the outer Stack's
-  // direct Track children (the d{N} from $:). Nested Tracks from `.p()`
-  // are inside those bodies and would be DIFFERENT trackIds; including
-  // them here would produce phantom slots when events already flow under
-  // the inner .p() name.
-  const irTrackIds = snapshot?.ir ? collectTopLevelTrackIds(snapshot.ir) : []
-  const currentIds = [...irTrackIds, ...groups.map((g) => g.trackId)]
-  slotMapRef.current = stableTrackOrder(slotMapRef.current, currentIds)
-  const slotMap = slotMapRef.current
-  // Track which trackIds have ever produced events in the current
-  // session. Cleared alongside the slot map on the stop-edge reset above
-  // and on file switch (also above). This is the filter that distinguishes
-  // "ghost in place during live edit" from "drop entirely on stop+play".
-  for (const g of groups) hasHadEventsRef.current.add(g.trackId)
+  // The walk for IR-side seeding is SHALLOW: only the outer Stack's
+  // direct Track children. Nested `.p()` Tracks are inside those bodies
+  // and contribute their NAME as a display label, not a separate slot.
+  const irSlots = snapshot?.ir ? collectTopLevelSlots(snapshot.ir) : []
+  const groupBySlotKey = new Map<string, { displayLabel: string; events: readonly IREvent[] }>()
+  for (const g of groups) {
+    const key = groupSlotKey(g)
+    // Events from a `.p()`-wrapped Track carry the INNER trackId (the
+    // user's chosen name). For events from a plain `$:` line, trackId
+    // is the synthetic `d{N}`. Either way it's the right display label.
+    groupBySlotKey.set(key, { displayLabel: g.trackId, events: g.events })
+  }
+  // Display labels for slots that exist in the IR but have no events
+  // yet (commented `$:` lines). collectTopLevelSlots peeks for `.p()`
+  // wraps even on empty-body Tracks so a commented `.p()` line still
+  // shows its name.
+  const slotDisplay = new Map<string, string>()
+  for (const { slotKey, displayLabel } of irSlots) {
+    slotDisplay.set(slotKey, displayLabel)
+  }
+  // Group display labels override IR-derived labels when both exist
+  // (event-bearing labels reflect the LIVE name in case the IR walk
+  // and the runtime event stream disagree, e.g. mid-eval).
+  for (const [key, { displayLabel }] of groupBySlotKey) {
+    slotDisplay.set(key, displayLabel)
+  }
 
-  // Filter to trackIds that have ever produced events this session.
-  // Commented `$:` lines have a slot (from IR top-level seed) but no
-  // events; if they were never active before, they're invisible until
-  // they emit events. Within a session, once a row has fired events,
-  // it stays visible as a ghost across hot-reload comment toggles
-  // (D-04 audition workflow). On stop, hasHadEventsRef clears, so the
-  // next play starts a fresh visibility set.
+  const currentSlotKeys = [
+    ...irSlots.map((s) => s.slotKey),
+    ...groups.map(groupSlotKey),
+  ]
+  slotMapRef.current = stableTrackOrder(slotMapRef.current, currentSlotKeys)
+  const slotMap = slotMapRef.current
+  // hasHadEvents tracks SLOT KEYS (not trackIds). This is what makes
+  // commented `$:` ghost in place during a live session: the slot was
+  // entered into the set on a prior render with events; subsequent
+  // event-less renders keep the row visible because its slot is still
+  // in the set. Cleared on transport transitions + file switch.
+  for (const g of groups) hasHadEventsRef.current.add(groupSlotKey(g))
+
+  // Filter to slot keys that have ever produced events this session.
+  // Display label is read from `slotDisplay` so the chrome shows the
+  // inner `.p()` name when present, falling back to the outer `d{N}`.
   const orderedTracks = Array.from(slotMap.entries())
     .sort(([, a], [, b]) => a - b)
-    .filter(([trackId]) => hasHadEventsRef.current.has(trackId))
-    .map(([trackId]) => ({
-      trackId,
-      events: groups.find((g) => g.trackId === trackId)?.events ?? [],
+    .filter(([slotKey]) => hasHadEventsRef.current.has(slotKey))
+    .map(([slotKey]) => ({
+      trackId: slotDisplay.get(slotKey) ?? slotKey,
+      events: groupBySlotKey.get(slotKey)?.events ?? [],
     }))
 
   // ── Phase 20-06: HapStream subscription drives activeKeys (D-01 / DEC-NEW-1)

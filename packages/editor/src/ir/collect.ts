@@ -189,6 +189,15 @@ export interface CollectContext {
    */
   trackId?: string
   /**
+   * Phase 20-12.1 follow-up — source-position anchor of the OUTERMOST
+   * `$:` Track enclosing this event. Set ONCE at the outer Track entry
+   * (via `ctx.dollarPos ?? ir.loc?.[0]?.start` — outer-wins so inner
+   * `.p()`-wrapped Tracks don't override). Threaded onto events so the
+   * timeline can key rows by source position rather than by `.p()` name,
+   * preserving slot identity across `.p()` renames.
+   */
+  dollarPos?: number
+  /**
    * Phase 20-12 — populated by voice-defining Stack arm. Each voice-row
    * inside a `$:` block (each `stack(...)` arg) gets a sequential leaf
    * index 0..N-1, threaded onto produced events for chrome sub-row
@@ -306,6 +315,11 @@ function makeEvent(ctx: CollectContext, note: string | number, params: Record<st
     // Avoids polluting IREvent with enumerable `trackId: undefined`
     // (CONTEXT pre-mortem #6 — IREvent.trackId is optional).
     ...(ctx.trackId !== undefined ? { trackId: ctx.trackId } : {}),
+    // Phase 20-12.1 follow-up — conditional spread for dollarPos. Absent
+    // for hand-built IR (no `$:` Track wrapper); present for parser-
+    // produced events. MusicalTimeline uses this as the slot identity
+    // when present so `.p()` rename doesn't relocate the row.
+    ...(ctx.dollarPos !== undefined ? { dollarPos: ctx.dollarPos } : {}),
     ...(ctx.leafIndex !== undefined ? { leafIndex: ctx.leafIndex } : {}),
   }
 }
@@ -423,9 +437,17 @@ function walk(ir: PatternIR, ctx: CollectContext): IREvent[] {
       // would carry the outer's leaf id and chrome's sub-row partition
       // would mis-bucket them). The first voice-defining Stack the body
       // reaches initialises the counter at 0.
+      // Phase 20-12.1 follow-up — `dollarPos` is OUTER-WINS: only set
+      // from this Track's loc when the parent context doesn't already
+      // carry one. trackId stays inner-wins (current `.p()` override
+      // semantics for the display label).
       const childCtx: CollectContext = {
         ...ctx,
         trackId: ir.trackId,
+        dollarPos:
+          ctx.dollarPos !== undefined
+            ? ctx.dollarPos
+            : ir.loc?.[0]?.start,
         leafIndex: undefined,
       }
       return withWrapperLoc(walk(ir.body, childCtx), ir.loc)

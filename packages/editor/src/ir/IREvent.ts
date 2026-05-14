@@ -50,8 +50,21 @@ export interface IREvent {
    *  Absent for hap-derived events with no IR-side match
    *  (PV37-aligned runtime-only path). */
   irNodeId?: string
-  /** Which track/loop produced this event */
+  /** Which track/loop produced this event. For events from a `$:`-wrapped
+   *  Track that also has a `.p("name")` inner wrap, this is the INNER
+   *  (`.p()`) name per collect.ts inner-wins semantics — what the user
+   *  sees as the row label. Use `dollarPos` (below) when you need the
+   *  STABLE slot identity that doesn't change when the user renames
+   *  via `.p()`. */
   trackId?: string
+  /** Source-character offset of the OUTERMOST `$:`-wrapped Track that
+   *  encloses this event. Anchored at the Track's `loc[0].start` per
+   *  parseStrudel. Used as the timeline slot identity so `.p("name")`
+   *  rename-in-place doesn't relocate the row (the OUTER Track's loc
+   *  doesn't move when its body is restructured). Absent when no
+   *  enclosing Track has a `loc` (hand-built IR fixtures, runtime-only
+   *  events). Phase 20-12.1 follow-up. */
+  dollarPos?: number
   /** Index of the leaf voice (within its enclosing Track) that produced
    *  this event. Set by collect.ts when walking a voice-defining Stack
    *  (`userMethod ∈ {undefined, 'stack'}`). Sequential across nested
