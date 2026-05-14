@@ -126,7 +126,7 @@ export class StrudelEngine implements LiveCodingEngine {
     // code runs inside Function() with no special scope, so every function it
     // calls must be a global.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod] = await Promise.all([
+    const [coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod, mondoMod] = await Promise.all([
       import('@strudel/core') as Promise<any>,
       import('@strudel/mini') as Promise<any>,
       import('@strudel/tonal') as Promise<any>,
@@ -134,6 +134,14 @@ export class StrudelEngine implements LiveCodingEngine {
       import('@strudel/soundfonts') as Promise<any>,
       import('@strudel/xen') as Promise<any>,
       import('@strudel/midi') as Promise<any>,
+      // Phase 20-14 α-1: audio-pure addition. Exposes `mondo`, `mondi`,
+      // `mondolang`, `getLocations` on globalThis via evalScope. Verified
+      // exports against upstream npm @strudel/mondo@1.1.6 (dist/mondough.mjs).
+      // @strudel/edo (also called for by upstream loadModules at the pinned SHA)
+      // is intentionally NOT added here — it is not yet published to npm
+      // (registry.npmjs.org returns 404 for @strudel/edo on 2026-05-15).
+      // Tracked as a follow-up when upstream publishes it.
+      import('@strudel/mondo') as Promise<any>,
     ])
 
     // Register all module exports into globalThis so eval'd patterns can use them
@@ -144,7 +152,7 @@ export class StrudelEngine implements LiveCodingEngine {
     // into document.body (id="test-canvas") the first time any draw function runs.
     // Stave uses its own visualizer system, so strudel's canvas draw functions
     // (pianoroll, drawFrequencyScope, etc.) are not exposed to user code.
-    await coreMod.evalScope(coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod)
+    await coreMod.evalScope(coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod, mondoMod)
 
     // Set up mini-notation string parser (parses "c3 e3 g3" strings as patterns)
     miniMod.miniAllStrings()

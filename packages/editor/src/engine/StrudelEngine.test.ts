@@ -175,6 +175,11 @@ vi.mock('@strudel/xen', () => ({}))
 
 vi.mock('@strudel/midi', () => ({}))
 
+// Phase 20-14 α-1: audio-pure addition to evalScope; tests don't exercise
+// mondo notation so an empty mock is sufficient (matches the @strudel/tonal,
+// @strudel/xen, @strudel/midi pattern above).
+vi.mock('@strudel/mondo', () => ({}))
+
 vi.mock('@strudel/transpiler', () => ({
   transpiler: vi.fn((code: string) => ({ output: code })),
 }))

@@ -36,6 +36,7 @@
     "@strudel/draw": "^1.0.0",
     "@strudel/midi": "^1.0.0",
     "@strudel/mini": "^1.0.0",
+    "@strudel/mondo": "^1.1.6",
     "@strudel/soundfonts": "^1.0.0",
     "@strudel/tonal": "^1.0.0",
     "@strudel/transpiler": "^1.0.0",
