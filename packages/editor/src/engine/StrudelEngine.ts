@@ -9,6 +9,7 @@ import type { LiveCodingEngine, EngineComponents } from './LiveCodingEngine'
 import { propagate, StrudelParseSystem, IREventCollectSystem } from '../ir/propagation'
 import type { PatternIR } from '../ir/PatternIR'
 import type { IREvent } from '../ir/IREvent'
+import { getTierFlags, type TierFlags } from './tierFlags'
 
 type HapHandler = (event: HapEvent) => void
 
@@ -118,8 +119,28 @@ export class StrudelEngine implements LiveCodingEngine {
   private isPausedState: boolean = false
   private pauseChangedListeners: Set<(paused: boolean) => void> = new Set()
 
+  // Phase 20-14 α-5 — tier flags read at boot. β-4 wires `midi` to call
+  // enableWebMidi(); the other 7 (csound, tidal, osc, serial, gamepad,
+  // motion, mqtt) land as one follow-up issue each. Mid-session toggle
+  // changes are NOT picked up here — settings modal shows the "Changes
+  // take effect on reload" caption.
+  private tierFlags: TierFlags | null = null
+
+  /** Read-only snapshot of the tier flags consumed at this engine's init(). */
+  getTierFlagsSnapshot(): Readonly<TierFlags> | null {
+    return this.tierFlags
+  }
+
   async init(): Promise<void> {
     if (this.initialized) return
+
+    // Phase 20-14 α-5: tier-flag consume-at-init contract. Read ONCE here
+    // and stash on the instance. β-4 (MIDI wiring) reads from
+    // `this.tierFlags`. The dev-console log is the consumed-at-init
+    // proof — α-5's Lokayata gate looks for it on reload.
+    this.tierFlags = getTierFlags()
+    // eslint-disable-next-line no-console
+    console.log('[StrudelEngine] tierFlags read at init:', this.tierFlags)
 
     // Load all strudel modules up-front so evalScope can register their
     // exports (note, s, gain, stack, etc.) into globalThis.  The eval'd user
