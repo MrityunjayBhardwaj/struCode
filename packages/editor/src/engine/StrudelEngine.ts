@@ -197,12 +197,42 @@ export class StrudelEngine implements LiveCodingEngine {
     // Register all module exports into globalThis so eval'd patterns can use them
     // (note, s, gain, stack, etc. must be globals — user code runs in Function())
     // midi: uses onTrigger (additive) — highlighting still fires for every hap.
-    //        enableWebMidi() is NOT called here; users call it explicitly (triggers browser permission prompt).
+    //        enableWebMidi() is gated by the `midi` tier flag (β-4 below).
+    //        The module import is unconditional (80 KB, audio-pure); only
+    //        the permission-triggering call is gated.
     // drawMod (@strudel/draw) intentionally excluded: it injects a full-screen canvas
     // into document.body (id="test-canvas") the first time any draw function runs.
     // Stave uses its own visualizer system, so strudel's canvas draw functions
     // (pianoroll, drawFrequencyScope, etc.) are not exposed to user code.
     await coreMod.evalScope(coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod, mondoMod)
+
+    // Phase 20-14 β-4: thread the `midi` tier flag through engine init.
+    // When the flag is ON, call `enableWebMidi()` after evalScope resolves so
+    // `Pattern.prototype.midi` and the WebMIDI hookup go live. The browser
+    // permission prompt fires during init (early-prompt UX per RESEARCH §4 +
+    // CONTEXT gray-area #3) — the settings row caption telegraphs this so
+    // the user opts in deliberately.
+    //
+    // When the flag is OFF (default), the call is skipped — preserves the
+    // pre-α behavior where `@strudel/midi` was loaded but no permission
+    // prompt fired. The other 7 tier flags (csound/tidal/osc/serial/gamepad/
+    // motion/mqtt) are NOT threaded here — each has its own follow-up issue
+    // (#124-#130) from β-3.
+    if (this.tierFlags?.midi) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const enableWebMidi = (midiMod as any)?.enableWebMidi
+        if (typeof enableWebMidi === 'function') {
+          await enableWebMidi()
+        } else {
+          console.warn('[StrudelEngine] tierFlags.midi is ON but @strudel/midi did not export enableWebMidi.')
+        }
+      } catch (err) {
+        // Browser-permission denial throws here. Log + continue — engine
+        // boot must succeed even if MIDI is unavailable.
+        console.warn('[StrudelEngine] enableWebMidi() failed; MIDI output unavailable.', err)
+      }
+    }
 
     // Set up mini-notation string parser (parses "c3 e3 g3" strings as patterns)
     miniMod.miniAllStrings()
