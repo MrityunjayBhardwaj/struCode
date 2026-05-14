@@ -14,7 +14,12 @@ import {
   setMusicalTimelineSubRowHeight,
   getEditorTheme,
   setEditorTheme,
+  getTierFlags,
+  setTierFlag,
+  listTiers,
   type EditorTheme,
+  type TierFlags,
+  type TierName,
 } from "@stave/editor";
 
 interface Props {
@@ -28,6 +33,111 @@ const THEME_OPTIONS: { value: EditorTheme; label: string }[] = [
   { value: "system", label: "System" },
 ];
 
+// Phase 20-14 β-3 — Strudel modules tier UI. Only MIDI is wired today
+// (β-4 calls `enableWebMidi()` based on `tierFlags.midi`). The other 7
+// ship as disabled-scaffolded toggles. Each row carries:
+//   - a one-sentence description for what the module DOES
+//   - the follow-up issue number for the wiring work (rendered into the
+//     "Module wiring planned" tooltip)
+//   - an optional size hint (csound + tidal — large dynamic imports)
+//
+// Rationale for ship-disabled-not-hidden (per 20-14-PLAN.md §2 "tier-flag
+// UI honesty"): the schema IS the contract. Showing the disabled toggles
+// signals "Stave knows about csound, just not wired yet" to musicians
+// coming from strudel.cc, which prevents the worse failure mode of users
+// assuming Stave silently dropped a tier.
+interface TierRow {
+  name: TierName;
+  label: string;
+  description: string;
+  /** GitHub issue number for the wiring follow-up. */
+  issueNumber: number | null;
+  /** Only true for MIDI in β-3. The other 7 render disabled. */
+  interactive: boolean;
+  /** Extra caption for heavy modules (csound, tidal). */
+  sizeHint?: string;
+}
+
+const TIER_ROWS: TierRow[] = [
+  {
+    name: "midi",
+    label: "MIDI",
+    description: "Send notes to external MIDI devices.",
+    issueNumber: null,
+    interactive: true,
+  },
+  {
+    name: "csound",
+    label: "Csound",
+    description: "Csound synthesis (loadCsound template).",
+    issueNumber: 124,
+    interactive: false,
+    sizeHint: "Will load ~6 MB when enabled.",
+  },
+  {
+    name: "tidal",
+    label: "TidalCycles",
+    description: "Haskell-via-WASM TidalCycles interop.",
+    issueNumber: 125,
+    interactive: false,
+    sizeHint: "Will load ~6 MB when enabled.",
+  },
+  {
+    name: "osc",
+    label: "OSC",
+    description: "Send OSC messages (needs SuperCollider backend).",
+    issueNumber: 126,
+    interactive: false,
+  },
+  {
+    name: "serial",
+    label: "Serial",
+    description: "WebSerial output to microcontrollers / Eurorack.",
+    issueNumber: 127,
+    interactive: false,
+  },
+  {
+    name: "gamepad",
+    label: "Gamepad",
+    description: "Read gamepad input as pattern values.",
+    issueNumber: 128,
+    interactive: false,
+  },
+  {
+    name: "motion",
+    label: "Motion",
+    description: "DeviceMotion (accelerometer / gyro) input.",
+    issueNumber: 129,
+    interactive: false,
+  },
+  {
+    name: "mqtt",
+    label: "MQTT",
+    description: "MQTT broker pub/sub.",
+    issueNumber: 130,
+    interactive: false,
+  },
+];
+
+// Schema-vs-UI safety: if listTiers() ever drifts from TIER_ROWS, the
+// app warns at dev time. Mismatched contract surface is a class of bug
+// we want to catch immediately, not on a reload that drops a row.
+function assertTierSchemaCoverage(): void {
+  if (typeof window === "undefined") return;
+  const declared = new Set(listTiers());
+  const wired = new Set(TIER_ROWS.map((r) => r.name));
+  for (const n of declared) {
+    if (!wired.has(n)) {
+      console.warn(`[EditorSettingsModal] tier "${n}" missing from TIER_ROWS — UI will not surface it.`);
+    }
+  }
+  for (const n of wired) {
+    if (!declared.has(n)) {
+      console.warn(`[EditorSettingsModal] tier "${n}" is in TIER_ROWS but not in listTiers() schema.`);
+    }
+  }
+}
+
 export function EditorSettingsModal({ open, onClose }: Props) {
   const [fontSize, setFontSize] = useState(14);
   const [minimap, setMinimap] = useState(false);
@@ -35,6 +145,11 @@ export function EditorSettingsModal({ open, onClose }: Props) {
   const [vizActionSize, setVizActionSize] = useState(11);
   const [subRowHeight, setSubRowHeight] = useState(18);
   const [theme, setTheme] = useState<EditorTheme>("dark");
+  // Phase 20-14 β-3 — Strudel tier flags. Mid-session toggle changes are
+  // NOT observed by the engine until reload (the engine reads tierFlags
+  // ONCE at init per α-5); the caption below the section makes that
+  // contract visible.
+  const [tierFlags, setTierFlagsState] = useState<TierFlags | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -44,6 +159,8 @@ export function EditorSettingsModal({ open, onClose }: Props) {
     setVizActionSize(getInlineVizActionSize());
     setSubRowHeight(getMusicalTimelineSubRowHeight());
     setTheme(getEditorTheme());
+    setTierFlagsState(getTierFlags());
+    assertTierSchemaCoverage();
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -147,6 +264,52 @@ export function EditorSettingsModal({ open, onClose }: Props) {
               ))}
             </select>
           </Row>
+          {/* Phase 20-14 β-3 — Strudel modules tier UI. MIDI is the only
+              wired row in β-3; the other 7 are disabled scaffolds, one
+              follow-up issue per row (see TIER_ROWS at top of file). */}
+          <div style={s.sectionDivider} />
+          <div style={s.sectionTitle}>Strudel modules</div>
+          {TIER_ROWS.map((row) => {
+            const checked = tierFlags?.[row.name] ?? false;
+            const disabledTooltip = row.issueNumber
+              ? `Module wiring planned — see issue #${row.issueNumber}.`
+              : "Module wiring planned.";
+            return (
+              <Row key={row.name} label={row.label}>
+                <label
+                  style={{
+                    ...s.switchLabel,
+                    cursor: row.interactive ? "pointer" : "not-allowed",
+                    opacity: row.interactive ? 1 : 0.55,
+                  }}
+                  title={row.interactive ? undefined : disabledTooltip}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={!row.interactive}
+                    onChange={() => {
+                      if (!row.interactive) return;
+                      const next = !checked;
+                      setTierFlag(row.name, next);
+                      setTierFlagsState((prev) =>
+                        prev ? { ...prev, [row.name]: next } : prev,
+                      );
+                    }}
+                  />
+                  <span style={s.tierDesc}>
+                    {row.description}
+                    {row.sizeHint ? (
+                      <span style={s.tierSizeHint}> {row.sizeHint}</span>
+                    ) : null}
+                  </span>
+                </label>
+              </Row>
+            );
+          })}
+          <div style={s.tierFootnote}>
+            Changes take effect when you reload the page.
+          </div>
         </div>
       </div>
     </div>
@@ -196,5 +359,19 @@ const s: Record<string, React.CSSProperties> = {
     background: "var(--bg-active)", border: "1px solid var(--border-strong)", borderRadius: 4,
     color: "var(--text-primary)", padding: "4px 10px", fontSize: 12,
     cursor: "pointer", fontFamily: "inherit", minWidth: 140,
+  },
+  // β-3 — tier UI styling.
+  sectionDivider: {
+    height: 1, background: "var(--border-subtle)", margin: "8px 0 4px 0",
+  },
+  sectionTitle: {
+    fontSize: 12, fontWeight: 600, color: "var(--text-primary)",
+    marginBottom: 4,
+  },
+  tierDesc: { fontSize: 11, color: "var(--text-secondary)" },
+  tierSizeHint: { color: "var(--text-tertiary)" },
+  tierFootnote: {
+    fontSize: 11, color: "var(--text-tertiary)", marginTop: 4,
+    fontStyle: "italic",
   },
 };
