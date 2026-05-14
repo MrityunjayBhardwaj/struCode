@@ -181,6 +181,94 @@ export class StrudelEngine implements LiveCodingEngine {
     // Worklet-based effects (crush, coarse, distort, djf, bytebeat) are loaded by initAudio() above.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (webaudioMod as any).samples('github:tidalcycles/Dirt-Samples/master')
+
+    // Phase 20-14 α-2: mirror upstream `prebake.mjs` sample-manifest fetches.
+    // Upstream b-cdn manifests unlock `s("piano")` (Salamander), `.bank("tr909")`
+    // (tidal-drum-machines), uzu-drumkit/wavetables, mridangam, VCSL orchestra,
+    // and the inline Dirt-Samples bank set (casio/crow/insect/wind/jazz/metal/
+    // east/space/numbers/num). See upstream prebake.mjs lines 25-155 at SHA
+    // f73b395648645aabe699f91ba0989f35a6fd8a3c.
+    //
+    // Each samples() call is wrapped in try/catch so a b-cdn outage does NOT
+    // break engine boot — the previously-loaded Dirt-Samples + synths still
+    // serve unaffected. Documented as accepted risk in 20-14-PLAN.md §6.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const samplesFn = (webaudioMod as any).samples
+    const baseCDN = 'https://strudel.b-cdn.net'  // upstream prebake.mjs:11
+    const safeSamples = async (label: string, fn: () => Promise<unknown>) => {
+      try { await fn() }
+      catch (e) {
+        // Boot-time soft failure: log + continue. Bd/hh/etc. still work.
+        console.warn(`[StrudelEngine] sample manifest "${label}" failed to load; continuing without it.`, e)
+      }
+    }
+    await Promise.all([
+      // Salamander piano — unlocks `s("piano")`. Closes the symptom of issue #110.
+      safeSamples('piano', () => samplesFn(`${baseCDN}/piano.json`, `${baseCDN}/piano/`, { prebake: true })),
+      // VCSL orchestral library (CC0).
+      safeSamples('vcsl', () => samplesFn(`${baseCDN}/vcsl.json`, `${baseCDN}/VCSL/`, { prebake: true })),
+      // tidal-drum-machines — unlocks `.bank("tr909")`, `.bank("RolandTR808")`, etc.
+      safeSamples('tidal-drum-machines', () => samplesFn(`${baseCDN}/tidal-drum-machines.json`, `${baseCDN}/tidal-drum-machines/machines/`, { prebake: true, tag: 'drum-machines' })),
+      // uzu-drumkit — extra drum banks.
+      safeSamples('uzu-drumkit', () => samplesFn(`${baseCDN}/uzu-drumkit.json`, `${baseCDN}/uzu-drumkit/`, { prebake: true, tag: 'drum-machines' })),
+      // uzu-wavetables — wavetable synth fodder.
+      safeSamples('uzu-wavetables', () => samplesFn(`${baseCDN}/uzu-wavetables.json`, `${baseCDN}/uzu-wavetables/`, { prebake: true })),
+      // mridangam — percussion bank.
+      safeSamples('mridangam', () => samplesFn(`${baseCDN}/mridangam.json`, `${baseCDN}/mrid/`, { prebake: true, tag: 'drum-machines' })),
+      // Inline Dirt-Samples categories (casio/crow/insect/wind/jazz/metal/east/
+      // space/numbers/num) served from b-cdn. Upstream prebake.mjs:42-155.
+      // The earlier `github:tidalcycles/Dirt-Samples/master` call (above) registers
+      // bd/hh/sd/etc.; soundMap.setKey overwrites on duplicate so this call wins
+      // for shared keys — matches upstream behavior (RESEARCH §1c).
+      safeSamples('dirt-extras', () => samplesFn({
+        casio: ['casio/high.wav', 'casio/low.wav', 'casio/noise.wav'],
+        crow: ['crow/000_crow.wav', 'crow/001_crow2.wav', 'crow/002_crow3.wav', 'crow/003_crow4.wav'],
+        insect: [
+          'insect/000_everglades_conehead.wav',
+          'insect/001_robust_shieldback.wav',
+          'insect/002_seashore_meadow_katydid.wav',
+        ],
+        wind: [
+          'wind/000_wind1.wav', 'wind/001_wind10.wav', 'wind/002_wind2.wav', 'wind/003_wind3.wav',
+          'wind/004_wind4.wav', 'wind/005_wind5.wav', 'wind/006_wind6.wav', 'wind/007_wind7.wav',
+          'wind/008_wind8.wav', 'wind/009_wind9.wav',
+        ],
+        jazz: [
+          'jazz/000_BD.wav', 'jazz/001_CB.wav', 'jazz/002_FX.wav', 'jazz/003_HH.wav',
+          'jazz/004_OH.wav', 'jazz/005_P1.wav', 'jazz/006_P2.wav', 'jazz/007_SN.wav',
+        ],
+        metal: [
+          'metal/000_0.wav', 'metal/001_1.wav', 'metal/002_2.wav', 'metal/003_3.wav',
+          'metal/004_4.wav', 'metal/005_5.wav', 'metal/006_6.wav', 'metal/007_7.wav',
+          'metal/008_8.wav', 'metal/009_9.wav',
+        ],
+        east: [
+          'east/000_nipon_wood_block.wav', 'east/001_ohkawa_mute.wav', 'east/002_ohkawa_open.wav',
+          'east/003_shime_hi.wav', 'east/004_shime_hi_2.wav', 'east/005_shime_mute.wav',
+          'east/006_taiko_1.wav', 'east/007_taiko_2.wav', 'east/008_taiko_3.wav',
+        ],
+        space: [
+          'space/000_0.wav', 'space/001_1.wav', 'space/002_11.wav', 'space/003_12.wav',
+          'space/004_13.wav', 'space/005_14.wav', 'space/006_15.wav', 'space/007_16.wav',
+          'space/008_17.wav', 'space/009_18.wav', 'space/010_2.wav', 'space/011_3.wav',
+          'space/012_4.wav', 'space/013_5.wav', 'space/014_6.wav', 'space/015_7.wav',
+          'space/016_8.wav', 'space/017_9.wav',
+        ],
+        numbers: [
+          'numbers/0.wav', 'numbers/1.wav', 'numbers/2.wav', 'numbers/3.wav', 'numbers/4.wav',
+          'numbers/5.wav', 'numbers/6.wav', 'numbers/7.wav', 'numbers/8.wav',
+        ],
+        num: [
+          'num/00.wav', 'num/01.wav', 'num/02.wav', 'num/03.wav', 'num/04.wav', 'num/05.wav',
+          'num/06.wav', 'num/07.wav', 'num/08.wav', 'num/09.wav', 'num/10.wav', 'num/11.wav',
+          'num/12.wav', 'num/13.wav', 'num/14.wav', 'num/15.wav', 'num/16.wav', 'num/17.wav',
+          'num/18.wav', 'num/19.wav', 'num/20.wav',
+        ],
+      }, `${baseCDN}/Dirt-Samples/`, { prebake: true })),
+    ])
+
+    // α-3 lands here: aliasBank(`${baseCDN}/tidal-drum-machines-alias.json`)
+
     // Snapshot all registered sound names (synths + Dirt-Samples) for editor autocompletion.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const soundMapData: Record<string, unknown> = (webaudioMod as any).soundMap?.get() ?? {}
