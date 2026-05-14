@@ -6,7 +6,8 @@
     "dev": "turbo run dev",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "parity:refresh": "node packages/app/scripts/parity-refresh.mjs"
   },
   "devDependencies": {
     "turbo": "^2.0.0",
