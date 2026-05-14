@@ -267,7 +267,34 @@ export class StrudelEngine implements LiveCodingEngine {
       }, `${baseCDN}/Dirt-Samples/`, { prebake: true })),
     ])
 
-    // α-3 lands here: aliasBank(`${baseCDN}/tidal-drum-machines-alias.json`)
+    // Phase 20-14 α-3: aliasBank() registers 69 bank-name aliases (e.g.
+    //   RolandTR909 → 909, KorgKR55 → KR55) so users can spell drum-machine
+    //   banks the way upstream tunes do. See upstream prebake.mjs:158.
+    //
+    // Merge-vs-replace semantics (RESEARCH §3 open question #3):
+    //   superdough/superdough.mjs:86-117 (aliasBankMap) reads the current
+    //   soundMap.get() dictionary, MUTATES it in place to add aliased keys
+    //   (e.g. `909_bd` aliased from `RolandTR909_bd`), then calls
+    //   soundMap.set({...soundDictionary}). That spread is a SHALLOW MERGE
+    //   of the same dict back onto itself plus the new alias keys — so the
+    //   post-aliasBank count is monotonically ≥ the pre-count. We log
+    //   BEFORE/AFTER to make the contract observable; α-7 SUMMARY pins this.
+    //
+    // Wrapped in try/catch for the same boot-resilience reason as α-2.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const soundMapRef = (webaudioMod as any).soundMap
+    const preAliasCount = soundMapRef?.get ? Object.keys(soundMapRef.get()).length : 0
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (webaudioMod as any).aliasBank(`${baseCDN}/tidal-drum-machines-alias.json`)
+    } catch (e) {
+      console.warn('[StrudelEngine] aliasBank fetch failed; .bank() aliases unavailable.', e)
+    }
+    const postAliasCount = soundMapRef?.get ? Object.keys(soundMapRef.get()).length : 0
+    // Dev-only observation log — α-7 SUMMARY cites this for the merge-vs-replace
+    // gate. Drop noisily if a future review wants quieter boot — keep the
+    // observation visible until structural parity ships.
+    console.log(`[StrudelEngine] aliasBank: soundMap keys ${preAliasCount} → ${postAliasCount} (Δ ${postAliasCount - preAliasCount}; expect non-negative)`)
 
     // Snapshot all registered sound names (synths + Dirt-Samples) for editor autocompletion.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
