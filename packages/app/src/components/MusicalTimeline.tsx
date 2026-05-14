@@ -602,15 +602,20 @@ export function MusicalTimeline(
     lastSourceRef.current = snapshot.source
   }
 
-  // ── Transport-stop reset (Phase 20-12.1) ───────────────────────────────
-  // On the non-null → null edge of currentCycle (transport just stopped),
-  // clear slotMapRef so the next play snaps to the current IR's tracks.
-  // D-04's "stable across snapshots" is scoped to a single transport
-  // session; this edge ends the session. See FOLLOWUPS.md#F-1. Also clear
-  // hasHadEventsRef so commented rows that ghosted during the prior
-  // session don't carry their visibility flag into the next.
+  // ── Transport transition reset (Phase 20-12.1 + follow-up) ─────────────
+  // Reset slotMapRef + hasHadEventsRef on EITHER edge of the play/stop
+  // transition:
+  //   - non-null → null (stop): so previously-active rows don't carry
+  //     into a future session.
+  //   - null → non-null (play): so code edited while stopped takes effect
+  //     on the next play. Without this, after stop → edit → play, the
+  //     slot map still holds the prior session's seeding and the timeline
+  //     shows the stale row set until the next stop+play cycle.
+  // Hot-reload while playing (Cmd+Enter mid-play) is NOT a transition
+  // edge — currentCycle stays non-null — so D-04's audition workflow
+  // (ghost in place during live edit) is preserved.
   const cycleIsNull = currentCycle === null
-  if (!prevCycleNullRef.current && cycleIsNull) {
+  if (prevCycleNullRef.current !== cycleIsNull) {
     slotMapRef.current = new Map()
     hasHadEventsRef.current = new Set()
   }
