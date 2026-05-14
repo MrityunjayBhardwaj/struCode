@@ -365,6 +365,13 @@ export class StrudelEngine implements LiveCodingEngine {
       },
     })
 
+    // Phase 20-14 α-4: vendor upstream `piano.mjs` chain method. Side-effect
+    // import — attaches Pattern.prototype.piano once at boot. evalScope
+    // populated Pattern on globalThis ~200 lines above, so by here the
+    // prototype exists to extend. NOT re-imported per evaluate (UV2 / P2
+    // safe — `.piano` is not in the injectPatternMethods overwrite list).
+    await import('./vendored/piano')
+
     this.initialized = true
   }
 
