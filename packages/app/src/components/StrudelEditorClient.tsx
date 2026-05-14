@@ -29,6 +29,7 @@ import {
   emitLog,
   emitFixed,
   formatFriendlyError,
+  resolveAlias,
   collectCycles,
   runPasses,
   publishIRSnapshot,
@@ -307,7 +308,21 @@ export default function StrudelEditorClient({
       const fileNow = getFile(fileId);
       const runtimeId: RuntimeId = fileNow?.language === "sonicpi" ? "sonicpi" : "strudel";
       const index: DocsIndex = runtimeId === "sonicpi" ? SONICPI_DOCS_INDEX : STRUDEL_DOCS_INDEX;
-      const parts = formatFriendlyError(err, runtimeId, { index });
+      // Phase 20-14 β-5 — pull the per-eval alias resolutions off the
+      // engine instance (StrudelEngine-only — duck-typed so non-Strudel
+      // engines harmlessly pass `undefined`). The friendly-error builder
+      // appends "tried alias `kick` → `bd`" on the resolved path and
+      // "alias map: no entry for `xyz`" on the miss path.
+      const engineWithAlias = engine as unknown as {
+        getLastAliasResolutions?: () => ReadonlyArray<{ from: string; to: string }>;
+      };
+      const aliasResolutions = engineWithAlias.getLastAliasResolutions?.();
+      const parts = formatFriendlyError(err, runtimeId, {
+        index,
+        aliasContext: runtimeId === "strudel"
+          ? { resolutions: aliasResolutions, lookupAlias: resolveAlias }
+          : undefined,
+      });
       // Strudel routes user code through `@strudel/transpiler`, which
       // rewrites `$:` sugar into method calls and wraps everything in
       // an async IIFE. The resulting wrapper offset is NOT constant —

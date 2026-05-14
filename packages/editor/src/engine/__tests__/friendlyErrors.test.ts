@@ -6,6 +6,7 @@ import {
   extractReferenceIdentifier,
   formatFriendlyError,
   parseStackLocation,
+  buildAliasSuffix,
 } from '../friendlyErrors'
 
 const FAKE_INDEX: DocsIndex = {
@@ -397,5 +398,84 @@ describe('formatFriendlyError — commonMistakes cascade', () => {
     expect(r.line).toBe(9)
     expect(r.column).toBe(1)
     expect(r.stack).toContain('Scheduler is not ready')
+  })
+})
+
+// Phase 20-14 β-5 — alias-resolution suffix on friendly errors.
+describe('buildAliasSuffix', () => {
+  it('returns empty when no aliasContext', () => {
+    expect(buildAliasSuffix(null, undefined)).toBe('')
+  })
+
+  it('returns empty when context is empty (no resolutions, no missing name)', () => {
+    expect(buildAliasSuffix(null, {})).toBe('')
+  })
+
+  it('surfaces a single resolution', () => {
+    const s = buildAliasSuffix(null, {
+      resolutions: [{ from: 'kick', to: 'bd' }],
+    })
+    expect(s).toBe(' (tried alias `kick` → `bd`)')
+  })
+
+  it('deduplicates repeated resolutions', () => {
+    const s = buildAliasSuffix(null, {
+      resolutions: [
+        { from: 'kick', to: 'bd' },
+        { from: 'kick', to: 'bd' },
+        { from: 'snare', to: 'sd' },
+      ],
+    })
+    expect(s).toBe(' (tried alias `kick` → `bd`, `snare` → `sd`)')
+  })
+
+  it('miss path — alias map has no entry for the missing name', () => {
+    const s = buildAliasSuffix('xyz', {
+      lookupAlias: (_n: string) => undefined,
+    })
+    expect(s).toBe(' (alias map: no entry for `xyz`)')
+  })
+
+  it('miss path — alias map has entry but target also not loaded', () => {
+    const s = buildAliasSuffix('bell', {
+      lookupAlias: (n: string) => (n === 'bell' ? 'cb' : undefined),
+    })
+    expect(s).toBe(
+      ' (alias map: `bell` → `cb` (but `cb` is not loaded))',
+    )
+  })
+
+  it('combines resolved and miss paths in one suffix', () => {
+    const s = buildAliasSuffix('xyz', {
+      resolutions: [{ from: 'kick', to: 'bd' }],
+      lookupAlias: () => undefined,
+    })
+    expect(s).toBe(
+      ' (tried alias `kick` → `bd`; alias map: no entry for `xyz`)',
+    )
+  })
+})
+
+describe('formatFriendlyError — alias suffix integration', () => {
+  it('appends alias suffix to "sound X not found" miss', () => {
+    const err = new Error('sound xyz not found! Is it loaded?')
+    const r = formatFriendlyError(err, 'strudel', {
+      aliasContext: { lookupAlias: () => undefined },
+    })
+    expect(r.message).toContain('alias map: no entry for `xyz`')
+  })
+
+  it('appends resolutions even when message is non-sound-related', () => {
+    const err = new Error('Something else went wrong')
+    const r = formatFriendlyError(err, 'strudel', {
+      aliasContext: { resolutions: [{ from: 'kick', to: 'bd' }] },
+    })
+    expect(r.message).toContain('tried alias `kick` → `bd`')
+  })
+
+  it('does NOT touch the message when aliasContext is absent', () => {
+    const err = new Error('sound xyz not found')
+    const r = formatFriendlyError(err, 'strudel', {})
+    expect(r.message).toBe('sound xyz not found')
   })
 })

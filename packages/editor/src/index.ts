@@ -361,7 +361,13 @@ export {
   extractReferenceIdentifier,
   formatFriendlyError,
   parseStackLocation,
+  buildAliasSuffix,
 } from './engine/friendlyErrors'
+
+// Phase 20-14 β-1 — bare-name sound alias resolver. The app's friendly-
+// error builder reads this on the miss path so it can distinguish "alias
+// map: no entry" from "alias map: target not loaded."
+export { resolveAlias, SOUND_ALIASES } from './engine/aliases'
 
 // DocsIndex exports so the app can pass runtime indexes into the friendly
 // error formatter without reaching through internal paths.

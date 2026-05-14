@@ -202,6 +202,80 @@ export interface FormatOptions {
    * Caller is free to omit it; `kind: 'code'` detectors simply won't fire.
    */
   codeContext?: string
+  /**
+   * Phase 20-14 β-5 — bare-name sound alias context. Distinct from the
+   * doc-level `detect.alias` CommonMistake field (which is per-doc fuzzy
+   * suggestion); this is the runtime alias-resolution layer that
+   * `wrappedOutput` operates.
+   *
+   * - `resolutions`: ordered list of alias rewrites that fired during the
+   *   current evaluate() window. Populated from
+   *   `StrudelEngine.getLastAliasResolutions()`. The friendly-error path
+   *   appends `(tried alias "kick" → "bd")` to the message when populated
+   *   on the same error window.
+   * - `lookupAlias`: project-injected resolver (today, `resolveAlias` from
+   *   `./aliases`). The miss path uses this to distinguish "the alias
+   *   map has no entry for `xyz`" from "we tried `xyz → target` but
+   *   `target` is not loaded either."
+   */
+  aliasContext?: {
+    resolutions?: ReadonlyArray<{ from: string; to: string }>
+    lookupAlias?: (rawS: string) => string | undefined
+  }
+}
+
+// Phase 20-14 β-5 — "sound X not found" pattern matchers. superdough throws
+// `sound bell not found! Is it loaded?` (verified at
+// superdough/superdough.mjs:167 in upstream). Both quoted and unquoted forms
+// observed across engine versions.
+const SOUND_NOT_FOUND_PATTERNS: RegExp[] = [
+  /sound\s+["']?([\w.-]+)["']?\s+not\s+found/i,
+]
+
+function extractMissingSoundName(rawMessage: string): string | null {
+  for (const re of SOUND_NOT_FOUND_PATTERNS) {
+    const m = re.exec(rawMessage)
+    if (m && m[1]) return m[1]
+  }
+  return null
+}
+
+/**
+ * Build the alias-resolution suffix appended to "sound not found" friendly
+ * errors. Returns an empty string when there's nothing to say. Exported
+ * for unit testing — pure function over the inputs.
+ */
+export function buildAliasSuffix(
+  missingName: string | null,
+  ctx: FormatOptions['aliasContext'],
+): string {
+  if (!ctx) return ''
+  const parts: string[] = []
+  // Resolved path — surface any alias rewrites that fired on the same
+  // evaluate window. Deduplicate `from` so a hot pattern firing 10 cycles
+  // of kick→bd doesn't drown the message.
+  if (ctx.resolutions && ctx.resolutions.length > 0) {
+    const seen = new Set<string>()
+    const lines: string[] = []
+    for (const r of ctx.resolutions) {
+      const key = `${r.from}→${r.to}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      lines.push(`\`${r.from}\` → \`${r.to}\``)
+    }
+    parts.push(`tried alias ${lines.join(', ')}`)
+  }
+  // Miss path — when we know which name was missing, say whether the alias
+  // map has an entry for it (and the target was also missing) vs no entry.
+  if (missingName && ctx.lookupAlias) {
+    const target = ctx.lookupAlias(missingName)
+    if (target) {
+      parts.push(`alias map: \`${missingName}\` → \`${target}\` (but \`${target}\` is not loaded)`)
+    } else {
+      parts.push(`alias map: no entry for \`${missingName}\``)
+    }
+  }
+  return parts.length > 0 ? ` (${parts.join('; ')})` : ''
 }
 
 /**
@@ -334,6 +408,26 @@ export function formatFriendlyError(
   const loc = parseStackLocation(err)
   const identifier = extractReferenceIdentifier(err)
 
+  // Phase 20-14 β-5 — alias-resolution suffix.
+  //
+  // The `aliasContext` is the runtime sound-alias layer (`kick → bd`) and
+  // is ORTHOGONAL to the per-doc `detect.alias` CommonMistake field at
+  // line ~240. The two never collide structurally:
+  //   - detect.alias matches a user's typed identifier against a single
+  //     known-misspelling alias from a curated doc entry.
+  //   - aliasContext consults the runtime-wide bare-sample-name map and
+  //     surfaces the result of an attempted hap rewrite.
+  //
+  // We compute the suffix once and append it to whichever message path
+  // fires below. Missing-sound name extraction targets superdough's
+  // "sound X not found! Is it loaded?" throw — when the rawMessage is
+  // about something else, missingName is null and only the "resolutions"
+  // path contributes.
+  const missingName = extractMissingSoundName(rawMessage)
+  const aliasSuffix = buildAliasSuffix(missingName, options.aliasContext)
+  const appendAlias = (msg: string): string =>
+    aliasSuffix ? `${msg}${aliasSuffix}` : msg
+
   // 1. Curated hints (commonMistakes + globalMistakes) — fire first.
   //    Higher specificity than algorithmic fuzzy match: when the author
   //    has hand-written the right hint for this case, it beats the
@@ -365,7 +459,7 @@ export function formatFriendlyError(
           }
         : undefined
       return {
-        message: hit.mistake.hint,
+        message: appendAlias(hit.mistake.hint),
         suggestion,
         stack,
         line: loc?.line,
@@ -393,7 +487,7 @@ export function formatFriendlyError(
         description: hit?.description,
       }
       return {
-        message: `\`${identifier}\` is not defined. Did you mean \`${matches[0].name}\`?`,
+        message: appendAlias(`\`${identifier}\` is not defined. Did you mean \`${matches[0].name}\`?`),
         suggestion,
         stack,
         line: loc?.line,
@@ -401,7 +495,7 @@ export function formatFriendlyError(
       }
     }
     return {
-      message: `\`${identifier}\` is not defined.`,
+      message: appendAlias(`\`${identifier}\` is not defined.`),
       stack,
       line: loc?.line,
       column: loc?.column,
@@ -410,7 +504,7 @@ export function formatFriendlyError(
 
   // 3. Non-reference, no curated hint — raw message.
   return {
-    message: rawMessage || 'Unknown error',
+    message: appendAlias(rawMessage || 'Unknown error'),
     stack,
     line: loc?.line,
     column: loc?.column,
