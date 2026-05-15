@@ -580,6 +580,48 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
 ]
 `;
 
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-G2-setCpm-camel — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Stack",
+    "text": "stack(s("bd"), s("hh*4"))",
+  },
+  {
+    "tag": "Play",
+    "text": "bd",
+  },
+  {
+    "tag": "Fast",
+    "text": "*4",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+]
+`;
+
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-G2-setCps-camel — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Stack",
+    "text": "stack(s("bd"), s("hh*4"))",
+  },
+  {
+    "tag": "Play",
+    "text": "bd",
+  },
+  {
+    "tag": "Fast",
+    "text": "*4",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+]
+`;
+
 exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-G2-setcpm — loc→source-slice map is stable & in-bounds 1`] = `
 [
   {

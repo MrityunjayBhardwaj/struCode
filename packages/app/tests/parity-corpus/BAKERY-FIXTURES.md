@@ -26,6 +26,25 @@ opaque `Code(BARE-FALLBACK)`).
 | `bakery-G5-named-label.strudel` | G5 — `name: pattern` named-label syntax | [#138](https://github.com/MrityunjayBhardwaj/stave-code/issues/138) | issue #138 minimal repro | `Track(trackId='p1', …)` structured |
 | `bakery-132-recursive-args.strudel` | #132 — recursive mini+chain inside `note`/`n`/`s` args | [#132](https://github.com/MrityunjayBhardwaj/stave-code/issues/132) · arpoon | issue #132 minimal repro (β-2 verify form) | structured `Fast`/`LastOf` over `Play`, not Code |
 
+### Per-setter G2 fixtures (V-3 — α-1 → V-3 contract)
+
+The α-1 commit body (`a2b607c`) is the authoritative input contract: the
+tempo-setter tokens added to `PRELUDE_CALL_RE` beyond the pre-existing
+`setcps` are **`setcpm`, `setCpm`, `setCps`** (full recognised family
+`{setcps, setCps, setcpm, setCpm}`). V-3 reads that list verbatim from the
+commit body and does **NOT** re-derive it via a fresh upstream audit. One
+fixture per added setter proves the setter line is skipped AND the
+following pattern parses structurally (R2 anti-drift):
+
+| Fixture | Setter | Covered by |
+|---|---|---|
+| `bakery-G2-setcpm.strudel` | `setcpm` | the G2 repro fixture above (#135) |
+| `bakery-G2-setCpm-camel.strudel` | `setCpm` | V-3 (case-insensitive FS → `-camel` slug, not a case-only filename) |
+| `bakery-G2-setCps-camel.strudel` | `setCps` | V-3 |
+
+(`setcps` was already present pre-α-1 — covered by the 20-14 corpus — so
+it gets no new fixture; the contract is "one per ADDED setter".)
+
 ## License
 
 Each repro is a 1–3 line minimal distillation authored for regression

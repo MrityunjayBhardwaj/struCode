@@ -1085,6 +1085,80 @@ exports[`strudel.cc parity corpus — structural IR shape > bakery-G1-let-bindin
 }
 `;
 
+exports[`strudel.cc parity corpus — structural IR shape > bakery-G2-setCpm-camel parses to a stable IR shape 1`] = `
+{
+  "body": {
+    "tag": "Stack",
+    "tracks": [
+      {
+        "duration": 1,
+        "note": "bd",
+        "params": {
+          "gain": 1,
+          "s": "bd",
+          "velocity": 1,
+        },
+        "tag": "Play",
+      },
+      {
+        "body": {
+          "duration": 1,
+          "note": "hh",
+          "params": {
+            "gain": 1,
+            "s": "hh",
+            "velocity": 1,
+          },
+          "tag": "Play",
+        },
+        "factor": 4,
+        "tag": "Fast",
+      },
+    ],
+    "userMethod": "stack",
+  },
+  "tag": "Track",
+  "trackId": "d1",
+}
+`;
+
+exports[`strudel.cc parity corpus — structural IR shape > bakery-G2-setCps-camel parses to a stable IR shape 1`] = `
+{
+  "body": {
+    "tag": "Stack",
+    "tracks": [
+      {
+        "duration": 1,
+        "note": "bd",
+        "params": {
+          "gain": 1,
+          "s": "bd",
+          "velocity": 1,
+        },
+        "tag": "Play",
+      },
+      {
+        "body": {
+          "duration": 1,
+          "note": "hh",
+          "params": {
+            "gain": 1,
+            "s": "hh",
+            "velocity": 1,
+          },
+          "tag": "Play",
+        },
+        "factor": 4,
+        "tag": "Fast",
+      },
+    ],
+    "userMethod": "stack",
+  },
+  "tag": "Track",
+  "trackId": "d1",
+}
+`;
+
 exports[`strudel.cc parity corpus — structural IR shape > bakery-G2-setcpm parses to a stable IR shape 1`] = `
 {
   "body": {
