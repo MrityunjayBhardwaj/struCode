@@ -4751,13 +4751,13 @@ function parseRoot(root, baseOffset = 0, isSampleKey, bindings) {
     const innerOffset = baseOffset + leadingWs + btIdx + 1;
     return backtickInnerToIR(noteBtMatch[1], false, innerOffset);
   }
-  const sMatch = trimmed.match(/^s\s*\(\s*"([^"]*)"\s*\)/);
+  const sMatch = trimmed.match(/^(?:s|sound)\s*\(\s*"([^"]*)"\s*\)/);
   if (sMatch) {
     const quoteIdx = sMatch[0].indexOf('"');
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1;
     return parseMini(sMatch[1], true, innerOffset);
   }
-  const sBtMatch = trimmed.match(/^s\s*\(\s*`([^`]*)`\s*\)/);
+  const sBtMatch = trimmed.match(/^(?:s|sound)\s*\(\s*`([^`]*)`\s*\)/);
   if (sBtMatch) {
     const btIdx = sBtMatch[0].indexOf("`");
     const innerOffset = baseOffset + leadingWs + btIdx + 1;
@@ -4775,7 +4775,7 @@ function parseRoot(root, baseOffset = 0, isSampleKey, bindings) {
     const innerOffset = baseOffset + leadingWs + btIdx + 1;
     return backtickInnerToIR(miniBtMatch[1], false, innerOffset);
   }
-  const looseMatch = trimmed.match(/^(note|n|s|mini)\s*\(/);
+  const looseMatch = trimmed.match(/^(note|n|s|sound|mini)\s*\(/);
   if (looseMatch) {
     const fnName = looseMatch[1];
     const openParenIdx = trimmed.indexOf("(", looseMatch[0].length - 1);
@@ -4788,7 +4788,7 @@ function parseRoot(root, baseOffset = 0, isSampleKey, bindings) {
       if (!isPlainQuoted && !isPlainBacktick && innerTrimmed.length > 0) {
         const innerLeadingWs = inner.length - inner.trimStart().length;
         const innerAbsOffset = baseOffset + leadingWs + openParenIdx + 1 + innerLeadingWs;
-        const callerIsSample = fnName === "s";
+        const callerIsSample = fnName === "s" || fnName === "sound";
         const innerIR = parseExpression(
           innerTrimmed,
           innerAbsOffset,

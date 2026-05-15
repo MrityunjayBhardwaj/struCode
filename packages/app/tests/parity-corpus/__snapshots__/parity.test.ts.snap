@@ -895,6 +895,558 @@ exports[`strudel.cc parity corpus — structural IR shape > arpoon parses to a s
 }
 `;
 
+exports[`strudel.cc parity corpus — structural IR shape > bakery-132-recursive-args parses to a stable IR shape 1`] = `
+{
+  "body": {
+    "code": "",
+    "lang": "strudel",
+    "tag": "Code",
+    "via": {
+      "args": "2",
+      "inner": {
+        "code": "",
+        "lang": "strudel",
+        "tag": "Code",
+        "via": {
+          "args": "4, fast(2)",
+          "inner": {
+            "body": {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "duration": 0.25,
+                      "note": "0",
+                      "params": {
+                        "gain": 1,
+                        "velocity": 1,
+                      },
+                      "tag": "Play",
+                    },
+                    {
+                      "duration": 0.25,
+                      "note": "3",
+                      "params": {
+                        "gain": 1,
+                        "velocity": 1,
+                      },
+                      "tag": "Play",
+                    },
+                  ],
+                  "tag": "Seq",
+                },
+                {
+                  "duration": 0.25,
+                  "note": "2",
+                  "params": {
+                    "gain": 1,
+                    "velocity": 1,
+                  },
+                  "tag": "Play",
+                },
+                {
+                  "children": [
+                    {
+                      "duration": 0.25,
+                      "note": "1",
+                      "params": {
+                        "gain": 1,
+                        "velocity": 1,
+                      },
+                      "tag": "Play",
+                    },
+                    {
+                      "duration": 0.25,
+                      "note": "3",
+                      "params": {
+                        "gain": 1,
+                        "velocity": 1,
+                      },
+                      "tag": "Play",
+                    },
+                  ],
+                  "tag": "Seq",
+                },
+                {
+                  "duration": 0.25,
+                  "note": "2",
+                  "params": {
+                    "gain": 1,
+                    "velocity": 1,
+                  },
+                  "tag": "Play",
+                },
+              ],
+              "tag": "Seq",
+            },
+            "factor": 3,
+            "tag": "Fast",
+            "userMethod": "fast",
+          },
+          "method": "lastOf",
+        },
+      },
+      "method": "clip",
+    },
+  },
+  "tag": "Track",
+  "trackId": "d1",
+}
+`;
+
+exports[`strudel.cc parity corpus — structural IR shape > bakery-G1-let-binding parses to a stable IR shape 1`] = `
+{
+  "body": {
+    "tag": "Stack",
+    "tracks": [
+      {
+        "body": {
+          "children": [
+            {
+              "duration": 0.25,
+              "note": "0",
+              "params": {
+                "gain": 1,
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+            {
+              "duration": 0.25,
+              "note": "2",
+              "params": {
+                "gain": 1,
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+            {
+              "duration": 0.25,
+              "note": "4",
+              "params": {
+                "gain": 1,
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+          ],
+          "tag": "Seq",
+        },
+        "key": "s",
+        "rawArgs": ""piano"",
+        "tag": "Param",
+        "userMethod": "s",
+        "value": "piano",
+      },
+      {
+        "body": {
+          "children": [
+            {
+              "duration": 0.25,
+              "note": "7",
+              "params": {
+                "gain": 1,
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+            {
+              "duration": 0.25,
+              "note": "5",
+              "params": {
+                "gain": 1,
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+            {
+              "duration": 0.25,
+              "note": "3",
+              "params": {
+                "gain": 1,
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+          ],
+          "tag": "Seq",
+        },
+        "key": "s",
+        "rawArgs": ""piano"",
+        "tag": "Param",
+        "userMethod": "s",
+        "value": "piano",
+      },
+    ],
+    "userMethod": "stack",
+  },
+  "tag": "Track",
+  "trackId": "d1",
+}
+`;
+
+exports[`strudel.cc parity corpus — structural IR shape > bakery-G2-setcpm parses to a stable IR shape 1`] = `
+{
+  "body": {
+    "tag": "Stack",
+    "tracks": [
+      {
+        "duration": 1,
+        "note": "bd",
+        "params": {
+          "gain": 1,
+          "s": "bd",
+          "velocity": 1,
+        },
+        "tag": "Play",
+      },
+      {
+        "body": {
+          "duration": 1,
+          "note": "hh",
+          "params": {
+            "gain": 1,
+            "s": "hh",
+            "velocity": 1,
+          },
+          "tag": "Play",
+        },
+        "factor": 4,
+        "tag": "Fast",
+      },
+    ],
+    "userMethod": "stack",
+  },
+  "tag": "Track",
+  "trackId": "d1",
+}
+`;
+
+exports[`strudel.cc parity corpus — structural IR shape > bakery-G3-backtick parses to a stable IR shape 1`] = `
+{
+  "body": {
+    "code": "",
+    "lang": "strudel",
+    "tag": "Code",
+    "via": {
+      "args": "213/7",
+      "inner": {
+        "children": [
+          {
+            "items": [
+              {
+                "body": {
+                  "duration": 1,
+                  "note": "bd",
+                  "params": {
+                    "gain": 1,
+                    "s": "bd",
+                    "velocity": 1,
+                  },
+                  "tag": "Play",
+                },
+                "factor": 3,
+                "tag": "Fast",
+              },
+              {
+                "children": [
+                  {
+                    "duration": 1,
+                    "note": "hh",
+                    "params": {
+                      "gain": 1,
+                      "s": "hh",
+                      "slice": 1,
+                      "velocity": 1,
+                    },
+                    "tag": "Play",
+                  },
+                  {
+                    "duration": 1,
+                    "note": "hh",
+                    "params": {
+                      "gain": 1,
+                      "s": "hh",
+                      "slice": 1,
+                      "velocity": 1,
+                    },
+                    "tag": "Play",
+                  },
+                  {
+                    "duration": 1,
+                    "note": "hh",
+                    "params": {
+                      "gain": 1,
+                      "s": "hh",
+                      "slice": 1,
+                      "velocity": 1,
+                    },
+                    "tag": "Play",
+                  },
+                ],
+                "tag": "Seq",
+              },
+              {
+                "duration": 1,
+                "note": "2",
+                "params": {
+                  "gain": 1,
+                  "s": "2",
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+              {
+                "duration": 1,
+                "note": "casio",
+                "params": {
+                  "gain": 1,
+                  "s": "casio",
+                  "slice": 2,
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+              {
+                "duration": 1,
+                "note": "-",
+                "params": {
+                  "gain": 1,
+                  "s": "-",
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+              {
+                "duration": 1,
+                "note": "hh",
+                "params": {
+                  "gain": 1,
+                  "s": "hh",
+                  "slice": 1,
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+            ],
+            "tag": "Cycle",
+          },
+          {
+            "duration": 1,
+            "note": "4",
+            "params": {
+              "gain": 1,
+              "s": "4",
+              "velocity": 1,
+            },
+            "tag": "Play",
+          },
+          {
+            "items": [
+              {
+                "duration": 1,
+                "note": "-",
+                "params": {
+                  "gain": 1,
+                  "s": "-",
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+              {
+                "duration": 1,
+                "note": "-",
+                "params": {
+                  "gain": 1,
+                  "s": "-",
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+              {
+                "duration": 1,
+                "note": "-",
+                "params": {
+                  "gain": 1,
+                  "s": "-",
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+              {
+                "duration": 1,
+                "note": "metal",
+                "params": {
+                  "gain": 1,
+                  "s": "metal",
+                  "slice": 1,
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+              {
+                "duration": 1,
+                "note": "-",
+                "params": {
+                  "gain": 1,
+                  "s": "-",
+                  "velocity": 1,
+                },
+                "tag": "Play",
+              },
+            ],
+            "tag": "Cycle",
+          },
+          {
+            "duration": 1,
+            "note": "4",
+            "params": {
+              "gain": 1,
+              "s": "4",
+              "velocity": 1,
+            },
+            "tag": "Play",
+          },
+        ],
+        "tag": "Seq",
+      },
+      "method": "cpm",
+    },
+  },
+  "tag": "Track",
+  "trackId": "d1",
+}
+`;
+
+exports[`strudel.cc parity corpus — structural IR shape > bakery-G4-comment-args parses to a stable IR shape 1`] = `
+{
+  "body": {
+    "tag": "Stack",
+    "tracks": [
+      {
+        "body": {
+          "children": [
+            {
+              "duration": 1,
+              "note": "bd",
+              "params": {
+                "gain": 1,
+                "s": "bd",
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+            {
+              "duration": 1,
+              "tag": "Sleep",
+            },
+            {
+              "duration": 1,
+              "tag": "Sleep",
+            },
+            {
+              "duration": 1,
+              "tag": "Sleep",
+            },
+          ],
+          "tag": "Seq",
+        },
+        "key": "gain",
+        "rawArgs": "1.5",
+        "tag": "Param",
+        "userMethod": "gain",
+        "value": 1.5,
+      },
+      {
+        "body": {
+          "children": [
+            {
+              "duration": 0.25,
+              "note": "e3",
+              "params": {
+                "gain": 1,
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+            {
+              "duration": 0.25,
+              "note": "d#3",
+              "params": {
+                "gain": 1,
+                "velocity": 1,
+              },
+              "tag": "Play",
+            },
+          ],
+          "tag": "Seq",
+        },
+        "key": "s",
+        "rawArgs": ""sawtooth"",
+        "tag": "Param",
+        "userMethod": "s",
+        "value": "sawtooth",
+      },
+    ],
+    "userMethod": "stack",
+  },
+  "tag": "Track",
+  "trackId": "d1",
+}
+`;
+
+exports[`strudel.cc parity corpus — structural IR shape > bakery-G5-named-label parses to a stable IR shape 1`] = `
+{
+  "body": {
+    "tag": "Stack",
+    "tracks": [
+      {
+        "children": [
+          {
+            "duration": 1,
+            "note": "bd",
+            "params": {
+              "gain": 1,
+              "s": "bd",
+              "velocity": 1,
+            },
+            "tag": "Play",
+          },
+          {
+            "duration": 1,
+            "note": "cp",
+            "params": {
+              "gain": 1,
+              "s": "cp",
+              "velocity": 1,
+            },
+            "tag": "Play",
+          },
+        ],
+        "tag": "Seq",
+      },
+      {
+        "body": {
+          "duration": 1,
+          "note": "hh",
+          "params": {
+            "gain": 1,
+            "s": "hh",
+            "velocity": 1,
+          },
+          "tag": "Play",
+        },
+        "factor": 4,
+        "tag": "Fast",
+      },
+    ],
+    "userMethod": "stack",
+  },
+  "tag": "Track",
+  "trackId": "p1",
+}
+`;
+
 exports[`strudel.cc parity corpus — structural IR shape > barryHarris parses to a stable IR shape 1`] = `
 {
   "body": {

@@ -478,6 +478,315 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
 ]
 `;
 
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-132-recursive-args — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Code",
+    "text": ".clip(2)",
+  },
+  {
+    "tag": "Code",
+    "text": ".lastOf(4, fast(2))",
+  },
+  {
+    "tag": "Fast",
+    "text": ".fast(3)",
+  },
+  {
+    "tag": "Seq",
+    "text": "[0,3] 2 [1,3] 2",
+  },
+  {
+    "tag": "Seq",
+    "text": "[0,3]",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Seq",
+    "text": "[1,3]",
+  },
+  {
+    "tag": "Play",
+    "text": "1",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+]
+`;
+
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-G1-let-binding — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Stack",
+    "text": "stack(p1, p2)",
+  },
+  {
+    "tag": "Param",
+    "text": ".s("piano")",
+  },
+  {
+    "tag": "Seq",
+    "text": "0 2 4",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Param",
+    "text": ".s("piano")",
+  },
+  {
+    "tag": "Seq",
+    "text": "7 5 3",
+  },
+  {
+    "tag": "Play",
+    "text": "7",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+]
+`;
+
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-G2-setcpm — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Stack",
+    "text": "stack(s("bd"), s("hh*4"))",
+  },
+  {
+    "tag": "Play",
+    "text": "bd",
+  },
+  {
+    "tag": "Fast",
+    "text": "*4",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+]
+`;
+
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-G3-backtick — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Track",
+    "text": "$: sound(\`
+<bd*3 [hh:1 hh:1 hh:1]*2 casio:2 - hh:1>*4 ,
+< - - - metal:1 - >*4\`).cpm(213/7)
+",
+  },
+  {
+    "tag": "Code",
+    "text": ".cpm(213/7)",
+  },
+  {
+    "tag": "Seq",
+    "text": "
+<bd*3 [hh:1 hh:1 hh:1]*2 casio:2 - hh:1>*4 ,
+< - - - metal:1 - >*4",
+  },
+  {
+    "tag": "Cycle",
+    "text": "<bd*3 [hh:1 hh:1 hh:1]*2 casio:2 - hh:1>",
+  },
+  {
+    "tag": "Fast",
+    "text": "*3",
+  },
+  {
+    "tag": "Play",
+    "text": "bd",
+  },
+  {
+    "tag": "Seq",
+    "text": "[hh:1 hh:1 hh:1]",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Play",
+    "text": "casio",
+  },
+  {
+    "tag": "Play",
+    "text": "-",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Cycle",
+    "text": "< - - - metal:1 - >",
+  },
+  {
+    "tag": "Play",
+    "text": "-",
+  },
+  {
+    "tag": "Play",
+    "text": "-",
+  },
+  {
+    "tag": "Play",
+    "text": "-",
+  },
+  {
+    "tag": "Play",
+    "text": "metal",
+  },
+  {
+    "tag": "Play",
+    "text": "-",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+]
+`;
+
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-G4-comment-args — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Stack",
+    "text": "stack(
+// Harter Industrial Kick
+s("bd ~ ~ ~").gain(1.5),
+// Industrial bass
+note("e3 d#3").s("sawtooth")
+)",
+  },
+  {
+    "tag": "Param",
+    "text": ".gain(1.5)",
+  },
+  {
+    "tag": "Seq",
+    "text": "bd ~ ~ ~",
+  },
+  {
+    "tag": "Play",
+    "text": "bd",
+  },
+  {
+    "tag": "Sleep",
+    "text": "~",
+  },
+  {
+    "tag": "Sleep",
+    "text": "~",
+  },
+  {
+    "tag": "Sleep",
+    "text": "~",
+  },
+  {
+    "tag": "Param",
+    "text": ".s("sawtooth")",
+  },
+  {
+    "tag": "Seq",
+    "text": "e3 d#3",
+  },
+  {
+    "tag": "Play",
+    "text": "e3",
+  },
+  {
+    "tag": "Play",
+    "text": "d#3",
+  },
+]
+`;
+
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > bakery-G5-named-label — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Track",
+    "text": "p1: stack(s("bd cp"), s("hh*4"))
+",
+  },
+  {
+    "tag": "Stack",
+    "text": "stack(s("bd cp"), s("hh*4"))",
+  },
+  {
+    "tag": "Seq",
+    "text": "bd cp",
+  },
+  {
+    "tag": "Play",
+    "text": "bd",
+  },
+  {
+    "tag": "Play",
+    "text": "cp",
+  },
+  {
+    "tag": "Fast",
+    "text": "*4",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+]
+`;
+
 exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > barryHarris — loc→source-slice map is stable & in-bounds 1`] = `
 [
   {

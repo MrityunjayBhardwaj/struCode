@@ -880,14 +880,20 @@ export function parseRoot(
     return backtickInnerToIR(noteBtMatch[1], false, innerOffset)
   }
 
-  // s("...") — sample pattern — plus G3 backtick.
-  const sMatch = trimmed.match(/^s\s*\(\s*"([^"]*)"\s*\)/)
+  // s("...") / sound("...") — sample pattern — plus G3 backtick.
+  // `sound` is Strudel's documented alias of `s` (upstream controls.mjs
+  // registers `sound` as an alias of the `s` control). 20-15 V-2 surfaced
+  // it: issue #136's literal repro is `sound(`…`)`, and `sound` was never
+  // a recognised root form (every `sound(...)` shape — dq, bare, backtick
+  // — fell to bare Code while the `s(...)` equivalents parsed). It threads
+  // isSampleKey=true identically to `s` (sets params.s + duration:1).
+  const sMatch = trimmed.match(/^(?:s|sound)\s*\(\s*"([^"]*)"\s*\)/)
   if (sMatch) {
     const quoteIdx = sMatch[0].indexOf('"')
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1
     return parseMini(sMatch[1], true, innerOffset)
   }
-  const sBtMatch = trimmed.match(/^s\s*\(\s*`([^`]*)`\s*\)/)
+  const sBtMatch = trimmed.match(/^(?:s|sound)\s*\(\s*`([^`]*)`\s*\)/)
   if (sBtMatch) {
     const btIdx = sBtMatch[0].indexOf('`')
     const innerOffset = baseOffset + leadingWs + btIdx + 1
@@ -928,7 +934,7 @@ export function parseRoot(
   // (tag==='Code' && via===undefined), fall THROUGH to the existing
   // IR.code(trimmed) fallback below — never emit a half-wrapped node to
   // a via-expecting consumer.
-  const looseMatch = trimmed.match(/^(note|n|s|mini)\s*\(/)
+  const looseMatch = trimmed.match(/^(note|n|s|sound|mini)\s*\(/)
   if (looseMatch) {
     const fnName = looseMatch[1]
     const openParenIdx = trimmed.indexOf('(', looseMatch[0].length - 1)
@@ -952,7 +958,7 @@ export function parseRoot(
         const innerAbsOffset =
           baseOffset + leadingWs + openParenIdx + 1 + innerLeadingWs
         // β-1 resolution: thread the caller's sample context.
-        const callerIsSample = fnName === 's'
+        const callerIsSample = fnName === 's' || fnName === 'sound'
         const innerIR = parseExpression(
           innerTrimmed,
           innerAbsOffset,
