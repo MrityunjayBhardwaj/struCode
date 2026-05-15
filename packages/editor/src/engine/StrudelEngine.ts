@@ -9,6 +9,7 @@ import type { LiveCodingEngine, EngineComponents } from './LiveCodingEngine'
 import { propagate, StrudelParseSystem, IREventCollectSystem } from '../ir/propagation'
 import type { PatternIR } from '../ir/PatternIR'
 import type { IREvent } from '../ir/IREvent'
+import { getTierFlags, type TierFlags } from './tierFlags'
 
 type HapHandler = (event: HapEvent) => void
 
@@ -118,15 +119,35 @@ export class StrudelEngine implements LiveCodingEngine {
   private isPausedState: boolean = false
   private pauseChangedListeners: Set<(paused: boolean) => void> = new Set()
 
+  // Phase 20-14 α-5 — tier flags read at boot. β-4 wires `midi` to call
+  // enableWebMidi(); the other 7 (csound, tidal, osc, serial, gamepad,
+  // motion, mqtt) land as one follow-up issue each. Mid-session toggle
+  // changes are NOT picked up here — settings modal shows the "Changes
+  // take effect on reload" caption.
+  private tierFlags: TierFlags | null = null
+
+  /** Read-only snapshot of the tier flags consumed at this engine's init(). */
+  getTierFlagsSnapshot(): Readonly<TierFlags> | null {
+    return this.tierFlags
+  }
+
   async init(): Promise<void> {
     if (this.initialized) return
+
+    // Phase 20-14 α-5: tier-flag consume-at-init contract. Read ONCE here
+    // and stash on the instance. β-4 (MIDI wiring) reads from
+    // `this.tierFlags`. The dev-console log is the consumed-at-init
+    // proof — α-5's Lokayata gate looks for it on reload.
+    this.tierFlags = getTierFlags()
+    // eslint-disable-next-line no-console
+    console.log('[StrudelEngine] tierFlags read at init:', this.tierFlags)
 
     // Load all strudel modules up-front so evalScope can register their
     // exports (note, s, gain, stack, etc.) into globalThis.  The eval'd user
     // code runs inside Function() with no special scope, so every function it
     // calls must be a global.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod] = await Promise.all([
+    const [coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod, mondoMod] = await Promise.all([
       import('@strudel/core') as Promise<any>,
       import('@strudel/mini') as Promise<any>,
       import('@strudel/tonal') as Promise<any>,
@@ -134,6 +155,14 @@ export class StrudelEngine implements LiveCodingEngine {
       import('@strudel/soundfonts') as Promise<any>,
       import('@strudel/xen') as Promise<any>,
       import('@strudel/midi') as Promise<any>,
+      // Phase 20-14 α-1: audio-pure addition. Exposes `mondo`, `mondi`,
+      // `mondolang`, `getLocations` on globalThis via evalScope. Verified
+      // exports against upstream npm @strudel/mondo@1.1.6 (dist/mondough.mjs).
+      // @strudel/edo (also called for by upstream loadModules at the pinned SHA)
+      // is intentionally NOT added here — it is not yet published to npm
+      // (registry.npmjs.org returns 404 for @strudel/edo on 2026-05-15).
+      // Tracked as a follow-up when upstream publishes it.
+      import('@strudel/mondo') as Promise<any>,
     ])
 
     // Register all module exports into globalThis so eval'd patterns can use them
@@ -144,7 +173,7 @@ export class StrudelEngine implements LiveCodingEngine {
     // into document.body (id="test-canvas") the first time any draw function runs.
     // Stave uses its own visualizer system, so strudel's canvas draw functions
     // (pianoroll, drawFrequencyScope, etc.) are not exposed to user code.
-    await coreMod.evalScope(coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod)
+    await coreMod.evalScope(coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod, mondoMod)
 
     // Set up mini-notation string parser (parses "c3 e3 g3" strings as patterns)
     miniMod.miniAllStrings()
@@ -173,6 +202,121 @@ export class StrudelEngine implements LiveCodingEngine {
     // Worklet-based effects (crush, coarse, distort, djf, bytebeat) are loaded by initAudio() above.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (webaudioMod as any).samples('github:tidalcycles/Dirt-Samples/master')
+
+    // Phase 20-14 α-2: mirror upstream `prebake.mjs` sample-manifest fetches.
+    // Upstream b-cdn manifests unlock `s("piano")` (Salamander), `.bank("tr909")`
+    // (tidal-drum-machines), uzu-drumkit/wavetables, mridangam, VCSL orchestra,
+    // and the inline Dirt-Samples bank set (casio/crow/insect/wind/jazz/metal/
+    // east/space/numbers/num). See upstream prebake.mjs lines 25-155 at SHA
+    // f73b395648645aabe699f91ba0989f35a6fd8a3c.
+    //
+    // Each samples() call is wrapped in try/catch so a b-cdn outage does NOT
+    // break engine boot — the previously-loaded Dirt-Samples + synths still
+    // serve unaffected. Documented as accepted risk in 20-14-PLAN.md §6.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const samplesFn = (webaudioMod as any).samples
+    const baseCDN = 'https://strudel.b-cdn.net'  // upstream prebake.mjs:11
+    const safeSamples = async (label: string, fn: () => Promise<unknown>) => {
+      try { await fn() }
+      catch (e) {
+        // Boot-time soft failure: log + continue. Bd/hh/etc. still work.
+        console.warn(`[StrudelEngine] sample manifest "${label}" failed to load; continuing without it.`, e)
+      }
+    }
+    await Promise.all([
+      // Salamander piano — unlocks `s("piano")`. Closes the symptom of issue #110.
+      safeSamples('piano', () => samplesFn(`${baseCDN}/piano.json`, `${baseCDN}/piano/`, { prebake: true })),
+      // VCSL orchestral library (CC0).
+      safeSamples('vcsl', () => samplesFn(`${baseCDN}/vcsl.json`, `${baseCDN}/VCSL/`, { prebake: true })),
+      // tidal-drum-machines — unlocks `.bank("tr909")`, `.bank("RolandTR808")`, etc.
+      safeSamples('tidal-drum-machines', () => samplesFn(`${baseCDN}/tidal-drum-machines.json`, `${baseCDN}/tidal-drum-machines/machines/`, { prebake: true, tag: 'drum-machines' })),
+      // uzu-drumkit — extra drum banks.
+      safeSamples('uzu-drumkit', () => samplesFn(`${baseCDN}/uzu-drumkit.json`, `${baseCDN}/uzu-drumkit/`, { prebake: true, tag: 'drum-machines' })),
+      // uzu-wavetables — wavetable synth fodder.
+      safeSamples('uzu-wavetables', () => samplesFn(`${baseCDN}/uzu-wavetables.json`, `${baseCDN}/uzu-wavetables/`, { prebake: true })),
+      // mridangam — percussion bank.
+      safeSamples('mridangam', () => samplesFn(`${baseCDN}/mridangam.json`, `${baseCDN}/mrid/`, { prebake: true, tag: 'drum-machines' })),
+      // Inline Dirt-Samples categories (casio/crow/insect/wind/jazz/metal/east/
+      // space/numbers/num) served from b-cdn. Upstream prebake.mjs:42-155.
+      // The earlier `github:tidalcycles/Dirt-Samples/master` call (above) registers
+      // bd/hh/sd/etc.; soundMap.setKey overwrites on duplicate so this call wins
+      // for shared keys — matches upstream behavior (RESEARCH §1c).
+      safeSamples('dirt-extras', () => samplesFn({
+        casio: ['casio/high.wav', 'casio/low.wav', 'casio/noise.wav'],
+        crow: ['crow/000_crow.wav', 'crow/001_crow2.wav', 'crow/002_crow3.wav', 'crow/003_crow4.wav'],
+        insect: [
+          'insect/000_everglades_conehead.wav',
+          'insect/001_robust_shieldback.wav',
+          'insect/002_seashore_meadow_katydid.wav',
+        ],
+        wind: [
+          'wind/000_wind1.wav', 'wind/001_wind10.wav', 'wind/002_wind2.wav', 'wind/003_wind3.wav',
+          'wind/004_wind4.wav', 'wind/005_wind5.wav', 'wind/006_wind6.wav', 'wind/007_wind7.wav',
+          'wind/008_wind8.wav', 'wind/009_wind9.wav',
+        ],
+        jazz: [
+          'jazz/000_BD.wav', 'jazz/001_CB.wav', 'jazz/002_FX.wav', 'jazz/003_HH.wav',
+          'jazz/004_OH.wav', 'jazz/005_P1.wav', 'jazz/006_P2.wav', 'jazz/007_SN.wav',
+        ],
+        metal: [
+          'metal/000_0.wav', 'metal/001_1.wav', 'metal/002_2.wav', 'metal/003_3.wav',
+          'metal/004_4.wav', 'metal/005_5.wav', 'metal/006_6.wav', 'metal/007_7.wav',
+          'metal/008_8.wav', 'metal/009_9.wav',
+        ],
+        east: [
+          'east/000_nipon_wood_block.wav', 'east/001_ohkawa_mute.wav', 'east/002_ohkawa_open.wav',
+          'east/003_shime_hi.wav', 'east/004_shime_hi_2.wav', 'east/005_shime_mute.wav',
+          'east/006_taiko_1.wav', 'east/007_taiko_2.wav', 'east/008_taiko_3.wav',
+        ],
+        space: [
+          'space/000_0.wav', 'space/001_1.wav', 'space/002_11.wav', 'space/003_12.wav',
+          'space/004_13.wav', 'space/005_14.wav', 'space/006_15.wav', 'space/007_16.wav',
+          'space/008_17.wav', 'space/009_18.wav', 'space/010_2.wav', 'space/011_3.wav',
+          'space/012_4.wav', 'space/013_5.wav', 'space/014_6.wav', 'space/015_7.wav',
+          'space/016_8.wav', 'space/017_9.wav',
+        ],
+        numbers: [
+          'numbers/0.wav', 'numbers/1.wav', 'numbers/2.wav', 'numbers/3.wav', 'numbers/4.wav',
+          'numbers/5.wav', 'numbers/6.wav', 'numbers/7.wav', 'numbers/8.wav',
+        ],
+        num: [
+          'num/00.wav', 'num/01.wav', 'num/02.wav', 'num/03.wav', 'num/04.wav', 'num/05.wav',
+          'num/06.wav', 'num/07.wav', 'num/08.wav', 'num/09.wav', 'num/10.wav', 'num/11.wav',
+          'num/12.wav', 'num/13.wav', 'num/14.wav', 'num/15.wav', 'num/16.wav', 'num/17.wav',
+          'num/18.wav', 'num/19.wav', 'num/20.wav',
+        ],
+      }, `${baseCDN}/Dirt-Samples/`, { prebake: true })),
+    ])
+
+    // Phase 20-14 α-3: aliasBank() registers 69 bank-name aliases (e.g.
+    //   RolandTR909 → 909, KorgKR55 → KR55) so users can spell drum-machine
+    //   banks the way upstream tunes do. See upstream prebake.mjs:158.
+    //
+    // Merge-vs-replace semantics (RESEARCH §3 open question #3):
+    //   superdough/superdough.mjs:86-117 (aliasBankMap) reads the current
+    //   soundMap.get() dictionary, MUTATES it in place to add aliased keys
+    //   (e.g. `909_bd` aliased from `RolandTR909_bd`), then calls
+    //   soundMap.set({...soundDictionary}). That spread is a SHALLOW MERGE
+    //   of the same dict back onto itself plus the new alias keys — so the
+    //   post-aliasBank count is monotonically ≥ the pre-count. We log
+    //   BEFORE/AFTER to make the contract observable; α-7 SUMMARY pins this.
+    //
+    // Wrapped in try/catch for the same boot-resilience reason as α-2.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const soundMapRef = (webaudioMod as any).soundMap
+    const preAliasCount = soundMapRef?.get ? Object.keys(soundMapRef.get()).length : 0
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (webaudioMod as any).aliasBank(`${baseCDN}/tidal-drum-machines-alias.json`)
+    } catch (e) {
+      console.warn('[StrudelEngine] aliasBank fetch failed; .bank() aliases unavailable.', e)
+    }
+    const postAliasCount = soundMapRef?.get ? Object.keys(soundMapRef.get()).length : 0
+    // Dev-only observation log — α-7 SUMMARY cites this for the merge-vs-replace
+    // gate. Drop noisily if a future review wants quieter boot — keep the
+    // observation visible until structural parity ships.
+    console.log(`[StrudelEngine] aliasBank: soundMap keys ${preAliasCount} → ${postAliasCount} (Δ ${postAliasCount - preAliasCount}; expect non-negative)`)
+
     // Snapshot all registered sound names (synths + Dirt-Samples) for editor autocompletion.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const soundMapData: Record<string, unknown> = (webaudioMod as any).soundMap?.get() ?? {}
@@ -241,6 +385,13 @@ export class StrudelEngine implements LiveCodingEngine {
         this.evalResolve = null
       },
     })
+
+    // Phase 20-14 α-4: vendor upstream `piano.mjs` chain method. Side-effect
+    // import — attaches Pattern.prototype.piano once at boot. evalScope
+    // populated Pattern on globalThis ~200 lines above, so by here the
+    // prototype exists to extend. NOT re-imported per evaluate (UV2 / P2
+    // safe — `.piano` is not in the injectPatternMethods overwrite list).
+    await import('./vendored/piano')
 
     this.initialized = true
   }

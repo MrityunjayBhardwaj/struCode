@@ -50,6 +50,13 @@ vi.mock('@strudel/core', () => {
   return {
     Pattern: MockPattern,
     evalScope: vi.fn().mockResolvedValue(undefined),
+    // Phase 20-14 α-4: vendored piano.ts imports noteToMidi + valueToMidi
+    // from @strudel/core at engine boot. Stubbed here so the test env can
+    // load the side-effect module without an undefined-export crash.
+    // The functions aren't exercised by these tests — any numeric return
+    // is fine.
+    noteToMidi: vi.fn((_note: string) => 108),
+    valueToMidi: vi.fn((_value: unknown) => 60),
   }
 })
 
@@ -174,6 +181,11 @@ vi.mock('@strudel/soundfonts', () => ({
 vi.mock('@strudel/xen', () => ({}))
 
 vi.mock('@strudel/midi', () => ({}))
+
+// Phase 20-14 α-1: audio-pure addition to evalScope; tests don't exercise
+// mondo notation so an empty mock is sufficient (matches the @strudel/tonal,
+// @strudel/xen, @strudel/midi pattern above).
+vi.mock('@strudel/mondo', () => ({}))
 
 vi.mock('@strudel/transpiler', () => ({
   transpiler: vi.fn((code: string) => ({ output: code })),

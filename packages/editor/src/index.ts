@@ -31,6 +31,11 @@ export type { HapEvent } from './engine/HapStream'
 // Phase 20-07 (PK13 step 9) — scheduler-level breakpoint registry.
 export { BreakpointStore } from './engine/BreakpointStore'
 export type { BreakpointMeta } from './engine/BreakpointStore'
+// Phase 20-14 α-5 — tier flag schema (8 boolean flags). β-3 reads listTiers()
+// + getTierFlags() to build the settings UI; β-4 reads getTierFlags() at
+// engine init to gate `enableWebMidi()`.
+export { getTierFlags, setTierFlag, listTiers } from './engine/tierFlags'
+export type { TierFlags, TierName } from './engine/tierFlags'
 export type { NormalizedHap } from './engine/NormalizedHap'
 export { normalizeStrudelHap } from './engine/NormalizedHap'
 export { BufferedScheduler } from './engine/BufferedScheduler'
