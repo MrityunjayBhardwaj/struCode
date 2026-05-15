@@ -199,3 +199,148 @@ Two patterns surfaced during γ-2 worth promoting if they recur:
   include glob, the snapshot directory layout — all matched precedent
   (IRInspectorPanel.test.tsx's HapStream/BreakpointStore convention)
   rather than introducing a new style.
+
+---
+
+## Parser-gap fix (post-execution, 2026-05-15)
+
+### Discovery
+
+γ-2's parity snapshot run revealed all 16 corpus tunes fell through to
+plain Code-fallback at the top level. The corpus was committed in that
+shape so the snapshot test passed (frozen-but-wrong), but the underlying
+parser was discarding structural detail for every real-world Strudel
+tune.
+
+A follow-up STOP rule fired after the first cluster of fixes landed
+without a green corpus: rather than patch a third workaround, the
+remaining surface was diagnosed cleanly and routed to a separate phase.
+
+### Three clusters fixed
+
+**Cluster 1 — top-level prelude strip** (commit 1: `1d6a314`)
+- New `stripParserPrelude(code)` helper. Skips leading blank lines,
+  whole-line `// …` comments, and recognised top-level boot calls
+  (`samples`, `useRNG`, `setcps`, `setVoicingRange`, `initAudio`,
+  `aliasBank`) with paren/brace/bracket depth tracking so multi-line
+  calls (e.g., `samples({ … })`) are consumed as one unit. Threaded into
+  parseStrudel's no-`$:` branch.
+- Skip set is explicit (D-08 exact tokens). Inline `// …` after
+  expression code is untouched.
+- Brought 6 tunes from bare-Code to structured.
+
+**Cluster 2 — bare-string-as-pattern** (commit 2: `322d912`, half 1)
+- Strudel's transpiler auto-promotes top-level string literals to
+  mini-patterns (`"0,2,[7 6]".add(…)`). Pre-fix: splitRootAndChain
+  saw `expr[0]==='"'`, returned empty root, parseRoot fell through to
+  IR.code(), chain was discarded.
+- Fix: splitRootAndChain now consumes a leading quoted string (escape-
+  aware, single-line) as the root. parseRoot has a new bare-string arm
+  after all named-function arms that delegates to parseMini with the
+  inner offset.
+
+**Cluster 3 — multi-line chain walker + Code-with-via discriminator**
+(commit 2: `322d912`, half 2)
+- Pre-fix `while (remaining.startsWith('.'))` was anchored after a
+  single initial `.trim()`. The first newline between methods exited
+  the loop and every subsequent method was silently dropped.
+- Fix: replaced with `while (true)` that strips an inter-method
+  separator (whitespace + inline `// …` comments up to and including
+  the trailing newline) before each iteration. Offset accumulator
+  advances with every consumed char.
+- Subordinate fix: parseExpression's `rootIR.tag === 'Code'` check now
+  also requires `rootIR.via === undefined`. Without this, wrapAsOpaque
+  wrappers (PV37 wrap-never-drop, tag `Code` but structural via the
+  `.via` field) were thrown away when they reached parseExpression as
+  the root IR — surfaces for `stack(single-arg-with-unmapped-pattern-
+  chain).method(…)` shapes such as `delay.strudel`.
+
+### Final state — 15 of 16 tunes structured
+
+| tune | shape after fix |
+|---|---|
+| amensister | structured (Code-with-via tower) |
+| **arpoon** | **STILL bare-Code — see "residual gap" below** |
+| barryHarris | structured (Code-with-via tower) |
+| bassFuge | structured (Code-with-via tower) |
+| belldub | structured (nested Stack) |
+| chop | structured (Code-with-via tower) |
+| delay | structured (Choice from `.sometimes` over via tower) |
+| dinofunk | structured (Stack) |
+| echoPiano | structured (Code-with-via tower) |
+| flatrave | structured (Stack) |
+| holyflute | structured (Code-with-via tower) |
+| juxUndTollerei | structured (Code-with-via tower) |
+| meltingsubmarine | structured (Code-with-via tower) |
+| orbit | structured (Stack) |
+| randomBells | structured (Code-with-via tower) |
+| sampleDrums | structured (Code-with-via tower) |
+
+### Residual gap — arpoon
+
+```
+n("[0,3] 2 [1,3] 2".fast(3).lastOf(4, fast(2))).clip(2)
+  .offset("<<1 2> 2 1 1>")
+  .chord("<<Am7 C^7> C7 F^7 [Fm7 E7b9]>")
+  …
+```
+
+The OUTER chain (`.clip / .offset / .chord / …`) walks correctly with
+the cluster-3 fix. The OUTER root is `n(EXPR)` where EXPR is itself a
+mini-string-with-chain (`"…".fast(3).lastOf(4, fast(2))`). parseRoot's
+note/n arm currently requires a plain quoted string:
+`^(?:note|n)\s*\(\s*"([^"]*)"\s*\)`. The inner expression doesn't
+match — so the root falls to opaque Code, which (since the chain is
+non-empty) causes parseExpression to discard the whole expression as
+bare Code.
+
+This is a separate parser shape that needs its own design pass: the
+note/n arm needs to delegate inner parsing recursively to
+parseExpression when the inner isn't a flat quoted string. Punted
+deliberately — STOP rule: don't add a third workaround.
+
+### Skip set + new parseRoot/applyChain semantics — at a glance
+
+- `stripParserPrelude` skip set: `samples | useRNG | setcps |
+  setVoicingRange | initAudio | aliasBank` (whole-line top-level calls,
+  multi-line tolerant via depth tracking) + blank lines + whole-line
+  `// …` comments.
+- `splitRootAndChain` now recognises a leading bare-string as the root
+  (escape-aware, single-line).
+- `parseRoot` has a new bare-string arm `^"([^"]*)"$` after all
+  named-function arms; delegates to parseMini.
+- `applyChain` walks across `\s+` and inline `// … \n` separators
+  between methods (regex `^(?:\s+|//[^\n]*\n?)+`).
+- `parseExpression` discriminates bare Code (`tag === 'Code' && !via`)
+  from structural Code-with-via wrappers (PV37); only the bare case is
+  discarded.
+
+### Catalogue candidates
+
+- **hetvabhasa (new entry candidate):** "tag-only `=== 'Code'` check
+  conflates structural wrapAsOpaque wrappers with bare-Code fallbacks."
+  Already cost one round-trip in this session. If it recurs, promote to
+  a full entry — discriminator must inspect `via` field, not the tag
+  alone.
+
+- **vyapti (new entry candidate):** "Strudel parser walkers must
+  tolerate inter-element whitespace (incl. newlines) AND inline `// …`
+  line comments — the upstream transpiler does, and tunes are
+  formatted on the assumption that it does." Spans applyChain (now
+  fixed) + stripParserPrelude (already fixed) + any future
+  splitArgs-style walker.
+
+- **krama (relevant existing):** PK15 (μ-α parse cycle) extends — the
+  prelude-strip step lives BEFORE splitRootAndChain in the no-`$:`
+  branch. Same shape as μ's pre-parse normalisations.
+
+### Test counts (per commit)
+
+| commit | shape | editor | app |
+|---|---|---|---|
+| `1d6a314` prelude strip | added 11 tests | 1547 → 1547 | 314 → 314 |
+| `322d912` clusters A+B | added 4 tests | 1547 → 1551 | 314 → 314 |
+| `1238ed3` snapshot regen | snapshot only | 1551 | 314 (17 parity) |
+
+All green after every commit.
+
