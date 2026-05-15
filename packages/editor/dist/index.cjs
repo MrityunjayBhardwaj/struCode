@@ -4580,11 +4580,21 @@ function parseExpression(expr, baseOffset = 0, isSampleKey) {
 function parseRoot(root, baseOffset = 0, isSampleKey) {
   const trimmed = root.trim();
   const leadingWs = root.length - root.trimStart().length;
+  const backtickInnerToIR = (inner, isSample, innerOffset) => {
+    if (inner.includes("${")) return IR.code(trimmed);
+    return parseMini(inner, isSample, innerOffset);
+  };
   const noteMatch = trimmed.match(/^(?:note|n)\s*\(\s*"([^"]*)"\s*\)/);
   if (noteMatch) {
     const quoteIdx = noteMatch[0].indexOf('"');
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1;
     return parseMini(noteMatch[1], false, innerOffset);
+  }
+  const noteBtMatch = trimmed.match(/^(?:note|n)\s*\(\s*`([^`]*)`\s*\)/);
+  if (noteBtMatch) {
+    const btIdx = noteBtMatch[0].indexOf("`");
+    const innerOffset = baseOffset + leadingWs + btIdx + 1;
+    return backtickInnerToIR(noteBtMatch[1], false, innerOffset);
   }
   const sMatch = trimmed.match(/^s\s*\(\s*"([^"]*)"\s*\)/);
   if (sMatch) {
@@ -4592,11 +4602,23 @@ function parseRoot(root, baseOffset = 0, isSampleKey) {
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1;
     return parseMini(sMatch[1], true, innerOffset);
   }
+  const sBtMatch = trimmed.match(/^s\s*\(\s*`([^`]*)`\s*\)/);
+  if (sBtMatch) {
+    const btIdx = sBtMatch[0].indexOf("`");
+    const innerOffset = baseOffset + leadingWs + btIdx + 1;
+    return backtickInnerToIR(sBtMatch[1], true, innerOffset);
+  }
   const miniMatch = trimmed.match(/^mini\s*\(\s*"([^"]*)"\s*\)/);
   if (miniMatch) {
     const quoteIdx = miniMatch[0].indexOf('"');
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1;
     return parseMini(miniMatch[1], false, innerOffset);
+  }
+  const miniBtMatch = trimmed.match(/^mini\s*\(\s*`([^`]*)`\s*\)/);
+  if (miniBtMatch) {
+    const btIdx = miniBtMatch[0].indexOf("`");
+    const innerOffset = baseOffset + leadingWs + btIdx + 1;
+    return backtickInnerToIR(miniBtMatch[1], false, innerOffset);
   }
   const looseMatch = trimmed.match(/^(note|n|s|mini)\s*\(/);
   if (looseMatch) {
@@ -4653,6 +4675,11 @@ function parseRoot(root, baseOffset = 0, isSampleKey) {
   if (bareStringMatch) {
     const innerOffset = baseOffset + leadingWs + 1;
     return parseMini(bareStringMatch[1], isSampleKey ?? false, innerOffset);
+  }
+  const bareBtMatch = trimmed.match(/^`([^`]*)`$/);
+  if (bareBtMatch) {
+    const innerOffset = baseOffset + leadingWs + 1;
+    return backtickInnerToIR(bareBtMatch[1], isSampleKey ?? false, innerOffset);
   }
   return IR.code(trimmed);
 }
@@ -4970,6 +4997,16 @@ function splitRootAndChain(expr) {
       i2++;
     }
     if (i2 < expr.length) i2++;
+  } else if (expr[0] === "`") {
+    i2 = 1;
+    while (i2 < expr.length && expr[i2] !== "`") {
+      if (expr[i2] === "\\" && i2 + 1 < expr.length) {
+        i2 += 2;
+        continue;
+      }
+      i2++;
+    }
+    if (i2 < expr.length) i2++;
   } else {
     while (i2 < expr.length && /[a-zA-Z0-9_$]/.test(expr[i2])) i2++;
     if (i2 < expr.length && expr[i2] === "(") {
@@ -5015,7 +5052,7 @@ function findMatchingParen(str, startIdx) {
       if (ch === stringChar && str[i2 - 1] !== "\\") inString = false;
       continue;
     }
-    if (ch === '"' || ch === "'") {
+    if (ch === '"' || ch === "'" || ch === "`") {
       inString = true;
       stringChar = ch;
       continue;
@@ -5061,7 +5098,7 @@ function splitArgsWithOffsets(argsStr) {
       if (ch === stringChar && argsStr[i2 - 1] !== "\\") inString = false;
       continue;
     }
-    if (ch === '"' || ch === "'") {
+    if (ch === '"' || ch === "'" || ch === "`") {
       inString = true;
       stringChar = ch;
       if (current2.length === 0) currentStart = i2;

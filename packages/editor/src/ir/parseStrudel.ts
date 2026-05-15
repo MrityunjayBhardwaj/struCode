@@ -542,7 +542,21 @@ export function parseRoot(
   const trimmed = root.trim()
   const leadingWs = root.length - root.trimStart().length
 
-  // note("...") or n("...")
+  // 20-15 G3 (#136) — a captured backtick inner that contains a `${`
+  // interpolation is REAL JS evaluation (D-04): the matcher must NOT
+  // attempt parseMini — return the canonical bare IR.code fallback
+  // (via===undefined, the pS:~414 shape). Clean branch, never a throw
+  // (PV37 wrap-never-drop; the outer try/catch stays a backstop only).
+  const backtickInnerToIR = (
+    inner: string,
+    isSample: boolean,
+    innerOffset: number,
+  ): PatternIR => {
+    if (inner.includes('${')) return IR.code(trimmed)
+    return parseMini(inner, isSample, innerOffset)
+  }
+
+  // note("...") or n("...") — plus G3 backtick `` `…` `` (multi-line ok).
   const noteMatch = trimmed.match(/^(?:note|n)\s*\(\s*"([^"]*)"\s*\)/)
   if (noteMatch) {
     // Position of the opening quote within `trimmed`, then +1 to skip it.
@@ -550,13 +564,25 @@ export function parseRoot(
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1
     return parseMini(noteMatch[1], false, innerOffset)
   }
+  const noteBtMatch = trimmed.match(/^(?:note|n)\s*\(\s*`([^`]*)`\s*\)/)
+  if (noteBtMatch) {
+    const btIdx = noteBtMatch[0].indexOf('`')
+    const innerOffset = baseOffset + leadingWs + btIdx + 1
+    return backtickInnerToIR(noteBtMatch[1], false, innerOffset)
+  }
 
-  // s("...") — sample pattern
+  // s("...") — sample pattern — plus G3 backtick.
   const sMatch = trimmed.match(/^s\s*\(\s*"([^"]*)"\s*\)/)
   if (sMatch) {
     const quoteIdx = sMatch[0].indexOf('"')
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1
     return parseMini(sMatch[1], true, innerOffset)
+  }
+  const sBtMatch = trimmed.match(/^s\s*\(\s*`([^`]*)`\s*\)/)
+  if (sBtMatch) {
+    const btIdx = sBtMatch[0].indexOf('`')
+    const innerOffset = baseOffset + leadingWs + btIdx + 1
+    return backtickInnerToIR(sBtMatch[1], true, innerOffset)
   }
 
   // mini("...") — raw mini-notation pattern producing values (not notes/samples).
@@ -570,6 +596,12 @@ export function parseRoot(
     const quoteIdx = miniMatch[0].indexOf('"')
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1
     return parseMini(miniMatch[1], false, innerOffset)
+  }
+  const miniBtMatch = trimmed.match(/^mini\s*\(\s*`([^`]*)`\s*\)/)
+  if (miniBtMatch) {
+    const btIdx = miniBtMatch[0].indexOf('`')
+    const innerOffset = baseOffset + leadingWs + btIdx + 1
+    return backtickInnerToIR(miniBtMatch[1], false, innerOffset)
   }
 
   // #132 (β-2) — LOOSE recursive arm for note/n/s/mini args that carry
@@ -691,6 +723,14 @@ export function parseRoot(
     // s-vs-note context, honour it here; otherwise keep the pre-β-2
     // default of `false` (snapshot-preserving for the 15 tunes).
     return parseMini(bareStringMatch[1], isSampleKey ?? false, innerOffset)
+  }
+  // 20-15 G3 (#136) — bare backtick `` `…` `` template-literal root.
+  // `[^`]*` spans newlines (multi-line mini-notation, e.g.
+  // `` `<bd hh>\n<sn ~>`.cpm(2) ``). `${}` → graceful Code (D-04).
+  const bareBtMatch = trimmed.match(/^`([^`]*)`$/)
+  if (bareBtMatch) {
+    const innerOffset = baseOffset + leadingWs + 1
+    return backtickInnerToIR(bareBtMatch[1], isSampleKey ?? false, innerOffset)
   }
 
   // Fallback: treat as opaque
@@ -1505,6 +1545,23 @@ export function splitRootAndChain(expr: string): { root: string; chain: string }
       i++
     }
     if (i < expr.length) i++ // consume closing quote
+  } else if (expr[0] === '`') {
+    // 20-15 G3 (#136) — backtick template-literal root. Mirrors the `"`
+    // scan but DELIBERATELY allows `\n` inside: backtick mini-notation
+    // strings legitimately span multiple lines (the single-line note on
+    // the `"` arm above does NOT apply to backticks). Escape-aware for
+    // `` \` ``. `${` is NOT special here — splitRootAndChain only finds
+    // the root *boundary*; the `${}` → Code-fallback decision (D-04) is
+    // made later in parseRoot where the captured inner is inspected.
+    i = 1
+    while (i < expr.length && expr[i] !== '`') {
+      if (expr[i] === '\\' && i + 1 < expr.length) {
+        i += 2
+        continue
+      }
+      i++
+    }
+    if (i < expr.length) i++ // consume closing backtick
   } else {
     // Skip identifier
     while (i < expr.length && /[a-zA-Z0-9_$]/.test(expr[i])) i++
@@ -1577,7 +1634,10 @@ function findMatchingParen(str: string, startIdx: number): number {
       continue
     }
 
-    if (ch === '"' || ch === "'") {
+    if (ch === '"' || ch === "'" || ch === '`') {
+      // 20-15 G3 (#136): backtick is a string delimiter too — without
+      // this a `` ` `` inside args (e.g. `stack(s(`bd hh`))`) would not
+      // suppress paren/bracket counting and the matcher mis-depths.
       inString = true
       stringChar = ch
       continue
@@ -1673,7 +1733,11 @@ function splitArgsWithOffsets(
       continue
     }
 
-    if (ch === '"' || ch === "'") {
+    if (ch === '"' || ch === "'" || ch === '`') {
+      // 20-15 G3 (#136): backtick is a string delimiter — a `,` inside a
+      // `` `…` `` arg must NOT split it (e.g. `stack(s(`bd, hh`))`), and
+      // a backtick inside an arg must not let comma-splitting see commas
+      // that belong to the template literal.
       inString = true
       stringChar = ch
       if (current.length === 0) currentStart = i
