@@ -101,7 +101,9 @@ export const __test_wrapAsOpaque = wrapAsOpaque
  *     code is untouched)
  *   - a TOP-LEVEL call to a recognised boot-side-effect function:
  *     `samples(…)`, `useRNG(…)`, `setcps(…)`, `setVoicingRange(…)`,
- *     `initAudio(…)`, `aliasBank(…)`. The call may span multiple lines
+ *     `initAudio(…)`, `aliasBank(…)`, and the tempo-setter family
+ *     `setcpm(…)` / `setCpm(…)` / `setCps(…)` (#135 / 20-15 G2). The call
+ *     may span multiple lines
  *     (multi-line `samples({ … })` is the common case); we track paren /
  *     brace / bracket depth across newlines and consume the whole call
  *     as one unit. The call ends at the line whose end-of-line depth is
@@ -124,8 +126,37 @@ export const __test_wrapAsOpaque = wrapAsOpaque
 export function stripParserPrelude(code: string): { body: string; offset: number } {
   // Top-level boot-side-effect calls we recognise. Exact tokens — D-08
   // (no aliasing). Anchored to the start of the trimmed line.
+  //
+  // SETTER FAMILY PROVENANCE (#135 / 20-15 G2) — HAND-MAINTAINED LIST.
+  // Upstream source audited: `packages/core/repl.mjs` (uzu/strudel) at
+  // pinned Codeberg SHA f73b395648645aabe699f91ba0989f35a6fd8a3c
+  // (the same SHA pinned in
+  // packages/app/tests/parity-corpus/CORPUS-SOURCE.md).
+  //   - repl.mjs:284-287  `setCps  = (cps) => { scheduler.setCps(unpure(cps)); return silence }`
+  //   - repl.mjs:301-303  `setCpm  = (cpm) => { scheduler.setCps(unpure(cpm)/60); return silence }`
+  //   - repl.mjs:393-400  `evalScope({ ... setCps, setcps: setCps, setCpm, setcpm: setCpm })`
+  // i.e. the top-level tempo-setter family is exactly
+  // {setcps, setCps, setcpm, setCpm} — all pure no-return side effects
+  // (they mutate the scheduler tempo and return `silence`, which the user
+  // discards at statement level — identical class to the already-present
+  // `setcps`). Tokens ADDED by 20-15 G2 beyond the existing `setcps`:
+  // `setcpm`, `setCpm`, `setCps`. No other `set*` in core's evalScope
+  // (all/each/hush/cpm) is a top-level pure setter — `cpm` is a chain
+  // method (`register('cpm',…)`), `all`/`each` take pattern transforms,
+  // `hush` is a silence control — NONE are prelude boot calls.
+  //
+  // There is NO programmatic cross-ref: the upstream setter export list
+  // is NOT vendored in this repo, so this regex is hand-maintained. The
+  // anti-drift mechanism is (a) this comment's file:line + SHA citation
+  // and (b) one CI fixture per setter (task V-3). #135's premise that the
+  // 20-14 α-6 `settingPatterns` audit is the authoritative source is a
+  // MISREAD: α-6 covers strudel.cc UI setters {theme,fontFamily,fontSize}
+  // (20-14-OBSERVATIONS.md:13-71) — those are CHAIN methods
+  // (`$: theme("dracula")`), UI-only (`onTrigger(...,false)` = no audio),
+  // NOT top-level tempo boot calls. α-6 is therefore NOT the source for
+  // THIS list; the @strudel/core repl.mjs audit above is.
   const PRELUDE_CALL_RE =
-    /^[ \t]*(?:samples|useRNG|setcps|setVoicingRange|initAudio|aliasBank)\s*\(/
+    /^[ \t]*(?:samples|useRNG|setcps|setCps|setcpm|setCpm|setVoicingRange|initAudio|aliasBank)\s*\(/
 
   let i = 0
   while (i < code.length) {
