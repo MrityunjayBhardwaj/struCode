@@ -4516,6 +4516,20 @@ function extractTracks(code) {
   }
   return tracks;
 }
+function skipWhitespaceAndLineComments(src, pos) {
+  let i2 = pos;
+  for (; ; ) {
+    while (i2 < src.length && /\s/.test(src[i2])) i2++;
+    if (src[i2] === "/" && src[i2 + 1] === "/") {
+      i2 += 2;
+      while (i2 < src.length && src[i2] !== "\n") i2++;
+      if (i2 < src.length && src[i2] === "\n") i2++;
+      continue;
+    }
+    break;
+  }
+  return i2;
+}
 function parseExpression(expr, baseOffset = 0) {
   if (!expr.trim()) return IR.pure();
   try {
@@ -4596,12 +4610,11 @@ function applyChain(ir, chain, baseOffset = 0) {
   let remaining = chain.trim();
   let remainingOffset = baseOffset + leadingWs;
   let current2 = ir;
-  const INTER_METHOD_SEP = /^(?:\s+|\/\/[^\n]*\n?)+/;
   while (true) {
-    const sep = remaining.match(INTER_METHOD_SEP);
-    if (sep) {
-      remainingOffset += sep[0].length;
-      remaining = remaining.slice(sep[0].length);
+    const consumedSep = skipWhitespaceAndLineComments(remaining, 0);
+    if (consumedSep > 0) {
+      remainingOffset += consumedSep;
+      remaining = remaining.slice(consumedSep);
     }
     if (!remaining.startsWith(".")) break;
     const { method, args: args2, rest, argsOffset } = extractNextMethod(remaining);

@@ -644,16 +644,27 @@ export function applyChain(ir: PatternIR, chain: string, baseOffset = 0): Patter
   // only progressed while `remaining.startsWith('.')` after a single
   // initial `.trim()` — so the first newline between methods exited the
   // loop and every subsequent method was silently dropped to Code-fallback.
-  // SEP regex: any mix of inter-method whitespace (incl. newlines) and
-  // line comments (`// …` up to and including the trailing newline). The
-  // `+` is anchored to `^` so it ONLY trims at the head of `remaining`.
-  const INTER_METHOD_SEP = /^(?:\s+|\/\/[^\n]*\n?)+/
+  //
+  // 20-15 α-3: the inter-method separator skip is now the shared PV49
+  // `skipWhitespaceAndLineComments` primitive (was the inline
+  // `INTER_METHOD_SEP = /^(?:\s+|\/\/[^\n]*\n?)+/` regex, now removed —
+  // it was referenced ONLY here). The primitive is byte-equivalent to
+  // that regex (asserted by skipWhitespaceAndLineComments.test.ts), so
+  // this reroute is the PV49 EQUIVALENCE ORACLE: applyChain is already
+  // fully tolerant, therefore the 16 corpus IR-shape snapshots, the
+  // loc-fidelity snapshot, and the 1551 editor tests MUST all stay
+  // byte-for-byte unchanged — that three-way invariance is the proof the
+  // primitive matches the reference before any GAP fix builds on it.
+  // The offset arithmetic is unchanged and stays owned by applyChain:
+  // `remaining` is a 0-based working buffer, so the absolute index the
+  // primitive returns IS the consumed length (== the old `sep[0].length`).
   while (true) {
-    // Skip inter-method separator (whitespace + line comments).
-    const sep = remaining.match(INTER_METHOD_SEP)
-    if (sep) {
-      remainingOffset += sep[0].length
-      remaining = remaining.slice(sep[0].length)
+    // Skip inter-method separator (whitespace + line comments) via the
+    // shared primitive — same additive shape as the old regex head-match.
+    const consumedSep = skipWhitespaceAndLineComments(remaining, 0)
+    if (consumedSep > 0) {
+      remainingOffset += consumedSep
+      remaining = remaining.slice(consumedSep)
     }
     if (!remaining.startsWith('.')) break
     const { method, args, rest, argsOffset } = extractNextMethod(remaining)
