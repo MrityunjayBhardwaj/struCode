@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseStrudel, extractTracks } from '../parseStrudel'
+import { parseStrudel, extractTracks, stripParserPrelude } from '../parseStrudel'
 import { toStrudel } from '../toStrudel'
 import type { PatternIR } from '../PatternIR'
 
@@ -238,5 +238,106 @@ describe('20-12 α-1 — freq Param promotion', () => {
       (n) => n.tag === 'Param' && (n as { key: string }).key === 'note',
     )
     expect(noteParam).toBeDefined()
+  })
+})
+
+describe('20-14 parser-gap fix — stripParserPrelude', () => {
+  it('skips a single line comment before the body', () => {
+    const code = '// comment\ns("bd")'
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('s("bd")')
+    expect(offset).toBe(code.indexOf('s('))
+  })
+
+  it('skips multiple blank lines + comments', () => {
+    const code = '\n\n  // hi\n\nfoo'
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('foo')
+    expect(offset).toBe(code.indexOf('foo'))
+  })
+
+  it('skips a single-line samples({...}) call', () => {
+    const code = "samples({a:1})\ns(\"bd\")"
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('s("bd")')
+    expect(offset).toBe(code.indexOf('s("bd")'))
+  })
+
+  it('skips a multi-line samples({…}) call as one unit', () => {
+    const code = 'samples({a:1,\n  b:2})\ns("bd")'
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('s("bd")')
+    expect(offset).toBe(code.indexOf('s("bd")'))
+  })
+
+  it('skips useRNG()', () => {
+    const code = "useRNG('legacy')\nstack(s(\"bd\"),s(\"hh\"))"
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('stack(s("bd"),s("hh"))')
+    expect(offset).toBe(code.indexOf('stack('))
+  })
+
+  it('skips a mixed prelude (comment + samples + comment + useRNG)', () => {
+    const code = '// hi\nsamples({a:1})\n// bye\nuseRNG(\'legacy\')\ns("bd")'
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('s("bd")')
+    expect(offset).toBe(code.indexOf('s("bd")'))
+  })
+
+  it('skips setcps + setVoicingRange (dinofunk-shape prelude)', () => {
+    const code =
+      "setcps(1)\nuseRNG('legacy')\nsetVoicingRange('lefthand', ['c3','a4'])\ns(\"bd\")"
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('s("bd")')
+    expect(offset).toBe(code.indexOf('s("bd")'))
+  })
+
+  it('returns unchanged code when there is no prelude', () => {
+    const code = 'note("c4")'
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('note("c4")')
+    expect(offset).toBe(0)
+  })
+
+  it('returns empty body + offset == code.length when source is ALL prelude', () => {
+    const code = "// only a header\nsamples({a:1})\nuseRNG('legacy')\n"
+    const { body, offset } = stripParserPrelude(code)
+    expect(body.trim()).toBe('')
+    // Offset must point past the last consumed prelude line.
+    expect(offset).toBe(code.length)
+  })
+
+  it('does NOT strip inline `// ...` comments after expression code on a body line', () => {
+    // Inline trailing comment on the body line is part of the body —
+    // strip is whole-line only.
+    const code = 's("bd") // explanation'
+    const { body, offset } = stripParserPrelude(code)
+    expect(body).toBe('s("bd") // explanation')
+    expect(offset).toBe(0)
+  })
+})
+
+describe('20-14 parser-gap fix — parseStrudel structural IR for prelude\'d tunes', () => {
+  it('chop-shape body parses to a structured IR (NOT Code fallback)', () => {
+    // Mirrors `packages/app/tests/parity-corpus/chop.strudel` shape:
+    // header comments + samples() prelude + a sample-pattern expression
+    // with a .chop chain. Before the fix this produced Track(d1, Code(<all>)).
+    const code = [
+      '// "Chop"',
+      "// @by Felix Roos",
+      '',
+      "samples({ p: 'https://example.invalid/sample.mp3' })",
+      '',
+      's("p").chop(128)',
+    ].join('\n')
+    const ir = parseStrudel(code)
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    expect(ir.trackId).toBe('d1')
+    // Body must be the structured `.chop(...)` IR — not the Code() fallback.
+    expect(ir.body.tag).not.toBe('Code')
+    // .chop(n) produces a Chop tag.
+    const chop = findNode(ir, (n) => n.tag === 'Chop')
+    expect(chop).toBeDefined()
   })
 })

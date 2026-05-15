@@ -90,6 +90,141 @@ function wrapAsOpaque(
  *  public API. Consumed by PatternIR.test.ts wave-α probes. */
 export const __test_wrapAsOpaque = wrapAsOpaque
 
+/**
+ * Phase 20-14 parser-gap fix — strip a "prelude" from non-`$:` Strudel
+ * programs so the musical expression that follows parses to a structured
+ * IR instead of the Code() fallback.
+ *
+ * A prelude is the sequence of leading lines that are either:
+ *   - blank
+ *   - a `// …` line comment (whole-line; inline `// …` after expression
+ *     code is untouched)
+ *   - a TOP-LEVEL call to a recognised boot-side-effect function:
+ *     `samples(…)`, `useRNG(…)`, `setcps(…)`, `setVoicingRange(…)`,
+ *     `initAudio(…)`, `aliasBank(…)`. The call may span multiple lines
+ *     (multi-line `samples({ … })` is the common case); we track paren /
+ *     brace / bracket depth across newlines and consume the whole call
+ *     as one unit. The call ends at the line whose end-of-line depth is
+ *     zero AND whose final non-whitespace char is `)` (allowing a
+ *     trailing `;` per `bassFuge.strudel`).
+ *
+ * Returns the substring from the first non-prelude line plus the absolute
+ * char offset where that substring starts in the ORIGINAL `code`. Callers
+ * thread `offset` into `parseExpression` so every `loc.start` derived from
+ * the parser is still a valid index into the user-typed source.
+ *
+ * Forms NOT skipped (fall through to existing Code() fallback at the
+ * call site, same shape as today):
+ *   - `let` / `const` / `var` bindings
+ *   - `await` / arbitrary statements
+ *   - any function we haven't enumerated here
+ * If a corpus tune surfaces another prelude form, add it to the regex
+ * below — explicit list is intentional, not an open-ended skip.
+ */
+export function stripParserPrelude(code: string): { body: string; offset: number } {
+  // Top-level boot-side-effect calls we recognise. Exact tokens — D-08
+  // (no aliasing). Anchored to the start of the trimmed line.
+  const PRELUDE_CALL_RE =
+    /^[ \t]*(?:samples|useRNG|setcps|setVoicingRange|initAudio|aliasBank)\s*\(/
+
+  let i = 0
+  while (i < code.length) {
+    // Walk to end of current line (exclusive of '\n').
+    let lineEnd = code.indexOf('\n', i)
+    if (lineEnd === -1) lineEnd = code.length
+    const line = code.slice(i, lineEnd)
+    const trimmed = line.trim()
+
+    // 1. Blank line — skip and advance past the newline.
+    if (trimmed === '') {
+      i = lineEnd + 1
+      continue
+    }
+
+    // 2. Whole-line comment — skip.
+    if (trimmed.startsWith('//')) {
+      i = lineEnd + 1
+      continue
+    }
+
+    // 3. Top-level recognised prelude call — possibly multi-line.
+    if (PRELUDE_CALL_RE.test(line)) {
+      // Track paren/brace/bracket depth + string state from the line start,
+      // advancing across newlines until depth returns to zero AT THE END
+      // OF A LINE whose final non-ws char is `)` (allow trailing `;`).
+      let j = i
+      let depth = 0
+      let inString = false
+      let stringChar = ''
+      let escaped = false
+      let sawOpenParen = false
+      while (j < code.length) {
+        const ch = code[j]
+        if (escaped) {
+          escaped = false
+          j++
+          continue
+        }
+        if (inString) {
+          if (ch === '\\') {
+            escaped = true
+          } else if (ch === stringChar) {
+            inString = false
+          }
+          j++
+          continue
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+          inString = true
+          stringChar = ch
+          j++
+          continue
+        }
+        if (ch === '(' || ch === '[' || ch === '{') {
+          depth++
+          if (ch === '(') sawOpenParen = true
+          j++
+          continue
+        }
+        if (ch === ')' || ch === ']' || ch === '}') {
+          depth--
+          j++
+          // When depth returns to zero AFTER seeing at least one '(', the
+          // call body is closed. Consume any trailing `;`, then advance to
+          // the next line and resume prelude scan.
+          if (depth === 0 && sawOpenParen) {
+            // Allow optional `;` + horizontal whitespace before EOL.
+            while (j < code.length && (code[j] === ' ' || code[j] === '\t' || code[j] === ';')) {
+              j++
+            }
+            // Advance past the newline (if any) so the outer loop
+            // starts at the next line.
+            if (j < code.length && code[j] === '\n') j++
+            break
+          }
+          continue
+        }
+        if (ch === '\n') {
+          j++
+          continue
+        }
+        j++
+      }
+      // Defensive: if depth never closed (malformed source), stop the
+      // prelude scan here and let the body parser handle whatever remains.
+      // We do NOT consume the malformed call.
+      if (depth !== 0) break
+      i = j
+      continue
+    }
+
+    // 4. Anything else — first body line. Stop here.
+    break
+  }
+
+  return { body: code.slice(i), offset: i }
+}
+
 /** Parse a Strudel code string. Always returns a tree (Code node for unsupported). */
 export function parseStrudel(code: string): PatternIR {
   if (!code.trim()) return IR.pure()
@@ -108,8 +243,27 @@ export function parseStrudel(code: string): PatternIR {
       // distinguishes from `.p("d1")`). toStrudel's β-2 Track arm strips
       // synthetic-d1 (userMethod === undefined) on round-trip so the
       // input → IR → string identity is preserved for non-$: sources.
-      const trimStart = code.search(/\S/)
-      const inner = parseExpression(code.trim(), trimStart >= 0 ? trimStart : 0)
+      //
+      // Phase 20-14 parser-gap fix — strip any leading prelude (whole-line
+      // comments, blank lines, recognised boot-side-effect calls) before
+      // parsing. Real upstream tunes start with a license comment block +
+      // `samples(...)` / `useRNG(...)` invocations; without this strip,
+      // `splitRootAndChain` reads the comment text as the root and the
+      // whole tune falls through to the Code() fallback at line 270.
+      //
+      // The strip applies ONLY to the no-`$:` branch. The multi-track
+      // path keeps reading the original `code` so a `$:` line appearing
+      // before the prelude (uncommon but legal) still produces tracks.
+      const stripped = stripParserPrelude(code)
+      if (!stripped.body.trim()) {
+        // Source is ENTIRELY prelude (no musical body). Return an
+        // empty-body Track wrapper so downstream consumers still get
+        // the synthetic-d1 shape. PV37 wrap-never-drop preserved.
+        return IR.track('d1', IR.pure())
+      }
+      const bodyTrimStart = stripped.body.search(/\S/)
+      const innerOffset = stripped.offset + (bodyTrimStart >= 0 ? bodyTrimStart : 0)
+      const inner = parseExpression(stripped.body.trim(), innerOffset)
       return IR.track('d1', inner)
     }
     if (tracks.length === 1) {
