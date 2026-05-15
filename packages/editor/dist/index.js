@@ -4996,9 +4996,11 @@ function splitArgsWithOffsets(argsStr) {
   let stringChar = "";
   const pushCurrent = () => {
     if (current2.trim().length === 0) return;
-    let leading = 0;
-    while (leading < current2.length && /\s/.test(current2[leading])) leading += 1;
-    args2.push({ value: current2.trim(), offset: currentStart + leading });
+    const consumed = skipWhitespaceAndLineComments(current2, 0);
+    args2.push({
+      value: current2.slice(consumed).trimEnd(),
+      offset: currentStart + consumed
+    });
   };
   for (let i2 = 0; i2 < argsStr.length; i2++) {
     const ch = argsStr[i2];

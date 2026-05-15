@@ -12,20 +12,387 @@ exports[`strudel.cc parity corpus — structural IR shape > amensister parses to
         "tag": "Stack",
         "tracks": [
           {
-            "code": "// amen
-  n("0 1 2 3 4 5 6 7")
-  .sometimes(x=>x.ply(2))
-  .rarely(x=>x.speed("2 | -2"))
-  .sometimesBy(.4, x=>x.delay(".5"))
-  .s("amencutup")
-  .slow(2)
-  .room(.5)",
-            "lang": "strudel",
-            "tag": "Code",
+            "body": {
+              "body": {
+                "body": {
+                  "else_": {
+                    "code": "",
+                    "lang": "strudel",
+                    "tag": "Code",
+                    "via": {
+                      "args": "x=>x.speed("2 | -2")",
+                      "inner": {
+                        "else_": {
+                          "children": [
+                            {
+                              "duration": 0.25,
+                              "note": "0",
+                              "params": {
+                                "gain": 1,
+                                "velocity": 1,
+                              },
+                              "tag": "Play",
+                            },
+                            {
+                              "duration": 0.25,
+                              "note": "1",
+                              "params": {
+                                "gain": 1,
+                                "velocity": 1,
+                              },
+                              "tag": "Play",
+                            },
+                            {
+                              "duration": 0.25,
+                              "note": "2",
+                              "params": {
+                                "gain": 1,
+                                "velocity": 1,
+                              },
+                              "tag": "Play",
+                            },
+                            {
+                              "duration": 0.25,
+                              "note": "3",
+                              "params": {
+                                "gain": 1,
+                                "velocity": 1,
+                              },
+                              "tag": "Play",
+                            },
+                            {
+                              "duration": 0.25,
+                              "note": "4",
+                              "params": {
+                                "gain": 1,
+                                "velocity": 1,
+                              },
+                              "tag": "Play",
+                            },
+                            {
+                              "duration": 0.25,
+                              "note": "5",
+                              "params": {
+                                "gain": 1,
+                                "velocity": 1,
+                              },
+                              "tag": "Play",
+                            },
+                            {
+                              "duration": 0.25,
+                              "note": "6",
+                              "params": {
+                                "gain": 1,
+                                "velocity": 1,
+                              },
+                              "tag": "Play",
+                            },
+                            {
+                              "duration": 0.25,
+                              "note": "7",
+                              "params": {
+                                "gain": 1,
+                                "velocity": 1,
+                              },
+                              "tag": "Play",
+                            },
+                          ],
+                          "tag": "Seq",
+                        },
+                        "p": 0.5,
+                        "tag": "Choice",
+                        "then": {
+                          "body": {
+                            "children": [
+                              {
+                                "duration": 0.25,
+                                "note": "0",
+                                "params": {
+                                  "gain": 1,
+                                  "velocity": 1,
+                                },
+                                "tag": "Play",
+                              },
+                              {
+                                "duration": 0.25,
+                                "note": "1",
+                                "params": {
+                                  "gain": 1,
+                                  "velocity": 1,
+                                },
+                                "tag": "Play",
+                              },
+                              {
+                                "duration": 0.25,
+                                "note": "2",
+                                "params": {
+                                  "gain": 1,
+                                  "velocity": 1,
+                                },
+                                "tag": "Play",
+                              },
+                              {
+                                "duration": 0.25,
+                                "note": "3",
+                                "params": {
+                                  "gain": 1,
+                                  "velocity": 1,
+                                },
+                                "tag": "Play",
+                              },
+                              {
+                                "duration": 0.25,
+                                "note": "4",
+                                "params": {
+                                  "gain": 1,
+                                  "velocity": 1,
+                                },
+                                "tag": "Play",
+                              },
+                              {
+                                "duration": 0.25,
+                                "note": "5",
+                                "params": {
+                                  "gain": 1,
+                                  "velocity": 1,
+                                },
+                                "tag": "Play",
+                              },
+                              {
+                                "duration": 0.25,
+                                "note": "6",
+                                "params": {
+                                  "gain": 1,
+                                  "velocity": 1,
+                                },
+                                "tag": "Play",
+                              },
+                              {
+                                "duration": 0.25,
+                                "note": "7",
+                                "params": {
+                                  "gain": 1,
+                                  "velocity": 1,
+                                },
+                                "tag": "Play",
+                              },
+                            ],
+                            "tag": "Seq",
+                          },
+                          "n": 2,
+                          "tag": "Ply",
+                          "userMethod": "ply",
+                        },
+                        "userMethod": "sometimes",
+                      },
+                      "method": "rarely",
+                    },
+                  },
+                  "p": 0.4,
+                  "tag": "Choice",
+                  "then": {
+                    "code": "",
+                    "lang": "strudel",
+                    "tag": "Code",
+                    "via": {
+                      "args": "".5"",
+                      "inner": {
+                        "code": "",
+                        "lang": "strudel",
+                        "tag": "Code",
+                        "via": {
+                          "args": "x=>x.speed("2 | -2")",
+                          "inner": {
+                            "else_": {
+                              "children": [
+                                {
+                                  "duration": 0.25,
+                                  "note": "0",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "1",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "2",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "3",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "4",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "5",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "6",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "7",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                              ],
+                              "tag": "Seq",
+                            },
+                            "p": 0.5,
+                            "tag": "Choice",
+                            "then": {
+                              "body": {
+                                "children": [
+                                  {
+                                    "duration": 0.25,
+                                    "note": "0",
+                                    "params": {
+                                      "gain": 1,
+                                      "velocity": 1,
+                                    },
+                                    "tag": "Play",
+                                  },
+                                  {
+                                    "duration": 0.25,
+                                    "note": "1",
+                                    "params": {
+                                      "gain": 1,
+                                      "velocity": 1,
+                                    },
+                                    "tag": "Play",
+                                  },
+                                  {
+                                    "duration": 0.25,
+                                    "note": "2",
+                                    "params": {
+                                      "gain": 1,
+                                      "velocity": 1,
+                                    },
+                                    "tag": "Play",
+                                  },
+                                  {
+                                    "duration": 0.25,
+                                    "note": "3",
+                                    "params": {
+                                      "gain": 1,
+                                      "velocity": 1,
+                                    },
+                                    "tag": "Play",
+                                  },
+                                  {
+                                    "duration": 0.25,
+                                    "note": "4",
+                                    "params": {
+                                      "gain": 1,
+                                      "velocity": 1,
+                                    },
+                                    "tag": "Play",
+                                  },
+                                  {
+                                    "duration": 0.25,
+                                    "note": "5",
+                                    "params": {
+                                      "gain": 1,
+                                      "velocity": 1,
+                                    },
+                                    "tag": "Play",
+                                  },
+                                  {
+                                    "duration": 0.25,
+                                    "note": "6",
+                                    "params": {
+                                      "gain": 1,
+                                      "velocity": 1,
+                                    },
+                                    "tag": "Play",
+                                  },
+                                  {
+                                    "duration": 0.25,
+                                    "note": "7",
+                                    "params": {
+                                      "gain": 1,
+                                      "velocity": 1,
+                                    },
+                                    "tag": "Play",
+                                  },
+                                ],
+                                "tag": "Seq",
+                              },
+                              "n": 2,
+                              "tag": "Ply",
+                              "userMethod": "ply",
+                            },
+                            "userMethod": "sometimes",
+                          },
+                          "method": "rarely",
+                        },
+                      },
+                      "method": "delay",
+                    },
+                  },
+                  "userMethod": "sometimesBy",
+                },
+                "key": "s",
+                "rawArgs": ""amencutup"",
+                "tag": "Param",
+                "userMethod": "s",
+                "value": "amencutup",
+              },
+              "factor": 2,
+              "tag": "Slow",
+              "userMethod": "slow",
+            },
+            "name": "room",
+            "params": {
+              "room": 0.5,
+            },
+            "tag": "FX",
+            "userMethod": "room",
           },
           {
-            "code": "// bass
-  sine.add(saw.slow(4)).range(0,7).segment(8)
+            "code": "sine.add(saw.slow(4)).range(0,7).segment(8)
   .superimpose(x=>x.add(.1))
   .scale('G0 minor').note()
   .s("sawtooth")
@@ -38,18 +405,57 @@ exports[`strudel.cc parity corpus — structural IR shape > amensister parses to
             "tag": "Code",
           },
           {
-            "code": "// chord
-  note("Bb3,D4".superimpose(x=>x.add(.2)))
+            "code": "note("Bb3,D4".superimpose(x=>x.add(.2)))
   .s('sawtooth').lpf(1000).struct("<~@3 [~ x]>")
   .decay(.05).sustain(.0).delay(.8).delaytime(.125).room(.8)",
             "lang": "strudel",
             "tag": "Code",
           },
           {
-            "code": "// alien
-  s("breath").room(1).shape(.6).chop(16).rev().mask("<x ~@7>")",
-            "lang": "strudel",
-            "tag": "Code",
+            "body": {
+              "code": "",
+              "lang": "strudel",
+              "tag": "Code",
+              "via": {
+                "args": "",
+                "inner": {
+                  "body": {
+                    "code": "",
+                    "lang": "strudel",
+                    "tag": "Code",
+                    "via": {
+                      "args": ".6",
+                      "inner": {
+                        "body": {
+                          "duration": 1,
+                          "note": "breath",
+                          "params": {
+                            "gain": 1,
+                            "s": "breath",
+                            "velocity": 1,
+                          },
+                          "tag": "Play",
+                        },
+                        "name": "room",
+                        "params": {
+                          "room": 1,
+                        },
+                        "tag": "FX",
+                        "userMethod": "room",
+                      },
+                      "method": "shape",
+                    },
+                  },
+                  "n": 16,
+                  "tag": "Chop",
+                  "userMethod": "chop",
+                },
+                "method": "rev",
+              },
+            },
+            "gate": "<x ~@7>",
+            "tag": "When",
+            "userMethod": "mask",
           },
           {
             "code": "",
@@ -620,17 +1026,62 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
       "tag": "Stack",
       "tracks": [
         {
-          "code": "// bass
-  note("[0 ~] [2 [0 2]] [4 4*2] [[4 ~] [2 ~] 0@2]".scale('g1 dorian').superimpose(x=>x.add(.02)))
+          "code": "note("[0 ~] [2 [0 2]] [4 4*2] [[4 ~] [2 ~] 0@2]".scale('g1 dorian').superimpose(x=>x.add(.02)))
   .s('sawtooth').cutoff(200).resonance(20).gain(.15).shape(.6).release(.05)",
           "lang": "strudel",
           "tag": "Code",
         },
         {
-          "code": "// perc
-  s("[~ hh]*4").room("0 0.5".fast(2)).end(perlin.range(0.02,1))",
+          "code": "",
           "lang": "strudel",
           "tag": "Code",
+          "via": {
+            "args": "perlin.range(0.02,1)",
+            "inner": {
+              "code": "",
+              "lang": "strudel",
+              "tag": "Code",
+              "via": {
+                "args": ""0 0.5".fast(2)",
+                "inner": {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "duration": 1,
+                          "tag": "Sleep",
+                        },
+                        {
+                          "duration": 1,
+                          "note": "hh",
+                          "params": {
+                            "gain": 1,
+                            "s": "hh",
+                            "velocity": 1,
+                          },
+                          "tag": "Play",
+                        },
+                      ],
+                      "tag": "Seq",
+                    },
+                    {
+                      "duration": 1,
+                      "note": "4",
+                      "params": {
+                        "gain": 1,
+                        "s": "4",
+                        "velocity": 1,
+                      },
+                      "tag": "Play",
+                    },
+                  ],
+                  "tag": "Seq",
+                },
+                "method": "room",
+              },
+            },
+            "method": "end",
+          },
         },
         {
           "else_": {
@@ -821,8 +1272,7 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
           },
         },
         {
-          "code": "// chords
-  chord("[~ Gm7] ~ [~ Dm7] ~")
+          "code": "chord("[~ Gm7] ~ [~ Dm7] ~")
   .dict('lefthand').voicing()
   .add(note("0,.1"))
   .s('sawtooth').gain(.8)
@@ -833,8 +1283,7 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
           "tag": "Code",
         },
         {
-          "code": "// blips
-  note(
+          "code": "note(
     "0 5 4 2".iter(4)
     .off(1/3, add(7))
     .scale('g4 dorian')
@@ -846,8 +1295,7 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
           "tag": "Code",
         },
         {
-          "code": "// bell
-  note(rand.range(0,12).struct("x(5,8,-1)").scale('g2 minor pentatonic')).s('bell').begin(.05)
+          "code": "note(rand.range(0,12).struct("x(5,8,-1)").scale('g2 minor pentatonic')).s('bell').begin(.05)
   .delay(.2).degradeBy(.4).gain(.4)
   .mask("<1 0>/8")",
           "lang": "strudel",
@@ -4043,21 +4491,177 @@ exports[`strudel.cc parity corpus — structural IR shape > randomBells parses t
           "tag": "Stack",
           "tracks": [
             {
-              "code": "// bells
-  n("0").euclidLegato(3,8)
-  .echo(3, 1/16, .5)
-  .add(n(rand.range(0,12)))
-  .scale("D:minor:pentatonic")
-  .velocity(rand.range(.5,1))
-  .s('bell').gain(.6).delay(.2).delaytime(1/3).delayfeedback(.8)",
+              "code": "",
               "lang": "strudel",
               "tag": "Code",
+              "via": {
+                "args": ".8",
+                "inner": {
+                  "code": "",
+                  "lang": "strudel",
+                  "tag": "Code",
+                  "via": {
+                    "args": "1/3",
+                    "inner": {
+                      "body": {
+                        "code": "",
+                        "lang": "strudel",
+                        "tag": "Code",
+                        "via": {
+                          "args": ".6",
+                          "inner": {
+                            "code": "",
+                            "lang": "strudel",
+                            "tag": "Code",
+                            "via": {
+                              "args": "'bell'",
+                              "inner": {
+                                "code": "",
+                                "lang": "strudel",
+                                "tag": "Code",
+                                "via": {
+                                  "args": "rand.range(.5,1)",
+                                  "inner": {
+                                    "body": {
+                                      "code": "",
+                                      "lang": "strudel",
+                                      "tag": "Code",
+                                      "via": {
+                                        "args": "n(rand.range(0,12))",
+                                        "inner": {
+                                          "code": "",
+                                          "lang": "strudel",
+                                          "tag": "Code",
+                                          "via": {
+                                            "args": "3, 1/16, .5",
+                                            "inner": {
+                                              "code": "",
+                                              "lang": "strudel",
+                                              "tag": "Code",
+                                              "via": {
+                                                "args": "3,8",
+                                                "inner": {
+                                                  "duration": 0.25,
+                                                  "note": "0",
+                                                  "params": {
+                                                    "gain": 1,
+                                                    "velocity": 1,
+                                                  },
+                                                  "tag": "Play",
+                                                },
+                                                "method": "euclidLegato",
+                                              },
+                                            },
+                                            "method": "echo",
+                                          },
+                                        },
+                                        "method": "add",
+                                      },
+                                    },
+                                    "key": "scale",
+                                    "rawArgs": ""D:minor:pentatonic"",
+                                    "tag": "Param",
+                                    "userMethod": "scale",
+                                    "value": "D:minor:pentatonic",
+                                  },
+                                  "method": "velocity",
+                                },
+                              },
+                              "method": "s",
+                            },
+                          },
+                          "method": "gain",
+                        },
+                      },
+                      "name": "delay",
+                      "params": {
+                        "delay": 0.2,
+                      },
+                      "tag": "FX",
+                      "userMethod": "delay",
+                    },
+                    "method": "delaytime",
+                  },
+                },
+                "method": "delayfeedback",
+              },
             },
             {
-              "code": "// bass
-  note("<D2 A2 G2 F2>").euclidLegatoRot(6,8,4).s('bass').clip(1).gain(.8)",
+              "code": "",
               "lang": "strudel",
               "tag": "Code",
+              "via": {
+                "args": ".8",
+                "inner": {
+                  "code": "",
+                  "lang": "strudel",
+                  "tag": "Code",
+                  "via": {
+                    "args": "1",
+                    "inner": {
+                      "code": "",
+                      "lang": "strudel",
+                      "tag": "Code",
+                      "via": {
+                        "args": "'bass'",
+                        "inner": {
+                          "code": "",
+                          "lang": "strudel",
+                          "tag": "Code",
+                          "via": {
+                            "args": "6,8,4",
+                            "inner": {
+                              "items": [
+                                {
+                                  "duration": 0.25,
+                                  "note": "D2",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "A2",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "G2",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                                {
+                                  "duration": 0.25,
+                                  "note": "F2",
+                                  "params": {
+                                    "gain": 1,
+                                    "velocity": 1,
+                                  },
+                                  "tag": "Play",
+                                },
+                              ],
+                              "tag": "Cycle",
+                            },
+                            "method": "euclidLegatoRot",
+                          },
+                        },
+                        "method": "s",
+                      },
+                    },
+                    "method": "clip",
+                  },
+                },
+                "method": "gain",
+              },
             },
           ],
           "userMethod": "stack",

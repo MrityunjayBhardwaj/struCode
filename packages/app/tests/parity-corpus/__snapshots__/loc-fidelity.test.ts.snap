@@ -41,6 +41,218 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
 )",
   },
   {
+    "tag": "FX",
+    "text": ".room(.5)",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(2)",
+  },
+  {
+    "tag": "Param",
+    "text": ".s("amencutup")",
+  },
+  {
+    "tag": "Choice",
+    "text": ".sometimesBy(.4, x=>x.delay(".5"))",
+  },
+  {
+    "tag": "Code",
+    "text": ".delay(".5")",
+  },
+  {
+    "tag": "Code",
+    "text": ".rarely(x=>x.speed("2 | -2"))",
+  },
+  {
+    "tag": "Choice",
+    "text": ".sometimes(x=>x.ply(2))",
+  },
+  {
+    "tag": "Ply",
+    "text": ".ply(2)",
+  },
+  {
+    "tag": "Seq",
+    "text": "0 1 2 3 4 5 6 7",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "1",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "6",
+  },
+  {
+    "tag": "Play",
+    "text": "7",
+  },
+  {
+    "tag": "Seq",
+    "text": "0 1 2 3 4 5 6 7",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "1",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "6",
+  },
+  {
+    "tag": "Play",
+    "text": "7",
+  },
+  {
+    "tag": "Code",
+    "text": ".rarely(x=>x.speed("2 | -2"))",
+  },
+  {
+    "tag": "Choice",
+    "text": ".sometimes(x=>x.ply(2))",
+  },
+  {
+    "tag": "Ply",
+    "text": ".ply(2)",
+  },
+  {
+    "tag": "Seq",
+    "text": "0 1 2 3 4 5 6 7",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "1",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "6",
+  },
+  {
+    "tag": "Play",
+    "text": "7",
+  },
+  {
+    "tag": "Seq",
+    "text": "0 1 2 3 4 5 6 7",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "1",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "6",
+  },
+  {
+    "tag": "Play",
+    "text": "7",
+  },
+  {
+    "tag": "When",
+    "text": ".mask("<x ~@7>")",
+  },
+  {
+    "tag": "Code",
+    "text": ".rev()",
+  },
+  {
+    "tag": "Chop",
+    "text": ".chop(16)",
+  },
+  {
+    "tag": "Code",
+    "text": ".shape(.6)",
+  },
+  {
+    "tag": "FX",
+    "text": ".room(1)",
+  },
+  {
+    "tag": "Play",
+    "text": "breath",
+  },
+  {
     "tag": "Code",
     "text": ".speed(rand.range(.5,1.5))",
   },
@@ -342,6 +554,34 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
   .delay(.2).degradeBy(.4).gain(.4)
   .mask("<1 0>/8")
 )",
+  },
+  {
+    "tag": "Code",
+    "text": ".end(perlin.range(0.02,1))",
+  },
+  {
+    "tag": "Code",
+    "text": ".room("0 0.5".fast(2))",
+  },
+  {
+    "tag": "Seq",
+    "text": "[~ hh]*4",
+  },
+  {
+    "tag": "Seq",
+    "text": "[~ hh]",
+  },
+  {
+    "tag": "Sleep",
+    "text": "~",
+  },
+  {
+    "tag": "Play",
+    "text": "hh",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
   },
   {
     "tag": "Choice",
@@ -2080,6 +2320,86 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
   // bass
   note("<D2 A2 G2 F2>").euclidLegatoRot(6,8,4).s('bass').clip(1).gain(.8)
 )",
+  },
+  {
+    "tag": "Code",
+    "text": ".delayfeedback(.8)",
+  },
+  {
+    "tag": "Code",
+    "text": ".delaytime(1/3)",
+  },
+  {
+    "tag": "FX",
+    "text": ".delay(.2)",
+  },
+  {
+    "tag": "Code",
+    "text": ".gain(.6)",
+  },
+  {
+    "tag": "Code",
+    "text": ".s('bell')",
+  },
+  {
+    "tag": "Code",
+    "text": ".velocity(rand.range(.5,1))",
+  },
+  {
+    "tag": "Param",
+    "text": ".scale("D:minor:pentatonic")",
+  },
+  {
+    "tag": "Code",
+    "text": ".add(n(rand.range(0,12)))",
+  },
+  {
+    "tag": "Code",
+    "text": ".echo(3, 1/16, .5)",
+  },
+  {
+    "tag": "Code",
+    "text": ".euclidLegato(3,8)",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Code",
+    "text": ".gain(.8)",
+  },
+  {
+    "tag": "Code",
+    "text": ".clip(1)",
+  },
+  {
+    "tag": "Code",
+    "text": ".s('bass')",
+  },
+  {
+    "tag": "Code",
+    "text": ".euclidLegatoRot(6,8,4)",
+  },
+  {
+    "tag": "Cycle",
+    "text": "<D2 A2 G2 F2>",
+  },
+  {
+    "tag": "Play",
+    "text": "D2",
+  },
+  {
+    "tag": "Play",
+    "text": "A2",
+  },
+  {
+    "tag": "Play",
+    "text": "G2",
+  },
+  {
+    "tag": "Play",
+    "text": "F2",
   },
 ]
 `;

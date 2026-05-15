@@ -1559,10 +1559,29 @@ function splitArgsWithOffsets(
 
   const pushCurrent = (): void => {
     if (current.trim().length === 0) return
-    // Trimmed value's offset = currentStart + leadingWs-of-current.
-    let leading = 0
-    while (leading < current.length && /\s/.test(current[leading])) leading += 1
-    args.push({ value: current.trim(), offset: currentStart + leading })
+    // 20-15 α-4 / #137 (G4): generalise the per-arg leading scan from
+    // whitespace-only to the shared PV49 primitive so a leading
+    // `// comment\n` (a whole-line comment between `stack()` args, OR a
+    // comment after a `,` that the comma branch folded into the next
+    // arg's leading region) is treated as consumed prefix — not as the
+    // arg's first real char. Without this the arg substring begins with
+    // `/`, `splitRootAndChain` reads `/` as the root, and the arg falls
+    // to Code() (`Stack[Code,Code]` instead of `Stack[Play,Play]`).
+    //
+    // OFFSET CONTRACT (the α-4 pre-mortem mitigation): `consumed` is the
+    // SINGLE source of truth — the trimmed value is sliced FROM
+    // `consumed` and the offset is computed FROM the same `consumed`, so
+    // they can never drift apart by the comment length. For the
+    // no-comment case `consumed` === the old leading-`\s` count exactly
+    // (the primitive consumes `\s` runs identically), so every existing
+    // corpus snapshot + loc-fidelity entry is byte-for-byte unchanged.
+    // Trailing whitespace is still trimmed (parity with the old
+    // `current.trim()`); trailing trim never moves the START offset.
+    const consumed = skipWhitespaceAndLineComments(current, 0)
+    args.push({
+      value: current.slice(consumed).trimEnd(),
+      offset: currentStart + consumed,
+    })
   }
 
   for (let i = 0; i < argsStr.length; i++) {
