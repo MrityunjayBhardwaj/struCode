@@ -266,6 +266,16 @@ Two distinct sub-boundaries must change (both VERIFIED as gaps):
   yields correct values — likely yes, since note/n share `false` (pS:456).**
   (Confidence: HIGH on the conflict; MEDIUM on the resolution — needs the
   Lokāyata probe.)
+- **β-1 PROBE RESOLUTION (2026-05-16, observed not inferred):**
+  `parseExpression('"0 2".fast(2)')` → correct `Fast{Seq[Play 0, Play 2]}`
+  (note/n `isSampleKey=false` default is correct — no threading needed for
+  note/n). BUT `parseExpression('"bd".jux(rev)')` → inner `"bd"` becomes
+  `Play note:"bd"` with NO `params.s`, duration 0.25; whereas
+  `parseMini("bd", true)` → `Play note:"bd" params.s:"bd" duration:1`.
+  isSample is NOT inert: for the `s(...)` arm the inner bare string MUST
+  be parsed with `isSampleKey=true`. **Resolution: β-2's recursive arm
+  MUST thread the caller's `isSampleKey` (s→true, note/n/mini→false) into
+  the inner parse; plain `parseExpression` is UNSOUND for `s(...)`.**
 - **Recommended shape:** in `parseRoot`, BEFORE the strict
   `note/n("…")\)` regex, add a "loose" arm: match `^(?:note|n|s|mini)\s*\(`,
   find matching `)` via `findMatchingParen`, take inner substring, and call
