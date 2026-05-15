@@ -4556,13 +4556,13 @@ function skipWhitespaceAndLineComments(src, pos) {
   }
   return i2;
 }
-function parseExpression(expr, baseOffset = 0) {
+function parseExpression(expr, baseOffset = 0, isSampleKey) {
   if (!expr.trim()) return IR.pure();
   try {
     const leadingWs = expr.length - expr.trimStart().length;
     const trimmedOffset = baseOffset + leadingWs;
     const { root, chain } = splitRootAndChain(expr.trim());
-    const rootIR = parseRoot(root, trimmedOffset);
+    const rootIR = parseRoot(root, trimmedOffset, isSampleKey);
     const rootIsBareCode = rootIR.tag === "Code" && rootIR.via === void 0;
     if (rootIsBareCode && !chain.trim()) {
       return IR.code(expr);
@@ -4577,7 +4577,7 @@ function parseExpression(expr, baseOffset = 0) {
     return IR.code(expr);
   }
 }
-function parseRoot(root, baseOffset = 0) {
+function parseRoot(root, baseOffset = 0, isSampleKey) {
   const trimmed = root.trim();
   const leadingWs = root.length - root.trimStart().length;
   const noteMatch = trimmed.match(/^(?:note|n)\s*\(\s*"([^"]*)"\s*\)/);
@@ -4597,6 +4597,32 @@ function parseRoot(root, baseOffset = 0) {
     const quoteIdx = miniMatch[0].indexOf('"');
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1;
     return parseMini(miniMatch[1], false, innerOffset);
+  }
+  const looseMatch = trimmed.match(/^(note|n|s|mini)\s*\(/);
+  if (looseMatch) {
+    const fnName = looseMatch[1];
+    const openParenIdx = trimmed.indexOf("(", looseMatch[0].length - 1);
+    const closeIdx = openParenIdx >= 0 ? findMatchingParen(trimmed, openParenIdx) : -1;
+    if (closeIdx > openParenIdx) {
+      const inner = trimmed.slice(openParenIdx + 1, closeIdx);
+      const innerTrimmed = inner.trim();
+      const isPlainQuoted = /^"[^"]*"$/.test(innerTrimmed);
+      const isPlainBacktick = /^`[^`]*`$/.test(innerTrimmed);
+      if (!isPlainQuoted && !isPlainBacktick && innerTrimmed.length > 0) {
+        const innerLeadingWs = inner.length - inner.trimStart().length;
+        const innerAbsOffset = baseOffset + leadingWs + openParenIdx + 1 + innerLeadingWs;
+        const callerIsSample = fnName === "s";
+        const innerIR = parseExpression(
+          innerTrimmed,
+          innerAbsOffset,
+          callerIsSample
+        );
+        const innerIsBareCode = innerIR.tag === "Code" && innerIR.via === void 0;
+        if (!innerIsBareCode) {
+          return innerIR;
+        }
+      }
+    }
   }
   const stackMatch = trimmed.match(/^stack\s*\(/);
   if (stackMatch) {
@@ -4626,7 +4652,7 @@ function parseRoot(root, baseOffset = 0) {
   const bareStringMatch = trimmed.match(/^"([^"]*)"$/);
   if (bareStringMatch) {
     const innerOffset = baseOffset + leadingWs + 1;
-    return parseMini(bareStringMatch[1], false, innerOffset);
+    return parseMini(bareStringMatch[1], isSampleKey ?? false, innerOffset);
   }
   return IR.code(trimmed);
 }

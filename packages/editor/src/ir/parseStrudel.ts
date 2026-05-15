@@ -467,7 +467,16 @@ export function skipWhitespaceAndLineComments(src: string, pos: number): number 
  *
  * e.g. 'note("c4 e4").fast(2).every(4, fast(2))'
  */
-export function parseExpression(expr: string, baseOffset = 0): PatternIR {
+export function parseExpression(
+  expr: string,
+  baseOffset = 0,
+  // #132 (β-2) — when set, threads the caller's s-vs-note context into
+  // the inner bare-string root. β-1 probe proved `s(...)` inner bare
+  // strings MUST parse with isSampleKey=true (params.s + duration:1 are
+  // lost otherwise); note/n/mini stay false. `undefined` = unchanged
+  // pre-β-2 behavior (the bare-string arm's own default of false).
+  isSampleKey?: boolean,
+): PatternIR {
   if (!expr.trim()) return IR.pure()
 
   try {
@@ -488,7 +497,7 @@ export function parseExpression(expr: string, baseOffset = 0): PatternIR {
     // those wrappers as opaque and discarded the entire structure — surfaces
     // for `stack(single-arg-with-unmapped-pattern-chain)` shapes such as
     // `stack(s("bd").delay("<0 .5>")...).sometimes(...)` in delay.strudel.
-    const rootIR = parseRoot(root, trimmedOffset)
+    const rootIR = parseRoot(root, trimmedOffset, isSampleKey)
     const rootIsBareCode =
       rootIR.tag === 'Code' && (rootIR as { via?: unknown }).via === undefined
     if (rootIsBareCode && !chain.trim()) {
@@ -521,7 +530,15 @@ export function parseExpression(expr: string, baseOffset = 0): PatternIR {
  * Parse the root function call: note("..."), s("..."), stack(...), or bare expression.
  * `baseOffset` is the absolute char offset of `root[0]` within the user's code.
  */
-export function parseRoot(root: string, baseOffset = 0): PatternIR {
+export function parseRoot(
+  root: string,
+  baseOffset = 0,
+  // #132 (β-2) — caller's s-vs-note context for the bare-string root
+  // arm. `undefined` keeps the pre-β-2 default (false). Threaded from
+  // the loose recursive arm so `s("bd".jux(rev))`'s inner `"bd"` parses
+  // with sample semantics (β-1 probe resolution).
+  isSampleKey?: boolean,
+): PatternIR {
   const trimmed = root.trim()
   const leadingWs = root.length - root.trimStart().length
 
@@ -553,6 +570,66 @@ export function parseRoot(root: string, baseOffset = 0): PatternIR {
     const quoteIdx = miniMatch[0].indexOf('"')
     const innerOffset = baseOffset + leadingWs + quoteIdx + 1
     return parseMini(miniMatch[1], false, innerOffset)
+  }
+
+  // #132 (β-2) — LOOSE recursive arm for note/n/s/mini args that carry
+  // an inner method chain, e.g. `n("[0,3]".fast(3).lastOf(4, fast(2)))`.
+  // Fires ONLY after the strict `"…"\)` fast-paths above (so the common
+  // single-string case keeps its exact 20-14 snapshot), and ONLY when
+  // the inner is NOT a plain `"…"` / `` `…` `` (those belong to the
+  // strict/backtick arms). The inner is delegated to parseExpression —
+  // there is NO IR.note(parsed) constructor (research conflict); the
+  // inner ROOT is a mini string and the rest is a CHAIN, exactly what
+  // parseExpression already decomposes (split-root/chain + parseMini +
+  // applyChain). The β-1 probe proved the s-vs-note `isSampleKey`
+  // context is NOT inert and MUST be threaded (s→true, note/n/mini→
+  // false). P67: if the recursion returns BARE Code
+  // (tag==='Code' && via===undefined), fall THROUGH to the existing
+  // IR.code(trimmed) fallback below — never emit a half-wrapped node to
+  // a via-expecting consumer.
+  const looseMatch = trimmed.match(/^(note|n|s|mini)\s*\(/)
+  if (looseMatch) {
+    const fnName = looseMatch[1]
+    const openParenIdx = trimmed.indexOf('(', looseMatch[0].length - 1)
+    const closeIdx =
+      openParenIdx >= 0 ? findMatchingParen(trimmed, openParenIdx) : -1
+    if (closeIdx > openParenIdx) {
+      const inner = trimmed.slice(openParenIdx + 1, closeIdx)
+      const innerTrimmed = inner.trim()
+      // Let the strict regexes (above) own the plain single-string case
+      // — both `"…"` and backtick `` `…` `` (β-3) — to avoid churn on
+      // the 15 structured tunes. Only enter for chained / non-plain
+      // inners (the actual #132 shape).
+      const isPlainQuoted = /^"[^"]*"$/.test(innerTrimmed)
+      const isPlainBacktick = /^`[^`]*`$/.test(innerTrimmed)
+      if (!isPlainQuoted && !isPlainBacktick && innerTrimmed.length > 0) {
+        // Absolute offset of inner[0] within the user's full source:
+        // baseOffset + leadingWs already points at trimmed[0]; the inner
+        // starts at openParenIdx+1 within `trimmed` (additive — same
+        // shape as the stack arm).
+        const innerLeadingWs = inner.length - inner.trimStart().length
+        const innerAbsOffset =
+          baseOffset + leadingWs + openParenIdx + 1 + innerLeadingWs
+        // β-1 resolution: thread the caller's sample context.
+        const callerIsSample = fnName === 's'
+        const innerIR = parseExpression(
+          innerTrimmed,
+          innerAbsOffset,
+          callerIsSample,
+        )
+        const innerIsBareCode =
+          innerIR.tag === 'Code' &&
+          (innerIR as { via?: unknown }).via === undefined
+        // P67: bare-Code inner → DO NOT wrap; fall through to the
+        // canonical IR.code(trimmed) fallback at the bottom of parseRoot
+        // (single bare-Code shape, via===undefined). Only a structured
+        // (or via-wrapped) inner is accepted here.
+        if (!innerIsBareCode) {
+          return innerIR
+        }
+        // else: fall through to the opaque fallback below.
+      }
+    }
   }
 
   // stack(a, b, c) — parallel composition. Issue #107 — each arg's
@@ -610,7 +687,10 @@ export function parseRoot(root: string, baseOffset = 0): PatternIR {
   if (bareStringMatch) {
     // innerOffset points at the FIRST char inside the quotes.
     const innerOffset = baseOffset + leadingWs + 1
-    return parseMini(bareStringMatch[1], false, innerOffset)
+    // #132 (β-2): when the loose recursive arm threaded the caller's
+    // s-vs-note context, honour it here; otherwise keep the pre-β-2
+    // default of `false` (snapshot-preserving for the 15 tunes).
+    return parseMini(bareStringMatch[1], isSampleKey ?? false, innerOffset)
   }
 
   // Fallback: treat as opaque

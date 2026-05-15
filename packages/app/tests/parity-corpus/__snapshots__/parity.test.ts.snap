@@ -405,11 +405,101 @@ exports[`strudel.cc parity corpus — structural IR shape > amensister parses to
             "tag": "Code",
           },
           {
-            "code": "note("Bb3,D4".superimpose(x=>x.add(.2)))
-  .s('sawtooth').lpf(1000).struct("<~@3 [~ x]>")
-  .decay(.05).sustain(.0).delay(.8).delaytime(.125).room(.8)",
-            "lang": "strudel",
-            "tag": "Code",
+            "body": {
+              "code": "",
+              "lang": "strudel",
+              "tag": "Code",
+              "via": {
+                "args": ".125",
+                "inner": {
+                  "body": {
+                    "code": "",
+                    "lang": "strudel",
+                    "tag": "Code",
+                    "via": {
+                      "args": ".0",
+                      "inner": {
+                        "code": "",
+                        "lang": "strudel",
+                        "tag": "Code",
+                        "via": {
+                          "args": ".05",
+                          "inner": {
+                            "body": {
+                              "body": {
+                                "code": "",
+                                "lang": "strudel",
+                                "tag": "Code",
+                                "via": {
+                                  "args": "'sawtooth'",
+                                  "inner": {
+                                    "code": "",
+                                    "lang": "strudel",
+                                    "tag": "Code",
+                                    "via": {
+                                      "args": "x=>x.add(.2)",
+                                      "inner": {
+                                        "children": [
+                                          {
+                                            "duration": 0.25,
+                                            "note": "Bb3",
+                                            "params": {
+                                              "gain": 1,
+                                              "velocity": 1,
+                                            },
+                                            "tag": "Play",
+                                          },
+                                          {
+                                            "duration": 0.25,
+                                            "note": "D4",
+                                            "params": {
+                                              "gain": 1,
+                                              "velocity": 1,
+                                            },
+                                            "tag": "Play",
+                                          },
+                                        ],
+                                        "tag": "Seq",
+                                      },
+                                      "method": "superimpose",
+                                    },
+                                  },
+                                  "method": "s",
+                                },
+                              },
+                              "name": "lpf",
+                              "params": {
+                                "lpf": 1000,
+                              },
+                              "tag": "FX",
+                              "userMethod": "lpf",
+                            },
+                            "mask": "<~@3 [~ x]>",
+                            "tag": "Struct",
+                            "userMethod": "struct",
+                          },
+                          "method": "decay",
+                        },
+                      },
+                      "method": "sustain",
+                    },
+                  },
+                  "name": "delay",
+                  "params": {
+                    "delay": 0.8,
+                  },
+                  "tag": "FX",
+                  "userMethod": "delay",
+                },
+                "method": "delaytime",
+              },
+            },
+            "name": "room",
+            "params": {
+              "room": 0.8,
+            },
+            "tag": "FX",
+            "userMethod": "room",
           },
           {
             "body": {
@@ -523,28 +613,282 @@ exports[`strudel.cc parity corpus — structural IR shape > amensister parses to
 exports[`strudel.cc parity corpus — structural IR shape > arpoon parses to a stable IR shape 1`] = `
 {
   "body": {
-    "code": "n("[0,3] 2 [1,3] 2".fast(3).lastOf(4, fast(2))).clip(2)
-  .offset("<<1 2> 2 1 1>")
-  .chord("<<Am7 C^7> C7 F^7 [Fm7 E7b9]>")
-  .dict('lefthand').voicing()
-  .add(perlin.range(0,0.2).add("<-12 0>/8").note())
-  .cutoff(perlin.range(500,4000)).resonance(12)
-  .gain("<.5 .8>*16")
-  .decay(.16).sustain(0.5)
-  .delay(.2)
-  .room(.5).pan(sine.range(.3,.6))
-  .s('piano')
-  .stack(
+    "code": "",
+    "lang": "strudel",
+    "tag": "Code",
+    "via": {
+      "args": "s("bd*4, [~ [hh hh? hh?]]*2,~ [sd ~ [sd:2? bd?]]").bank('RolandTR909').gain(.5).slow(2)",
+      "inner": {
+        "body": {
+          "code": "",
+          "lang": "strudel",
+          "tag": "Code",
+          "via": {
+            "args": "
     "<<A1 C2>!2 F2 F2>"
     .add.out("0 -5".fast(2))
     .add("0,.12").note()
     .s('sawtooth').cutoff(180)
     .lpa(.1).lpenv(2)
-  )
-  .slow(4)
-  .stack(s("bd*4, [~ [hh hh? hh?]]*2,~ [sd ~ [sd:2? bd?]]").bank('RolandTR909').gain(.5).slow(2))",
-    "lang": "strudel",
-    "tag": "Code",
+  ",
+            "inner": {
+              "code": "",
+              "lang": "strudel",
+              "tag": "Code",
+              "via": {
+                "args": "'piano'",
+                "inner": {
+                  "code": "",
+                  "lang": "strudel",
+                  "tag": "Code",
+                  "via": {
+                    "args": "sine.range(.3,.6)",
+                    "inner": {
+                      "body": {
+                        "body": {
+                          "code": "",
+                          "lang": "strudel",
+                          "tag": "Code",
+                          "via": {
+                            "args": "0.5",
+                            "inner": {
+                              "code": "",
+                              "lang": "strudel",
+                              "tag": "Code",
+                              "via": {
+                                "args": ".16",
+                                "inner": {
+                                  "body": {
+                                    "body": {
+                                      "code": "",
+                                      "lang": "strudel",
+                                      "tag": "Code",
+                                      "via": {
+                                        "args": "perlin.range(500,4000)",
+                                        "inner": {
+                                          "code": "",
+                                          "lang": "strudel",
+                                          "tag": "Code",
+                                          "via": {
+                                            "args": "perlin.range(0,0.2).add("<-12 0>/8").note()",
+                                            "inner": {
+                                              "code": "",
+                                              "lang": "strudel",
+                                              "tag": "Code",
+                                              "via": {
+                                                "args": "",
+                                                "inner": {
+                                                  "code": "",
+                                                  "lang": "strudel",
+                                                  "tag": "Code",
+                                                  "via": {
+                                                    "args": "'lefthand'",
+                                                    "inner": {
+                                                      "code": "",
+                                                      "lang": "strudel",
+                                                      "tag": "Code",
+                                                      "via": {
+                                                        "args": ""<<Am7 C^7> C7 F^7 [Fm7 E7b9]>"",
+                                                        "inner": {
+                                                          "code": "",
+                                                          "lang": "strudel",
+                                                          "tag": "Code",
+                                                          "via": {
+                                                            "args": ""<<1 2> 2 1 1>"",
+                                                            "inner": {
+                                                              "code": "",
+                                                              "lang": "strudel",
+                                                              "tag": "Code",
+                                                              "via": {
+                                                                "args": "2",
+                                                                "inner": {
+                                                                  "code": "",
+                                                                  "lang": "strudel",
+                                                                  "tag": "Code",
+                                                                  "via": {
+                                                                    "args": "4, fast(2)",
+                                                                    "inner": {
+                                                                      "body": {
+                                                                        "children": [
+                                                                          {
+                                                                            "children": [
+                                                                              {
+                                                                                "duration": 0.25,
+                                                                                "note": "0",
+                                                                                "params": {
+                                                                                  "gain": 1,
+                                                                                  "velocity": 1,
+                                                                                },
+                                                                                "tag": "Play",
+                                                                              },
+                                                                              {
+                                                                                "duration": 0.25,
+                                                                                "note": "3",
+                                                                                "params": {
+                                                                                  "gain": 1,
+                                                                                  "velocity": 1,
+                                                                                },
+                                                                                "tag": "Play",
+                                                                              },
+                                                                            ],
+                                                                            "tag": "Seq",
+                                                                          },
+                                                                          {
+                                                                            "duration": 0.25,
+                                                                            "note": "2",
+                                                                            "params": {
+                                                                              "gain": 1,
+                                                                              "velocity": 1,
+                                                                            },
+                                                                            "tag": "Play",
+                                                                          },
+                                                                          {
+                                                                            "children": [
+                                                                              {
+                                                                                "duration": 0.25,
+                                                                                "note": "1",
+                                                                                "params": {
+                                                                                  "gain": 1,
+                                                                                  "velocity": 1,
+                                                                                },
+                                                                                "tag": "Play",
+                                                                              },
+                                                                              {
+                                                                                "duration": 0.25,
+                                                                                "note": "3",
+                                                                                "params": {
+                                                                                  "gain": 1,
+                                                                                  "velocity": 1,
+                                                                                },
+                                                                                "tag": "Play",
+                                                                              },
+                                                                            ],
+                                                                            "tag": "Seq",
+                                                                          },
+                                                                          {
+                                                                            "duration": 0.25,
+                                                                            "note": "2",
+                                                                            "params": {
+                                                                              "gain": 1,
+                                                                              "velocity": 1,
+                                                                            },
+                                                                            "tag": "Play",
+                                                                          },
+                                                                        ],
+                                                                        "tag": "Seq",
+                                                                      },
+                                                                      "factor": 3,
+                                                                      "tag": "Fast",
+                                                                      "userMethod": "fast",
+                                                                    },
+                                                                    "method": "lastOf",
+                                                                  },
+                                                                },
+                                                                "method": "clip",
+                                                              },
+                                                            },
+                                                            "method": "offset",
+                                                          },
+                                                        },
+                                                        "method": "chord",
+                                                      },
+                                                    },
+                                                    "method": "dict",
+                                                  },
+                                                },
+                                                "method": "voicing",
+                                              },
+                                            },
+                                            "method": "add",
+                                          },
+                                        },
+                                        "method": "cutoff",
+                                      },
+                                    },
+                                    "name": "resonance",
+                                    "params": {
+                                      "resonance": 12,
+                                    },
+                                    "tag": "FX",
+                                    "userMethod": "resonance",
+                                  },
+                                  "key": "gain",
+                                  "rawArgs": ""<.5 .8>*16"",
+                                  "tag": "Param",
+                                  "userMethod": "gain",
+                                  "value": {
+                                    "children": [
+                                      {
+                                        "items": [
+                                          {
+                                            "duration": 0.25,
+                                            "note": "5",
+                                            "params": {
+                                              "gain": 1,
+                                              "velocity": 1,
+                                            },
+                                            "tag": "Play",
+                                          },
+                                          {
+                                            "duration": 0.25,
+                                            "note": "8",
+                                            "params": {
+                                              "gain": 1,
+                                              "velocity": 1,
+                                            },
+                                            "tag": "Play",
+                                          },
+                                        ],
+                                        "tag": "Cycle",
+                                      },
+                                      {
+                                        "duration": 0.25,
+                                        "note": "16",
+                                        "params": {
+                                          "gain": 1,
+                                          "velocity": 1,
+                                        },
+                                        "tag": "Play",
+                                      },
+                                    ],
+                                    "tag": "Seq",
+                                  },
+                                },
+                                "method": "decay",
+                              },
+                            },
+                            "method": "sustain",
+                          },
+                        },
+                        "name": "delay",
+                        "params": {
+                          "delay": 0.2,
+                        },
+                        "tag": "FX",
+                        "userMethod": "delay",
+                      },
+                      "name": "room",
+                      "params": {
+                        "room": 0.5,
+                      },
+                      "tag": "FX",
+                      "userMethod": "room",
+                    },
+                    "method": "pan",
+                  },
+                },
+                "method": "s",
+              },
+            },
+            "method": "stack",
+          },
+        },
+        "factor": 4,
+        "tag": "Slow",
+        "userMethod": "slow",
+      },
+      "method": "stack",
+    },
   },
   "tag": "Track",
   "trackId": "d1",
@@ -1026,10 +1370,215 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
       "tag": "Stack",
       "tracks": [
         {
-          "code": "note("[0 ~] [2 [0 2]] [4 4*2] [[4 ~] [2 ~] 0@2]".scale('g1 dorian').superimpose(x=>x.add(.02)))
-  .s('sawtooth').cutoff(200).resonance(20).gain(.15).shape(.6).release(.05)",
+          "code": "",
           "lang": "strudel",
           "tag": "Code",
+          "via": {
+            "args": ".05",
+            "inner": {
+              "code": "",
+              "lang": "strudel",
+              "tag": "Code",
+              "via": {
+                "args": ".6",
+                "inner": {
+                  "code": "",
+                  "lang": "strudel",
+                  "tag": "Code",
+                  "via": {
+                    "args": ".15",
+                    "inner": {
+                      "body": {
+                        "body": {
+                          "code": "",
+                          "lang": "strudel",
+                          "tag": "Code",
+                          "via": {
+                            "args": "'sawtooth'",
+                            "inner": {
+                              "code": "",
+                              "lang": "strudel",
+                              "tag": "Code",
+                              "via": {
+                                "args": "x=>x.add(.02)",
+                                "inner": {
+                                  "code": "",
+                                  "lang": "strudel",
+                                  "tag": "Code",
+                                  "via": {
+                                    "args": "'g1 dorian'",
+                                    "inner": {
+                                      "children": [
+                                        {
+                                          "children": [
+                                            {
+                                              "duration": 0.25,
+                                              "note": "0",
+                                              "params": {
+                                                "gain": 1,
+                                                "velocity": 1,
+                                              },
+                                              "tag": "Play",
+                                            },
+                                            {
+                                              "duration": 1,
+                                              "tag": "Sleep",
+                                            },
+                                          ],
+                                          "tag": "Seq",
+                                        },
+                                        {
+                                          "children": [
+                                            {
+                                              "duration": 0.25,
+                                              "note": "2",
+                                              "params": {
+                                                "gain": 1,
+                                                "velocity": 1,
+                                              },
+                                              "tag": "Play",
+                                            },
+                                            {
+                                              "children": [
+                                                {
+                                                  "duration": 0.25,
+                                                  "note": "0",
+                                                  "params": {
+                                                    "gain": 1,
+                                                    "velocity": 1,
+                                                  },
+                                                  "tag": "Play",
+                                                },
+                                                {
+                                                  "duration": 0.25,
+                                                  "note": "2",
+                                                  "params": {
+                                                    "gain": 1,
+                                                    "velocity": 1,
+                                                  },
+                                                  "tag": "Play",
+                                                },
+                                              ],
+                                              "tag": "Seq",
+                                            },
+                                          ],
+                                          "tag": "Seq",
+                                        },
+                                        {
+                                          "children": [
+                                            {
+                                              "duration": 0.25,
+                                              "note": "4",
+                                              "params": {
+                                                "gain": 1,
+                                                "velocity": 1,
+                                              },
+                                              "tag": "Play",
+                                            },
+                                            {
+                                              "body": {
+                                                "duration": 0.25,
+                                                "note": "4",
+                                                "params": {
+                                                  "gain": 1,
+                                                  "velocity": 1,
+                                                },
+                                                "tag": "Play",
+                                              },
+                                              "factor": 2,
+                                              "tag": "Fast",
+                                            },
+                                          ],
+                                          "tag": "Seq",
+                                        },
+                                        {
+                                          "children": [
+                                            {
+                                              "children": [
+                                                {
+                                                  "duration": 0.25,
+                                                  "note": "4",
+                                                  "params": {
+                                                    "gain": 1,
+                                                    "velocity": 1,
+                                                  },
+                                                  "tag": "Play",
+                                                },
+                                                {
+                                                  "duration": 1,
+                                                  "tag": "Sleep",
+                                                },
+                                              ],
+                                              "tag": "Seq",
+                                            },
+                                            {
+                                              "children": [
+                                                {
+                                                  "duration": 0.25,
+                                                  "note": "2",
+                                                  "params": {
+                                                    "gain": 1,
+                                                    "velocity": 1,
+                                                  },
+                                                  "tag": "Play",
+                                                },
+                                                {
+                                                  "duration": 1,
+                                                  "tag": "Sleep",
+                                                },
+                                              ],
+                                              "tag": "Seq",
+                                            },
+                                            {
+                                              "body": {
+                                                "duration": 0.25,
+                                                "note": "0",
+                                                "params": {
+                                                  "gain": 1,
+                                                  "velocity": 1,
+                                                },
+                                                "tag": "Play",
+                                              },
+                                              "factor": 2,
+                                              "tag": "Elongate",
+                                            },
+                                          ],
+                                          "tag": "Seq",
+                                        },
+                                      ],
+                                      "tag": "Seq",
+                                    },
+                                    "method": "scale",
+                                  },
+                                },
+                                "method": "superimpose",
+                              },
+                            },
+                            "method": "s",
+                          },
+                        },
+                        "name": "cutoff",
+                        "params": {
+                          "cutoff": 200,
+                        },
+                        "tag": "FX",
+                        "userMethod": "cutoff",
+                      },
+                      "name": "resonance",
+                      "params": {
+                        "resonance": 20,
+                      },
+                      "tag": "FX",
+                      "userMethod": "resonance",
+                    },
+                    "method": "gain",
+                  },
+                },
+                "method": "shape",
+              },
+            },
+            "method": "release",
+          },
         },
         {
           "code": "",
@@ -1283,16 +1832,211 @@ exports[`strudel.cc parity corpus — structural IR shape > belldub parses to a 
           "tag": "Code",
         },
         {
-          "code": "note(
-    "0 5 4 2".iter(4)
-    .off(1/3, add(7))
-    .scale('g4 dorian')
-  ).s('square').cutoff(2000).decay(.03).sustain(0)
-  .degradeBy(.2)
-  .orbit(2).delay(.2).delaytime(".33 | .6 | .166 | .25")
-  .room(1).gain(.5).mask("<0 1>/8")",
-          "lang": "strudel",
-          "tag": "Code",
+          "body": {
+            "code": "",
+            "lang": "strudel",
+            "tag": "Code",
+            "via": {
+              "args": ".5",
+              "inner": {
+                "body": {
+                  "code": "",
+                  "lang": "strudel",
+                  "tag": "Code",
+                  "via": {
+                    "args": "".33 | .6 | .166 | .25"",
+                    "inner": {
+                      "body": {
+                        "code": "",
+                        "lang": "strudel",
+                        "tag": "Code",
+                        "via": {
+                          "args": "2",
+                          "inner": {
+                            "body": {
+                              "code": "",
+                              "lang": "strudel",
+                              "tag": "Code",
+                              "via": {
+                                "args": "0",
+                                "inner": {
+                                  "code": "",
+                                  "lang": "strudel",
+                                  "tag": "Code",
+                                  "via": {
+                                    "args": ".03",
+                                    "inner": {
+                                      "body": {
+                                        "code": "",
+                                        "lang": "strudel",
+                                        "tag": "Code",
+                                        "via": {
+                                          "args": "'square'",
+                                          "inner": {
+                                            "code": "",
+                                            "lang": "strudel",
+                                            "tag": "Code",
+                                            "via": {
+                                              "args": "'g4 dorian'",
+                                              "inner": {
+                                                "tag": "Stack",
+                                                "tracks": [
+                                                  {
+                                                    "code": "",
+                                                    "lang": "strudel",
+                                                    "tag": "Code",
+                                                    "via": {
+                                                      "args": "4",
+                                                      "inner": {
+                                                        "children": [
+                                                          {
+                                                            "duration": 0.25,
+                                                            "note": "0",
+                                                            "params": {
+                                                              "gain": 1,
+                                                              "velocity": 1,
+                                                            },
+                                                            "tag": "Play",
+                                                          },
+                                                          {
+                                                            "duration": 0.25,
+                                                            "note": "5",
+                                                            "params": {
+                                                              "gain": 1,
+                                                              "velocity": 1,
+                                                            },
+                                                            "tag": "Play",
+                                                          },
+                                                          {
+                                                            "duration": 0.25,
+                                                            "note": "4",
+                                                            "params": {
+                                                              "gain": 1,
+                                                              "velocity": 1,
+                                                            },
+                                                            "tag": "Play",
+                                                          },
+                                                          {
+                                                            "duration": 0.25,
+                                                            "note": "2",
+                                                            "params": {
+                                                              "gain": 1,
+                                                              "velocity": 1,
+                                                            },
+                                                            "tag": "Play",
+                                                          },
+                                                        ],
+                                                        "tag": "Seq",
+                                                      },
+                                                      "method": "iter",
+                                                    },
+                                                  },
+                                                  {
+                                                    "body": {
+                                                      "code": "",
+                                                      "lang": "strudel",
+                                                      "tag": "Code",
+                                                      "via": {
+                                                        "args": "4",
+                                                        "inner": {
+                                                          "children": [
+                                                            {
+                                                              "duration": 0.25,
+                                                              "note": "0",
+                                                              "params": {
+                                                                "gain": 1,
+                                                                "velocity": 1,
+                                                              },
+                                                              "tag": "Play",
+                                                            },
+                                                            {
+                                                              "duration": 0.25,
+                                                              "note": "5",
+                                                              "params": {
+                                                                "gain": 1,
+                                                                "velocity": 1,
+                                                              },
+                                                              "tag": "Play",
+                                                            },
+                                                            {
+                                                              "duration": 0.25,
+                                                              "note": "4",
+                                                              "params": {
+                                                                "gain": 1,
+                                                                "velocity": 1,
+                                                              },
+                                                              "tag": "Play",
+                                                            },
+                                                            {
+                                                              "duration": 0.25,
+                                                              "note": "2",
+                                                              "params": {
+                                                                "gain": 1,
+                                                                "velocity": 1,
+                                                              },
+                                                              "tag": "Play",
+                                                            },
+                                                          ],
+                                                          "tag": "Seq",
+                                                        },
+                                                        "method": "iter",
+                                                      },
+                                                    },
+                                                    "offset": 1,
+                                                    "tag": "Late",
+                                                  },
+                                                ],
+                                                "userMethod": "off",
+                                              },
+                                              "method": "scale",
+                                            },
+                                          },
+                                          "method": "s",
+                                        },
+                                      },
+                                      "name": "cutoff",
+                                      "params": {
+                                        "cutoff": 2000,
+                                      },
+                                      "tag": "FX",
+                                      "userMethod": "cutoff",
+                                    },
+                                    "method": "decay",
+                                  },
+                                },
+                                "method": "sustain",
+                              },
+                            },
+                            "p": 0.8,
+                            "tag": "Degrade",
+                            "userMethod": "degradeBy",
+                          },
+                          "method": "orbit",
+                        },
+                      },
+                      "name": "delay",
+                      "params": {
+                        "delay": 0.2,
+                      },
+                      "tag": "FX",
+                      "userMethod": "delay",
+                    },
+                    "method": "delaytime",
+                  },
+                },
+                "name": "room",
+                "params": {
+                  "room": 1,
+                },
+                "tag": "FX",
+                "userMethod": "room",
+              },
+              "method": "gain",
+            },
+          },
+          "gate": "<0 1>/8",
+          "tag": "When",
+          "userMethod": "mask",
         },
         {
           "code": "note(rand.range(0,12).struct("x(5,8,-1)").scale('g2 minor pentatonic')).s('bell').begin(.05)
@@ -2634,11 +3378,121 @@ exports[`strudel.cc parity corpus — structural IR shape > flatrave parses to a
         },
       },
       {
-        "code": "note("<0 2 5 3>".scale('G1 minor')).struct("x(5,8,-1)")
-  .s('sawtooth').decay(.1).sustain(0)
-  .lpa(.1).lpenv(-4).lpf(800).lpq(8)",
+        "code": "",
         "lang": "strudel",
         "tag": "Code",
+        "via": {
+          "args": "8",
+          "inner": {
+            "body": {
+              "code": "",
+              "lang": "strudel",
+              "tag": "Code",
+              "via": {
+                "args": "-4",
+                "inner": {
+                  "code": "",
+                  "lang": "strudel",
+                  "tag": "Code",
+                  "via": {
+                    "args": ".1",
+                    "inner": {
+                      "code": "",
+                      "lang": "strudel",
+                      "tag": "Code",
+                      "via": {
+                        "args": "0",
+                        "inner": {
+                          "code": "",
+                          "lang": "strudel",
+                          "tag": "Code",
+                          "via": {
+                            "args": ".1",
+                            "inner": {
+                              "code": "",
+                              "lang": "strudel",
+                              "tag": "Code",
+                              "via": {
+                                "args": "'sawtooth'",
+                                "inner": {
+                                  "body": {
+                                    "code": "",
+                                    "lang": "strudel",
+                                    "tag": "Code",
+                                    "via": {
+                                      "args": "'G1 minor'",
+                                      "inner": {
+                                        "items": [
+                                          {
+                                            "duration": 0.25,
+                                            "note": "0",
+                                            "params": {
+                                              "gain": 1,
+                                              "velocity": 1,
+                                            },
+                                            "tag": "Play",
+                                          },
+                                          {
+                                            "duration": 0.25,
+                                            "note": "2",
+                                            "params": {
+                                              "gain": 1,
+                                              "velocity": 1,
+                                            },
+                                            "tag": "Play",
+                                          },
+                                          {
+                                            "duration": 0.25,
+                                            "note": "5",
+                                            "params": {
+                                              "gain": 1,
+                                              "velocity": 1,
+                                            },
+                                            "tag": "Play",
+                                          },
+                                          {
+                                            "duration": 0.25,
+                                            "note": "3",
+                                            "params": {
+                                              "gain": 1,
+                                              "velocity": 1,
+                                            },
+                                            "tag": "Play",
+                                          },
+                                        ],
+                                        "tag": "Cycle",
+                                      },
+                                      "method": "scale",
+                                    },
+                                  },
+                                  "mask": "x(5,8,-1)",
+                                  "tag": "Struct",
+                                  "userMethod": "struct",
+                                },
+                                "method": "s",
+                              },
+                            },
+                            "method": "decay",
+                          },
+                        },
+                        "method": "sustain",
+                      },
+                    },
+                    "method": "lpa",
+                  },
+                },
+                "method": "lpenv",
+              },
+            },
+            "name": "lpf",
+            "params": {
+              "lpf": 800,
+            },
+            "tag": "FX",
+            "userMethod": "lpf",
+          },
+          "method": "lpq",
+        },
       },
       {
         "body": {

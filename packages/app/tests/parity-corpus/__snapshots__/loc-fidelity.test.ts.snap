@@ -229,6 +229,54 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
     "text": "7",
   },
   {
+    "tag": "FX",
+    "text": ".room(.8)",
+  },
+  {
+    "tag": "Code",
+    "text": ".delaytime(.125)",
+  },
+  {
+    "tag": "FX",
+    "text": ".delay(.8)",
+  },
+  {
+    "tag": "Code",
+    "text": ".sustain(.0)",
+  },
+  {
+    "tag": "Code",
+    "text": ".decay(.05)",
+  },
+  {
+    "tag": "Struct",
+    "text": ".struct("<~@3 [~ x]>")",
+  },
+  {
+    "tag": "FX",
+    "text": ".lpf(1000)",
+  },
+  {
+    "tag": "Code",
+    "text": ".s('sawtooth')",
+  },
+  {
+    "tag": "Code",
+    "text": ".superimpose(x=>x.add(.2))",
+  },
+  {
+    "tag": "Seq",
+    "text": "Bb3,D4",
+  },
+  {
+    "tag": "Play",
+    "text": "Bb3",
+  },
+  {
+    "tag": "Play",
+    "text": "D4",
+  },
+  {
     "tag": "When",
     "text": ".mask("<x ~@7>")",
   },
@@ -283,7 +331,152 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
 ]
 `;
 
-exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > arpoon — loc→source-slice map is stable & in-bounds 1`] = `[]`;
+exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > arpoon — loc→source-slice map is stable & in-bounds 1`] = `
+[
+  {
+    "tag": "Code",
+    "text": ".stack(s("bd*4, [~ [hh hh? hh?]]*2,~ [sd ~ [sd:2? bd?]]").bank('RolandTR909').gain(.5).slow(2))",
+  },
+  {
+    "tag": "Slow",
+    "text": ".slow(4)",
+  },
+  {
+    "tag": "Code",
+    "text": ".stack(
+    "<<A1 C2>!2 F2 F2>"
+    .add.out("0 -5".fast(2))
+    .add("0,.12").note()
+    .s('sawtooth').cutoff(180)
+    .lpa(.1).lpenv(2)
+  )",
+  },
+  {
+    "tag": "Code",
+    "text": ".s('piano')",
+  },
+  {
+    "tag": "Code",
+    "text": ".pan(sine.range(.3,.6))",
+  },
+  {
+    "tag": "FX",
+    "text": ".room(.5)",
+  },
+  {
+    "tag": "FX",
+    "text": ".delay(.2)",
+  },
+  {
+    "tag": "Code",
+    "text": ".sustain(0.5)",
+  },
+  {
+    "tag": "Code",
+    "text": ".decay(.16)",
+  },
+  {
+    "tag": "Param",
+    "text": ".gain("<.5 .8>*16")",
+  },
+  {
+    "tag": "Seq",
+    "text": "<.5 .8>*16",
+  },
+  {
+    "tag": "Cycle",
+    "text": "<.5 .8>",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "8",
+  },
+  {
+    "tag": "Play",
+    "text": "16",
+  },
+  {
+    "tag": "FX",
+    "text": ".resonance(12)",
+  },
+  {
+    "tag": "Code",
+    "text": ".cutoff(perlin.range(500,4000))",
+  },
+  {
+    "tag": "Code",
+    "text": ".add(perlin.range(0,0.2).add("<-12 0>/8").note())",
+  },
+  {
+    "tag": "Code",
+    "text": ".voicing()",
+  },
+  {
+    "tag": "Code",
+    "text": ".dict('lefthand')",
+  },
+  {
+    "tag": "Code",
+    "text": ".chord("<<Am7 C^7> C7 F^7 [Fm7 E7b9]>")",
+  },
+  {
+    "tag": "Code",
+    "text": ".offset("<<1 2> 2 1 1>")",
+  },
+  {
+    "tag": "Code",
+    "text": ".clip(2)",
+  },
+  {
+    "tag": "Code",
+    "text": ".lastOf(4, fast(2))",
+  },
+  {
+    "tag": "Fast",
+    "text": ".fast(3)",
+  },
+  {
+    "tag": "Seq",
+    "text": "[0,3] 2 [1,3] 2",
+  },
+  {
+    "tag": "Seq",
+    "text": "[0,3]",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Seq",
+    "text": "[1,3]",
+  },
+  {
+    "tag": "Play",
+    "text": "1",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+]
+`;
 
 exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mortem gate) > barryHarris — loc→source-slice map is stable & in-bounds 1`] = `
 [
@@ -557,6 +750,126 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
   },
   {
     "tag": "Code",
+    "text": ".release(.05)",
+  },
+  {
+    "tag": "Code",
+    "text": ".shape(.6)",
+  },
+  {
+    "tag": "Code",
+    "text": ".gain(.15)",
+  },
+  {
+    "tag": "FX",
+    "text": ".resonance(20)",
+  },
+  {
+    "tag": "FX",
+    "text": ".cutoff(200)",
+  },
+  {
+    "tag": "Code",
+    "text": ".s('sawtooth')",
+  },
+  {
+    "tag": "Code",
+    "text": ".superimpose(x=>x.add(.02))",
+  },
+  {
+    "tag": "Code",
+    "text": ".scale('g1 dorian')",
+  },
+  {
+    "tag": "Seq",
+    "text": "[0 ~] [2 [0 2]] [4 4*2] [[4 ~] [2 ~] 0@2]",
+  },
+  {
+    "tag": "Seq",
+    "text": "[0 ~]",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Sleep",
+    "text": "~",
+  },
+  {
+    "tag": "Seq",
+    "text": "[2 [0 2]]",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Seq",
+    "text": "[0 2]",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Seq",
+    "text": "[4 4*2]",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Fast",
+    "text": "*2",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Seq",
+    "text": "[[4 ~] [2 ~] 0@2]",
+  },
+  {
+    "tag": "Seq",
+    "text": "[4 ~]",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Sleep",
+    "text": "~",
+  },
+  {
+    "tag": "Seq",
+    "text": "[2 ~]",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Sleep",
+    "text": "~",
+  },
+  {
+    "tag": "Elongate",
+    "text": "@2",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Code",
     "text": ".end(perlin.range(0.02,1))",
   },
   {
@@ -678,6 +991,110 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
   {
     "tag": "Play",
     "text": "misc",
+  },
+  {
+    "tag": "When",
+    "text": ".mask("<0 1>/8")",
+  },
+  {
+    "tag": "Code",
+    "text": ".gain(.5)",
+  },
+  {
+    "tag": "FX",
+    "text": ".room(1)",
+  },
+  {
+    "tag": "Code",
+    "text": ".delaytime(".33 | .6 | .166 | .25")",
+  },
+  {
+    "tag": "FX",
+    "text": ".delay(.2)",
+  },
+  {
+    "tag": "Code",
+    "text": ".orbit(2)",
+  },
+  {
+    "tag": "Degrade",
+    "text": ".degradeBy(.2)",
+  },
+  {
+    "tag": "Code",
+    "text": ".sustain(0)",
+  },
+  {
+    "tag": "Code",
+    "text": ".decay(.03)",
+  },
+  {
+    "tag": "FX",
+    "text": ".cutoff(2000)",
+  },
+  {
+    "tag": "Code",
+    "text": ".s('square')",
+  },
+  {
+    "tag": "Code",
+    "text": ".scale('g4 dorian')",
+  },
+  {
+    "tag": "Stack",
+    "text": ".off(1/3, add(7))",
+  },
+  {
+    "tag": "Code",
+    "text": ".iter(4)",
+  },
+  {
+    "tag": "Seq",
+    "text": "0 5 4 2",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Late",
+    "text": "1/3",
+  },
+  {
+    "tag": "Code",
+    "text": ".iter(4)",
+  },
+  {
+    "tag": "Seq",
+    "text": "0 5 4 2",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "4",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
   },
 ]
 `;
@@ -1380,6 +1797,62 @@ exports[`loc-fidelity — every IR loc slices to its source token (20-15 pre-mor
   {
     "tag": "Play",
     "text": "hh",
+  },
+  {
+    "tag": "Code",
+    "text": ".lpq(8)",
+  },
+  {
+    "tag": "FX",
+    "text": ".lpf(800)",
+  },
+  {
+    "tag": "Code",
+    "text": ".lpenv(-4)",
+  },
+  {
+    "tag": "Code",
+    "text": ".lpa(.1)",
+  },
+  {
+    "tag": "Code",
+    "text": ".sustain(0)",
+  },
+  {
+    "tag": "Code",
+    "text": ".decay(.1)",
+  },
+  {
+    "tag": "Code",
+    "text": ".s('sawtooth')",
+  },
+  {
+    "tag": "Struct",
+    "text": ".struct("x(5,8,-1)")",
+  },
+  {
+    "tag": "Code",
+    "text": ".scale('G1 minor')",
+  },
+  {
+    "tag": "Cycle",
+    "text": "<0 2 5 3>",
+  },
+  {
+    "tag": "Play",
+    "text": "0",
+  },
+  {
+    "tag": "Play",
+    "text": "2",
+  },
+  {
+    "tag": "Play",
+    "text": "5",
+  },
+  {
+    "tag": "Play",
+    "text": "3",
   },
   {
     "tag": "When",
