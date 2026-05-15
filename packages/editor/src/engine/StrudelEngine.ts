@@ -10,6 +10,7 @@ import { propagate, StrudelParseSystem, IREventCollectSystem } from '../ir/propa
 import type { PatternIR } from '../ir/PatternIR'
 import type { IREvent } from '../ir/IREvent'
 import { getTierFlags, type TierFlags } from './tierFlags'
+import { resolveAlias } from './aliases'
 
 type HapHandler = (event: HapEvent) => void
 
@@ -126,9 +127,37 @@ export class StrudelEngine implements LiveCodingEngine {
   // take effect on reload" caption.
   private tierFlags: TierFlags | null = null
 
+  // Phase 20-14 β-2 — alias-resolution accumulator. Reset at `evaluate()`
+  // entry; appended to by `wrappedOutput` whenever the alias map rewrites
+  // a hap's `s` field. β-5's friendly-error builder reads this to surface
+  // "tried alias `kick` → `bd` (resolved)" on a related error. Owned by
+  // the engine instance (NOT module state) so concurrent engines don't
+  // collide and a stale accumulator can't leak across evals.
+  private lastAliasResolutions: Array<{ from: string; to: string }> = []
+
+  // Phase 20-14 β-2 — live reference to superdough's `soundMap`. Captured
+  // at init() (when `@strudel/webaudio` resolves). `wrappedOutput` reads
+  // `soundMap.get()[name]` at trigger time to honour the Strategy A guard
+  // — user-registered names always win over the curated alias map.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private soundMapRef: any = null
+
   /** Read-only snapshot of the tier flags consumed at this engine's init(). */
   getTierFlagsSnapshot(): Readonly<TierFlags> | null {
     return this.tierFlags
+  }
+
+  /**
+   * Phase 20-14 β-2 — read-only snapshot of alias rewrites that have fired
+   * during the current evaluate() window. Each entry is one hap rewrite;
+   * the same `from → to` pair may appear multiple times if the rewrite
+   * fired across multiple cycles.
+   *
+   * Lifecycle: reset to empty at `evaluate()` entry, appended to by
+   * `wrappedOutput`, read by friendlyErrors at message-build time.
+   */
+  getLastAliasResolutions(): ReadonlyArray<{ from: string; to: string }> {
+    return this.lastAliasResolutions
   }
 
   async init(): Promise<void> {
@@ -168,12 +197,42 @@ export class StrudelEngine implements LiveCodingEngine {
     // Register all module exports into globalThis so eval'd patterns can use them
     // (note, s, gain, stack, etc. must be globals — user code runs in Function())
     // midi: uses onTrigger (additive) — highlighting still fires for every hap.
-    //        enableWebMidi() is NOT called here; users call it explicitly (triggers browser permission prompt).
+    //        enableWebMidi() is gated by the `midi` tier flag (β-4 below).
+    //        The module import is unconditional (80 KB, audio-pure); only
+    //        the permission-triggering call is gated.
     // drawMod (@strudel/draw) intentionally excluded: it injects a full-screen canvas
     // into document.body (id="test-canvas") the first time any draw function runs.
     // Stave uses its own visualizer system, so strudel's canvas draw functions
     // (pianoroll, drawFrequencyScope, etc.) are not exposed to user code.
     await coreMod.evalScope(coreMod, miniMod, tonalMod, webaudioMod, soundfontsMod, xenMod, midiMod, mondoMod)
+
+    // Phase 20-14 β-4: thread the `midi` tier flag through engine init.
+    // When the flag is ON, call `enableWebMidi()` after evalScope resolves so
+    // `Pattern.prototype.midi` and the WebMIDI hookup go live. The browser
+    // permission prompt fires during init (early-prompt UX per RESEARCH §4 +
+    // CONTEXT gray-area #3) — the settings row caption telegraphs this so
+    // the user opts in deliberately.
+    //
+    // When the flag is OFF (default), the call is skipped — preserves the
+    // pre-α behavior where `@strudel/midi` was loaded but no permission
+    // prompt fired. The other 7 tier flags (csound/tidal/osc/serial/gamepad/
+    // motion/mqtt) are NOT threaded here — each has its own follow-up issue
+    // (#124-#130) from β-3.
+    if (this.tierFlags?.midi) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const enableWebMidi = (midiMod as any)?.enableWebMidi
+        if (typeof enableWebMidi === 'function') {
+          await enableWebMidi()
+        } else {
+          console.warn('[StrudelEngine] tierFlags.midi is ON but @strudel/midi did not export enableWebMidi.')
+        }
+      } catch (err) {
+        // Browser-permission denial throws here. Log + continue — engine
+        // boot must succeed even if MIDI is unavailable.
+        console.warn('[StrudelEngine] enableWebMidi() failed; MIDI output unavailable.', err)
+      }
+    }
 
     // Set up mini-notation string parser (parses "c3 e3 g3" strings as patterns)
     miniMod.miniAllStrings()
@@ -304,6 +363,10 @@ export class StrudelEngine implements LiveCodingEngine {
     // Wrapped in try/catch for the same boot-resilience reason as α-2.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const soundMapRef = (webaudioMod as any).soundMap
+    // β-2 — stash the live soundMap on the instance so wrappedOutput's
+    // Strategy A guard can read it at trigger time. Live read (not snapshot);
+    // user `samples()` calls between init and trigger should be honored.
+    this.soundMapRef = soundMapRef
     const preAliasCount = soundMapRef?.get ? Object.keys(soundMapRef.get()).length : 0
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -349,6 +412,33 @@ export class StrudelEngine implements LiveCodingEngine {
     //   t = current AudioContext.currentTime
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const wrappedOutput = async (hap: any, deadline: number, duration: number, cps: number, t: number) => {
+      // Phase 20-14 β-2 — Strategy A sound-alias intercept. We are POST-
+      // reify (P1): `hap.value.s` is the final per-event string Strudel's
+      // scheduler resolved. If the bare name is not in the live soundMap
+      // AND the curated alias map has a target, rewrite the hap so
+      // superdough sees the canonical name. User-registered names ALWAYS
+      // win (RESEARCH §3 + §7 open-question #4). Sub-microsecond per hap
+      // (one Map.get + one Object index lookup); negligible vs scheduler
+      // overhead.
+      const rawS = hap?.value?.s
+      if (typeof rawS === 'string') {
+        const lower = rawS.toLowerCase()
+        // Live read — user `samples(...)` calls between init and trigger
+        // should be honored.
+        const liveSoundMap: Record<string, unknown> | undefined =
+          this.soundMapRef?.get?.() ?? undefined
+        if (!liveSoundMap || liveSoundMap[lower] === undefined) {
+          const aliased = resolveAlias(rawS)
+          if (aliased && aliased !== rawS) {
+            this.lastAliasResolutions.push({ from: rawS, to: aliased })
+            // Shallow clone the value so downstream consumers that snapshot
+            // the original hap reference see a stable shape; only this hap's
+            // `s` is rewritten for the audio side.
+            hap.value = { ...hap.value, s: aliased }
+          }
+        }
+      }
+
       // Phase 20-07 (T-α-2) — emit returns the enriched HapEvent so the
       // breakpoint hit-check below reads `irNodeId` in O(1) without
       // re-running findMatchedEvent. P50 single-strategy match preserved.
@@ -399,6 +489,12 @@ export class StrudelEngine implements LiveCodingEngine {
   async evaluate(code: string): Promise<{ error?: Error }> {
     if (!this.initialized) await this.init()
     this.lastEvaluatedCode = code
+    // Phase 20-14 β-2 — reset alias-resolution accumulator at the entry
+    // of every evaluate(). β-5's friendly-error builder reads this; a
+    // stale accumulator from a previous eval would surface aliases that
+    // are unrelated to the current error. Reset must be the FIRST
+    // statement after lastEvaluatedCode, NOT buried in a helper.
+    this.lastAliasResolutions = []
 
     const capturedPatterns = new Map<string, any>() // eslint-disable-line @typescript-eslint/no-explicit-any
     const capturedVizRequests = new Map<string, string>()
