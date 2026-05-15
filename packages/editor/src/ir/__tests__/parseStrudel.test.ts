@@ -341,3 +341,93 @@ describe('20-14 parser-gap fix — parseStrudel structural IR for prelude\'d tun
     expect(chop).toBeDefined()
   })
 })
+
+describe('20-14 parser-gap fix — bare-string-as-pattern (cluster A)', () => {
+  it('bare string at top level parses to structured IR (NOT Code)', () => {
+    // Strudel transpiler auto-promotes top-level string literals to mini-
+    // patterns. Pre-fix: splitRootAndChain saw expr[0]==='"' (not an
+    // identifier char and not '('), returned root="", chain=<whole expr>;
+    // parseRoot('') fell through to IR.code(). Now parseRoot's bare-string
+    // arm fires and delegates to parseMini.
+    const ir = parseStrudel('"c3 e3"')
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    expect(ir.body.tag).not.toBe('Code')
+    // parseMini on `c3 e3` produces a top-level Seq of two Play nodes.
+    const play = findNode(ir, (n) => n.tag === 'Play')
+    expect(play).toBeDefined()
+  })
+
+  it('bare string with method chain parses both the pattern + chain', () => {
+    // barryHarris-shape: `"0,2,[7 6]".add("<0 1>").scale(...)`. The chain
+    // is applied via applyChain on top of the bare-string IR.
+    const ir = parseStrudel('"c3 e3".fast(2)')
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    // .fast(n) constructs a Fast tag wrapping the bare-string IR.
+    const fast = findNode(ir, (n) => n.tag === 'Fast')
+    expect(fast).toBeDefined()
+    // And the Play nodes from the inner mini are still present.
+    const play = findNode(ir, (n) => n.tag === 'Play')
+    expect(play).toBeDefined()
+  })
+})
+
+describe('20-14 parser-gap fix — multi-line chain walker (cluster B)', () => {
+  it('walks across newlines + indent between method calls', () => {
+    // Pre-fix: after consuming `.delay("1")`, the walker's `rest` was
+    // `\n  .delaytime(...)\n  .delayfeedback(...)` which doesn't start
+    // with '.', so the loop exited and the later methods were silently
+    // dropped to Code-fallback at parseExpression's catch-all.
+    const ir = parseStrudel(
+      's("bd").fast(2)\n  .slow(3)\n  .fast(4)',
+    )
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    // All three methods must land in the chain — without the cluster B
+    // fix, only the first `.fast(2)` was applied and the rest were
+    // dropped to Code-fallback. Verify by counting Fast + Slow tags.
+    const tags: string[] = []
+    function walk(n: PatternIR): void {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const x = n as any
+      tags.push(n.tag)
+      if (x.body && typeof x.body === 'object' && 'tag' in x.body) walk(x.body)
+      if (x.value && typeof x.value === 'object' && 'tag' in x.value) walk(x.value)
+      if (Array.isArray(x.children))
+        for (const c of x.children) if (c && typeof c === 'object' && 'tag' in c) walk(c)
+      if (x.via?.inner) walk(x.via.inner)
+    }
+    walk(ir)
+    // Two `Fast` (outermost from `.fast(4)` + innermost from `.fast(2)`)
+    // and one `Slow` (`.slow(3)`) — all three methods stacked.
+    expect(tags.filter((t) => t === 'Fast').length).toBe(2)
+    expect(tags.filter((t) => t === 'Slow').length).toBe(1)
+  })
+
+  it('tolerates an inline `// comment` between methods', () => {
+    // bassFuge-shape: `.sub(1) // sub 1 -> 1-indexed\n.layer(...)`. The
+    // separator regex must skip both the inline comment AND the trailing
+    // newline before the next `.`.
+    const ir = parseStrudel(
+      's("bd").fast(2)  // explanation\n  .slow(3)',
+    )
+    expect(ir.tag).toBe('Track')
+    if (ir.tag !== 'Track') throw new Error('unreachable')
+    // Both .fast + .slow present despite the inline comment between them.
+    const tags: string[] = []
+    function walk(n: PatternIR): void {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const x = n as any
+      tags.push(n.tag)
+      if (x.body && typeof x.body === 'object' && 'tag' in x.body) walk(x.body)
+      if (x.value && typeof x.value === 'object' && 'tag' in x.value) walk(x.value)
+      if (Array.isArray(x.children))
+        for (const c of x.children) if (c && typeof c === 'object' && 'tag' in c) walk(c)
+      if (x.via?.inner) walk(x.via.inner)
+    }
+    walk(ir)
+    expect(tags).toContain('Fast')
+    expect(tags).toContain('Slow')
+  })
+})

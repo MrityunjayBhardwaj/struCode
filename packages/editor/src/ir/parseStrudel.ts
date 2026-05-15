@@ -401,13 +401,23 @@ export function parseExpression(expr: string, baseOffset = 0): PatternIR {
     // Extract root function call and remaining method chain
     const { root, chain } = splitRootAndChain(expr.trim())
 
-    // Parse the root — if it can't be parsed, fall back to full expression as Code
+    // Parse the root — if it can't be parsed, fall back to full expression as Code.
+    //
+    // Phase 20-14 parser-gap fix — discriminate "pure Code fallback" from
+    // "structural Code-with-via wrapper". wrapAsOpaque returns tag: 'Code'
+    // for any unrecognised method arg (PV37 wrap-never-drop), but the
+    // `.via` field carries the structured chain. Checking tag alone treated
+    // those wrappers as opaque and discarded the entire structure — surfaces
+    // for `stack(single-arg-with-unmapped-pattern-chain)` shapes such as
+    // `stack(s("bd").delay("<0 .5>")...).sometimes(...)` in delay.strudel.
     const rootIR = parseRoot(root, trimmedOffset)
-    if (rootIR.tag === 'Code' && !chain.trim()) {
+    const rootIsBareCode =
+      rootIR.tag === 'Code' && (rootIR as { via?: unknown }).via === undefined
+    if (rootIsBareCode && !chain.trim()) {
       // Entire expression is opaque — preserve full original expression
       return IR.code(expr)
     }
-    if (rootIR.tag === 'Code') {
+    if (rootIsBareCode) {
       return IR.code(expr)
     }
 
@@ -511,6 +521,20 @@ export function parseRoot(root: string, baseOffset = 0): PatternIR {
     }
   }
 
+  // Phase 20-14 parser-gap fix (cluster A) — bare-string-as-pattern.
+  // Strudel's transpiler auto-promotes top-level string literals to
+  // mini-patterns. Mirrors mini("...") semantically — produces values,
+  // not notes/samples. Fired AFTER all named-function arms so this is a
+  // fallback for "expression starts with a bare string" (e.g.,
+  // `"0,2,[7 6]".add(...)` from barryHarris / holyflute).
+  // Single-line string only (mini-notation never spans newlines).
+  const bareStringMatch = trimmed.match(/^"([^"]*)"$/)
+  if (bareStringMatch) {
+    // innerOffset points at the FIRST char inside the quotes.
+    const innerOffset = baseOffset + leadingWs + 1
+    return parseMini(bareStringMatch[1], false, innerOffset)
+  }
+
   // Fallback: treat as opaque
   return IR.code(trimmed)
 }
@@ -535,7 +559,25 @@ export function applyChain(ir: PatternIR, chain: string, baseOffset = 0): Patter
   let remainingOffset = baseOffset + leadingWs
   let current = ir
 
-  while (remaining.startsWith('.')) {
+  // Phase 20-14 parser-gap fix (cluster B) — multi-line chain tolerance.
+  // Strudel programs commonly format long chains across newlines + indent
+  // (e.g., `s("bd").delay(.5)\n    .delaytime(.16)\n    .delayfeedback(.6)`)
+  // and tolerate inline `// comment` between methods. The pre-fix walker
+  // only progressed while `remaining.startsWith('.')` after a single
+  // initial `.trim()` — so the first newline between methods exited the
+  // loop and every subsequent method was silently dropped to Code-fallback.
+  // SEP regex: any mix of inter-method whitespace (incl. newlines) and
+  // line comments (`// …` up to and including the trailing newline). The
+  // `+` is anchored to `^` so it ONLY trims at the head of `remaining`.
+  const INTER_METHOD_SEP = /^(?:\s+|\/\/[^\n]*\n?)+/
+  while (true) {
+    // Skip inter-method separator (whitespace + line comments).
+    const sep = remaining.match(INTER_METHOD_SEP)
+    if (sep) {
+      remainingOffset += sep[0].length
+      remaining = remaining.slice(sep[0].length)
+    }
+    if (!remaining.startsWith('.')) break
     const { method, args, rest, argsOffset } = extractNextMethod(remaining)
     if (!method) break
 
@@ -1272,19 +1314,38 @@ function offsetOfSubArg(args: string, subArg: string, argsBaseOffset: number): n
 /**
  * Split expression into root function call and method chain.
  * e.g. 'note("c4").fast(2).slow(3)' → { root: 'note("c4")', chain: '.fast(2).slow(3)' }
+ *
+ * Phase 20-14 parser-gap fix (cluster A) — bare-string-as-pattern.
+ * Strudel's transpiler auto-promotes top-level string literals to
+ * mini-patterns (e.g., `"0,2,[7 6]".add(...)`). When `expr[0]` is `"`,
+ * the root is the quoted string (escapes respected) and the chain
+ * starts at the char immediately after the closing quote.
  */
 export function splitRootAndChain(expr: string): { root: string; chain: string } {
-  // Find the end of the first balanced function call
   let i = 0
 
-  // Skip identifier
-  while (i < expr.length && /[a-zA-Z0-9_$]/.test(expr[i])) i++
+  if (expr[0] === '"') {
+    // Bare-string root — scan to matching closing quote (escape-aware,
+    // single-line: mini-strings never span newlines in the corpus).
+    i = 1
+    while (i < expr.length && expr[i] !== '"') {
+      if (expr[i] === '\\' && i + 1 < expr.length) {
+        i += 2
+        continue
+      }
+      i++
+    }
+    if (i < expr.length) i++ // consume closing quote
+  } else {
+    // Skip identifier
+    while (i < expr.length && /[a-zA-Z0-9_$]/.test(expr[i])) i++
 
-  // If there's an opening paren, find the matching close
-  if (i < expr.length && expr[i] === '(') {
-    const closeIdx = findMatchingParen(expr, i)
-    if (closeIdx !== -1) {
-      i = closeIdx + 1
+    // If there's an opening paren, find the matching close
+    if (i < expr.length && expr[i] === '(') {
+      const closeIdx = findMatchingParen(expr, i)
+      if (closeIdx !== -1) {
+        i = closeIdx + 1
+      }
     }
   }
 
