@@ -414,6 +414,53 @@ export function extractTracks(
 // ---------------------------------------------------------------------------
 
 /**
+ * PV49 shared inter-token skip primitive (20-15 α substrate).
+ *
+ * Returns the ABSOLUTE index into `src` after any run of whitespace
+ * (incl. `\n`) and whole-line / inline `// …` comments starting at
+ * `pos`. Offset-additive: a caller threads it as
+ * `base += skipWhitespaceAndLineComments(src, pos) - pos`.
+ *
+ * Behaviour MUST exactly mirror the reference regex used by the
+ * already-tolerant chain walker, `applyChain`'s
+ * `INTER_METHOD_SEP = /^(?:\s+|\/\/[^\n]*\n?)+/`: it consumes runs of
+ * `\s` (newlines included) and `//`-to-end-of-line where the trailing
+ * `\n` is ALSO consumed (matching the regex's `\n?`), looping until
+ * neither whitespace nor a `//` comment starts at the cursor.
+ *
+ * `${` is NOT whitespace (it is real JS template interpolation) and is
+ * NEVER consumed — PV49 scope explicitly excludes it (D-04). A `/` that
+ * is not followed by a second `/` (e.g. a division operator) is also
+ * not consumed.
+ *
+ * Pure: no state, no engine (PV50 N/A). The three genuine inter-token
+ * consumers (applyChain — α-3 reference; splitArgsWithOffsets — #137/G4;
+ * extractTracks label scan — #138/G5) own their additive arithmetic.
+ * `stripParserPrelude`'s whole-line classifier is a structurally
+ * distinct concern (R1) and is intentionally NOT migrated onto this.
+ */
+export function skipWhitespaceAndLineComments(src: string, pos: number): number {
+  let i = pos
+  for (;;) {
+    // 1. Whitespace run (includes \n) — same as the regex's `\s+`.
+    while (i < src.length && /\s/.test(src[i])) i++
+    // 2. A `//` line comment: consume up to and INCLUDING the trailing
+    //    `\n` (mirrors `\/\/[^\n]*\n?`). At EOF with no newline the
+    //    `\n?` matches empty — consume to end of string.
+    if (src[i] === '/' && src[i + 1] === '/') {
+      i += 2
+      while (i < src.length && src[i] !== '\n') i++
+      if (i < src.length && src[i] === '\n') i++
+      continue
+    }
+    // Neither whitespace nor a `//` comment at the cursor — done.
+    // (`${`, `/x`, and any non-ws char fall here and are NOT consumed.)
+    break
+  }
+  return i
+}
+
+/**
  * Parse a single Strudel expression (with optional method chain).
  * `baseOffset` is the absolute char offset of `expr[0]` within the
  * user's full code, so leaf parsers can attach `loc` to Play nodes.
