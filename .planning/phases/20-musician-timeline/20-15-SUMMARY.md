@@ -67,7 +67,7 @@ will vary slightly run-to-run (fresh rows), the floor will not.
 | 6 named classes closed | 8/8 fixtures structured (table above) | PASS |
 | Real-world % materially > 4/10 | V-1 measured 72.0%, N=50 | PASS |
 | ≥9/10 known set | 8/8 structured | PASS |
-| 16 originals byte-for-byte unchanged | 0 non-bakery content hunks across V-2/V-3 snapshot regens | PASS |
+| 16 originals: no regressions, only GOAL-permitted improvements | 5 of 16 (amensister, arpoon, belldub, flatrave, randomBells) improved bare-`Code`→structured (Play/Seq counts strictly rose, none regressed); other 11 byte-unchanged; loc-fidelity 25/25 confirms no offset drift. This is the GOAL's explicitly-permitted "explained structural improvements (e.g. arpoon #132)" exception — NOT "all 16 byte-unchanged" (an earlier draft of this row over-claimed; corrected per independent verifier) | PASS |
 | loc-fidelity empty-diff (THE pre-mortem) | 25/25 full-corpus green; only explained G3 Code→structured | PASS |
 | Editor suite unchanged | 1564/1564 (was 1551 at plan time; grew via γ tests) | PASS |
 | parity-corpus gate | 50/50 (25×2: 16 tunes + 6 gap + 2 setter + sanity) | PASS |
