@@ -152,3 +152,23 @@ partial-eval. Matcher-not-interpreter line held exactly.
 parity-corpus 34/34 (no churn, zero `-u` — no corpus tune uses top-level
 let/const; buildBindingMap returns null and falls through) · editor
 1564/1564 · timeline specs 178/178 (no flake).
+
+## γ-4: STRETCH general inline-expansion map — DROPPED
+
+**Decision: DROPPED** (explicitly droppable per plan; GOAL unaffected —
+γ-3 covers the measured 2/10).
+
+Reasons:
+1. Generalizing substitution beyond the stack-arg hook widens the
+   consumer surface into `splitRootAndChain` — the most-shared scanner,
+   also touched by α-3 / β-3 / G4 — the exact HIGH-risk scope-creep the
+   plan's γ-4 pre-mortem names ("this task IS the scope-creep risk").
+2. The target shape (general bare-ident `a.fast(2)`) is NOT in the
+   measured 2/10 Bakery set; γ-3's `stack(p1,p2)` partial covers the
+   measured frequency.
+3. The phase GOAL (real-world parity materially up + ≥9/10 known set) is
+   already met by γ-3 + the rest of the wave.
+
+Backlog issue filed: **#140** (AnviDev issue-before-fix). No code change,
+no commit for γ-4. Deferred trackMeta-by-slotKey re-keying confirmed NOT
+reopened across the entire wave (D-01 scope guard held).
