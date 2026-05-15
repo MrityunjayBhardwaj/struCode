@@ -299,6 +299,12 @@ note/n arm needs to delegate inner parsing recursively to
 parseExpression when the inner isn't a flat quoted string. Punted
 deliberately — STOP rule: don't add a third workaround.
 
+**Tracked at issue #132** — "parseStrudel: recursive parsing inside
+note/n/s args (nested mini + chain)". Documented in CORPUS-SOURCE.md
+"Known parser-coverage gaps" section. Code-fallback still gates
+structural drift for arpoon (any upstream text change trips a snapshot
+diff); audible behavior unaffected.
+
 ### Skip set + new parseRoot/applyChain semantics — at a glance
 
 - `stripParserPrelude` skip set: `samples | useRNG | setcps |

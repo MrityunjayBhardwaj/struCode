@@ -93,6 +93,24 @@ runtime drift on the modeled-Tier-4 surface.
 | 15 | `meltingsubmarine.strudel` | 455-496 | `.color()` + viz hints metadata |
 | 16 | `arpoon.strudel` | 850-878 | arp + chord ops |
 
+## Known parser-coverage gaps
+
+After the γ-wave parser-gap fix (commits `1d6a314`, `322d912`), 15 of 16
+tunes produce **structured PatternIR** in their snapshots. One tune still
+falls back to opaque `Track(d1, Code(<verbatim>))`:
+
+- **`arpoon.strudel`** — body shape `n("…".fast(3).lastOf(4, fast(2))).clip(2).offset(…)`.
+  The OUTER chain walks correctly (cluster B fix), but the ROOT `n(…)` arm
+  requires its argument to be a bare `"…"` quoted string. When the inner arg
+  is itself a mini-string with its own method chain, the regex fails and the
+  whole expression becomes opaque. Tracked at **#132** — recursive
+  expression parsing inside `note`/`n`/`s` args.
+
+The Code-fallback still gates structural drift (any upstream text change to
+arpoon trips a snapshot diff), but the assertion is weaker than full IR
+parity for that one tune. Audible behavior is unaffected — the transpiler
+reifies and chains through the runtime correctly.
+
 ## Deliberately omitted (queued)
 
 Per RESEARCH §5:
