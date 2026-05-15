@@ -4473,14 +4473,16 @@ function parseStrudel(code) {
     if (tracks.length === 1) {
       const t = tracks[0];
       const body2 = t.commented ? IR.pure() : parseExpression(t.expr, t.offset);
-      return IR.track("d1", body2, {
+      const trackId0 = t.label && t.label !== "$" ? t.label : "d1";
+      return IR.track(trackId0, body2, {
         loc: [{ start: t.dollarStart, end: t.end }]
       });
     }
     return IR.stack(
       ...tracks.map((t, i2) => {
         const body2 = t.commented ? IR.pure() : parseExpression(t.expr, t.offset);
-        return IR.track(`d${i2 + 1}`, body2, {
+        const trackId = t.label && t.label !== "$" ? t.label : `d${i2 + 1}`;
+        return IR.track(trackId, body2, {
           loc: [{ start: t.dollarStart, end: t.end }]
         });
       })
@@ -4489,30 +4491,79 @@ function parseStrudel(code) {
     return IR.code(code);
   }
 }
+function lexStateAt(code, idx) {
+  let depth = 0;
+  let inString = false;
+  let stringChar = "";
+  let escaped = false;
+  let i2 = 0;
+  while (i2 < idx) {
+    const ch = code[i2];
+    if (escaped) {
+      escaped = false;
+      i2++;
+      continue;
+    }
+    if (inString) {
+      if (ch === "\\") escaped = true;
+      else if (ch === stringChar) inString = false;
+      i2++;
+      continue;
+    }
+    if (ch === "/" && code[i2 + 1] === "/") {
+      while (i2 < idx && code[i2] !== "\n") i2++;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      inString = true;
+      stringChar = ch;
+      i2++;
+      continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") {
+      depth++;
+      i2++;
+      continue;
+    }
+    if (ch === ")" || ch === "]" || ch === "}") {
+      depth--;
+      i2++;
+      continue;
+    }
+    i2++;
+  }
+  return { depth, inString };
+}
+var RESERVED_LABEL_IDENTS = /* @__PURE__ */ new Set(["let", "const", "var", "default", "case"]);
 function extractTracks(code) {
   const tracks = [];
-  const dollarRe = /^[ \t]*(\/\/[ \t]*)?\$:/gm;
+  const dollarRe = /^[ \t]*(\/\/[ \t]*)?([A-Za-z_$][\w$]*)\s*:/gm;
   const starts = [];
   let m;
   while (m = dollarRe.exec(code)) {
+    const label = m[2];
+    const st = lexStateAt(code, m.index);
+    if (st.depth > 0 || st.inString || RESERVED_LABEL_IDENTS.has(label)) {
+      continue;
+    }
     const after = m.index + m[0].length;
     let bodyStart = after;
     while (bodyStart < code.length && (code[bodyStart] === " " || code[bodyStart] === "	")) {
       bodyStart++;
     }
     const commented = !!m[1];
-    starts.push({ dollarStart: m.index, bodyStart, commented });
+    starts.push({ dollarStart: m.index, bodyStart, commented, label });
   }
   if (starts.length === 0) return [];
   for (let i2 = 0; i2 < starts.length; i2++) {
-    const { dollarStart, bodyStart, commented } = starts[i2];
+    const { dollarStart, bodyStart, commented, label } = starts[i2];
     const end = i2 + 1 < starts.length ? starts[i2 + 1].dollarStart : code.length;
     if (commented) {
-      tracks.push({ expr: "", offset: bodyStart, dollarStart, end, commented: true });
+      tracks.push({ expr: "", offset: bodyStart, dollarStart, end, commented: true, label });
       continue;
     }
     const slice = code.slice(bodyStart, end);
-    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end, commented: false });
+    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end, commented: false, label });
   }
   return tracks;
 }

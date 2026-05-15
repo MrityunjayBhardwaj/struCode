@@ -308,7 +308,15 @@ export function parseStrudel(code: string): PatternIR {
       // the user toggles a line's comment prefix.
       const t = tracks[0]
       const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset)
-      return IR.track('d1', body, {
+      // 20-15 G5 (#138 / D-01) — a named label becomes the trackId so the
+      // label IS the timeline row name (no `.p()` needed). `$` (the legacy
+      // `$:` marker) keeps the synthetic `d1` numbering — byte-identical to
+      // pre-G5. dollarStart = label-line start → collect.ts:447-450
+      // OUTER-WINS dollarPos → MusicalTimeline `$${pos}` source-anchored
+      // slot (PV47 / #119 substrate). Same mechanism `$:` uses, NOT a
+      // parallel path.
+      const trackId0 = t.label && t.label !== '$' ? t.label : 'd1'
+      return IR.track(trackId0, body, {
         loc: [{ start: t.dollarStart, end: t.end }],
       })
     }
@@ -320,7 +328,14 @@ export function parseStrudel(code: string): PatternIR {
     return IR.stack(
       ...tracks.map((t, i) => {
         const body = t.commented ? IR.pure() : parseExpression(t.expr, t.offset)
-        return IR.track(`d${i + 1}`, body, {
+        // 20-15 G5 (#138 / D-01) — labelled tracks carry trackId = label;
+        // legacy `$:` (label === '$') keeps `d{i+1}` so existing multi-$:
+        // tunes are byte-identical. dollarStart (label-line start) is the
+        // source-anchored slot identity for BOTH forms — mixed `$:` +
+        // `name:` interleave correctly because the unified regex matches
+        // both in one scan and dollarStart is always line-start.
+        const trackId = t.label && t.label !== '$' ? t.label : `d${i + 1}`
+        return IR.track(trackId, body, {
           loc: [{ start: t.dollarStart, end: t.end }],
         })
       }),
@@ -344,9 +359,85 @@ export function parseStrudel(code: string): PatternIR {
  * offset within the slice is also a valid offset within `code`.
  * Returns [] if no $: lines found (caller handles single-expression case).
  */
+/**
+ * 20-15 G5 (#138) — scan `code[0 .. idx)` and report the lexical state at
+ * `idx`: paren/brace/bracket nesting depth + whether `idx` is inside a
+ * string / template literal or a `//` line comment.
+ *
+ * REUSE of the `stripParserPrelude` depth-walker discipline (pS:~192-243):
+ * same string/escape/`//`-comment handling, same depth bookkeeping. It is
+ * lifted here as a small shared scanner (PV49 spirit — do not hand-roll a
+ * second divergent walker) so the generalized label matcher can reject a
+ * `name:` that is actually an object-literal key (`{ a: 1 }` multi-line),
+ * a colon inside a string/template (`` s(`bd:3`) ``), or a comment.
+ *
+ * The γ-1 probe proved single-line false-positives are already rejected by
+ * the label regex shape itself; this guard is load-bearing for the
+ * MULTI-LINE forms where the colon-bearing token sits at a physical line
+ * start (matrix in 20-15-OBSERVATIONS.md).
+ */
+function lexStateAt(code: string, idx: number): { depth: number; inString: boolean } {
+  let depth = 0
+  let inString = false
+  let stringChar = ''
+  let escaped = false
+  let i = 0
+  while (i < idx) {
+    const ch = code[i]
+    if (escaped) {
+      escaped = false
+      i++
+      continue
+    }
+    if (inString) {
+      if (ch === '\\') escaped = true
+      else if (ch === stringChar) inString = false
+      i++
+      continue
+    }
+    // `//` line comment (only outside strings) — consume to EOL. The
+    // newline itself is left for the outer loop (depth/string unchanged).
+    if (ch === '/' && code[i + 1] === '/') {
+      while (i < idx && code[i] !== '\n') i++
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      inString = true
+      stringChar = ch
+      i++
+      continue
+    }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth++
+      i++
+      continue
+    }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      depth--
+      i++
+      continue
+    }
+    i++
+  }
+  return { depth, inString }
+}
+
+// 20-15 G5 (#138) — reserved identifiers that the generalized `name:`
+// matcher must NOT treat as a track label. `let/const/var` would be a
+// binding (G1, γ-3 / D-02); `default/case` are statement-label keywords.
+// Strudel has no `switch`, so these only appear as false-positives.
+const RESERVED_LABEL_IDENTS = new Set(['let', 'const', 'var', 'default', 'case'])
+
 export function extractTracks(
   code: string,
-): { expr: string; offset: number; dollarStart: number; end: number; commented: boolean }[] {
+): {
+  expr: string
+  offset: number
+  dollarStart: number
+  end: number
+  commented: boolean
+  label?: string
+}[] {
   // Phase 20-11 α-2 — return shape additively widened. `dollarStart` (start
   // of the literal `$:` token) and `end` (exclusive end of the track body
   // slice — either the next `$:` line start or `code.length`) are exposed
@@ -367,16 +458,42 @@ export function extractTracks(
     dollarStart: number
     end: number
     commented: boolean
+    label?: string
   }[] = []
-  // Match `$:` at the start of a line, allowing leading whitespace and an
-  // optional `//` line-comment prefix. Group 1 captures the `//...` if
-  // present; its presence flips `commented` for that entry.
-  const dollarRe = /^[ \t]*(\/\/[ \t]*)?\$:/gm
-  const starts: { dollarStart: number; bodyStart: number; commented: boolean }[] = []
+  // 20-15 G5 (#138) — generalized from the literal `$:` matcher to a
+  // named-label matcher. Group 1 = optional `//` line-comment prefix
+  // (→ `commented`); group 2 = the label identifier. `$` ∈ `[A-Za-z_$]`
+  // so `$:` STILL matches with label === '$' — exact pre-G5 behavior is
+  // preserved (the `$` label falls back to the synthetic `d{N}` numbering
+  // in parseStrudel, so `$:` tracks are byte-identical to before).
+  // `\s*:` (not `[ \t]*:`) tolerates the rare `name :` spacing; the γ-1
+  // probe proved this does not introduce false-positives (ternary `?`
+  // breaks the `\s*:` adjacency before any `:` is reached).
+  const dollarRe = /^[ \t]*(\/\/[ \t]*)?([A-Za-z_$][\w$]*)\s*:/gm
+  const starts: {
+    dollarStart: number
+    bodyStart: number
+    commented: boolean
+    label: string
+  }[] = []
   let m: RegExpExecArray | null
   while ((m = dollarRe.exec(code))) {
-    // bodyStart points after `$:` and any post-colon whitespace on the
-    // same physical line. Tracks may continue on subsequent lines.
+    const label = m[2]
+    // γ-1-validated guard: reject a match that is NOT a real top-level
+    // track label — inside `{}`/`()`/`[]`, inside a string/template/
+    // comment, or a reserved non-track keyword. lexStateAt REUSES the
+    // stripParserPrelude depth-walker discipline (PV49 spirit). `$:` is
+    // never reserved and is virtually always depth-0, so its behavior is
+    // unchanged. A `//`-commented label sits at line start; the `//` is
+    // captured by group 1 (not consumed by the lexState `//` rule because
+    // we scan UP TO m.index, which is the line start BEFORE the `//`).
+    const st = lexStateAt(code, m.index)
+    if (st.depth > 0 || st.inString || RESERVED_LABEL_IDENTS.has(label)) {
+      continue
+    }
+    // bodyStart points after the matched prefix (`[ws][//]label:`) and any
+    // post-colon whitespace on the same physical line. Tracks may continue
+    // on subsequent lines.
     const after = m.index + m[0].length
     let bodyStart = after
     while (bodyStart < code.length && (code[bodyStart] === ' ' || code[bodyStart] === '\t')) {
@@ -386,25 +503,26 @@ export function extractTracks(
     // dollarStart anchors at the LINE START (m.index) — consistent across
     // commented vs uncommented forms since the regex matches from `^`.
     // This keeps slice boundaries clean (`end` of one entry == line start
-    // of the next entry) regardless of comment toggling.
-    starts.push({ dollarStart: m.index, bodyStart, commented })
+    // of the next entry) regardless of comment toggling, AND makes the
+    // label-line start the source-anchored slot identity (PV47 / D-01).
+    starts.push({ dollarStart: m.index, bodyStart, commented, label })
   }
   if (starts.length === 0) return []
 
   for (let i = 0; i < starts.length; i++) {
-    const { dollarStart, bodyStart, commented } = starts[i]
+    const { dollarStart, bodyStart, commented, label } = starts[i]
     const end = i + 1 < starts.length ? starts[i + 1].dollarStart : code.length
     if (commented) {
-      // Commented `$:` — emit an empty-body track. Body extent is irrelevant
-      // (we don't parse it), but slot-map identity for this position is
-      // preserved so the timeline shows a ghost row in place.
-      tracks.push({ expr: '', offset: bodyStart, dollarStart, end, commented: true })
+      // Commented `$:` / `// name:` — emit an empty-body track. Body extent
+      // is irrelevant (we don't parse it), but slot-map identity for this
+      // position is preserved so the timeline shows a ghost row in place.
+      tracks.push({ expr: '', offset: bodyStart, dollarStart, end, commented: true, label })
       continue
     }
     const slice = code.slice(bodyStart, end)
     // Trailing whitespace can stay — parseExpression handles it. We
     // keep the leading slice intact so offsets line up.
-    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end, commented: false })
+    tracks.push({ expr: slice, offset: bodyStart, dollarStart, end, commented: false, label })
   }
   return tracks
 }

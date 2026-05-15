@@ -52,3 +52,63 @@ real-world Bakery shape. Accepted per the research matrix row
    `let`/`var`)
 
 γ-2 proceeds with this validated guard.
+
+## γ-2: G5 generalized extractTracks + full label→trackId→slot wiring (#138, D-01)
+
+Observed via vitest probe importing parseStrudel/collect from editor SOURCE
+(parity.test.ts style — avoids the `@strudel/core` raw-node ESM issue).
+
+### Full wiring trace (OBSERVED, not inferred)
+
+`parseStrudel('p1: s("bd")\np2: s("hh")')` →
+`Stack[Track(trackId='p1', loc=[{0,12}], body=Play),
+       Track(trackId='p2', loc=[{12,23}], body=Play)]`
+→ `collect` events: `p1`→`dollarPos:0`, `p2`→`dollarPos:12` (DISTINCT,
+equal to label-line start offsets) → MusicalTimeline slotKey `$${pos}`
+distinct `["$0","$11"]`. The label IS the trackId AND the slot is
+source-anchored — exactly D-01. Same `dollarStart`→`collect.ts:447`
+OUTER-WINS→`event.dollarPos`→`$${pos}` mechanism `$:` uses, NOT parallel.
+
+### FLAG-3 interleave (BOTH physical orders)
+
+- b-i `$: s("bd")\np2: s("hh")` → `Track(d1)` (label `$`→`d1`,
+  byte-identical legacy) + `Track(p2)`; `$.dollarStart(0) < p2(11)` ✓
+- b-ii REVERSED `p2: s("hh")\n$: s("bd")` → `Track(p2)` + `Track(d2)`;
+  `p2.dollarStart(0) < $(12)` ✓ — source order preserved either way.
+
+### False-positive guard live
+
+- single-line `{ a: 1 }\np1: s("bd")` → ONLY `p1` Track (`a:` rejected by
+  regex anchor)
+- multi-line `stack({\n a:1\n})\np1: s("bd")` → ONLY `p1` dollarStart 18
+  (`a:` rejected by **depth guard** — the load-bearing case)
+
+### #138 repro before/after
+
+- BEFORE (HEAD parent 9e2a384): `dollarRe = /^[ \t]*(\/\/[ \t]*)?\$:/gm`
+  literal `$:` only → `drum:`/`bass:` never match → `extractTracks` `[]` →
+  `splitRootAndChain` reads `drum` as root → Code-fallback.
+- AFTER: `parseStrudel('drum: s("bd sd")\nbass: note("c2 e2")')` →
+  `Stack[Track('drum', body=Seq), Track('bass', body=Seq)]` structured.
+
+### P67 both directions
+
+- SUCCESS `p1: s("bd sd")` → `Track(p1, body=Seq, via=undefined)` —
+  structured, NOT unparsed blob.
+- BARE-FALLBACK `p1: someUnparseableThing(@@@)` →
+  `Track(p1, body=Code, via=undefined)` — canonical bare-Code shape, NOT
+  half-wrapped, AND still a Track (topology-preserving). Chokepoint
+  honoured in the failure direction.
+
+### RAW consumer (parseStrudelStages) tuple intact
+
+`extractTracks('p1: s("bd")')` →
+`[{expr:'s("bd")', offset:4, dollarStart:0, end:11, commented:false,
+   label:'p1'}]` — `label` APPENDED; `dollarStart`/`end` unshifted (RAW
+consumer reads by field, additive contract held).
+
+### Regression oracle (γ-2)
+
+parity-corpus 34/34 (no churn, zero `-u`) · editor 1564/1564 · timeline
+specs 178/178 (MusicalTimeline.test.tsx 51/51, no flake). Deferred
+trackMeta-by-slotKey re-keying NOT reopened (D-01 scope guard held).
