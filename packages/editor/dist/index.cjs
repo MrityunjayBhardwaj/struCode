@@ -4482,6 +4482,96 @@ function stripParserPrelude(code) {
   }
   return { body: code.slice(i2), offset: i2 };
 }
+function splitTopLevelStatements(body2, baseOffset) {
+  const out2 = [];
+  let depth = 0;
+  let inString = false;
+  let stringChar = "";
+  let escaped = false;
+  let segStart = 0;
+  let i2 = 0;
+  const flush = (end) => {
+    const raw = body2.slice(segStart, end);
+    if (raw.trim().length > 0) {
+      const lead = raw.length - raw.trimStart().length;
+      out2.push({ text: raw.trim(), offset: baseOffset + segStart + lead });
+    }
+    segStart = end + 1;
+  };
+  while (i2 < body2.length) {
+    const ch = body2[i2];
+    if (escaped) {
+      escaped = false;
+      i2++;
+      continue;
+    }
+    if (inString) {
+      if (ch === "\\") escaped = true;
+      else if (ch === stringChar) inString = false;
+      i2++;
+      continue;
+    }
+    if (ch === "/" && body2[i2 + 1] === "/") {
+      while (i2 < body2.length && body2[i2] !== "\n") i2++;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      inString = true;
+      stringChar = ch;
+      i2++;
+      continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") {
+      depth++;
+      i2++;
+      continue;
+    }
+    if (ch === ")" || ch === "]" || ch === "}") {
+      depth--;
+      i2++;
+      continue;
+    }
+    if (depth === 0 && (ch === ";" || ch === "\n")) {
+      flush(i2);
+      i2++;
+      continue;
+    }
+    i2++;
+  }
+  flush(body2.length);
+  return out2;
+}
+var BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/;
+function buildBindingMap(body2, baseOffset) {
+  const stmts = splitTopLevelStatements(body2, baseOffset);
+  if (stmts.length < 2) return null;
+  const bindings = /* @__PURE__ */ new Map();
+  let finalIdx = -1;
+  for (let s = 0; s < stmts.length; s++) {
+    const { text, offset } = stmts[s];
+    const bm = text.match(BINDING_RE);
+    if (!bm) {
+      finalIdx = s;
+      break;
+    }
+    const name2 = bm[1];
+    const rhs = bm[2].trim();
+    if (bindings.has(name2)) return null;
+    const rhsStartInText = text.length - rhs.length;
+    const rhsOffset = offset + rhsStartInText;
+    const rhsIR = parseExpression(rhs, rhsOffset);
+    const rhsIsBareCode = rhsIR.tag === "Code" && rhsIR.via === void 0;
+    if (rhsIsBareCode) return null;
+    bindings.set(name2, rhsIR);
+  }
+  if (finalIdx === -1) return null;
+  if (finalIdx !== stmts.length - 1) return null;
+  return {
+    bindings,
+    finalExpr: stmts[finalIdx].text,
+    finalOffset: stmts[finalIdx].offset
+  };
+}
 function parseStrudel(code) {
   if (!code.trim()) return IR.pure();
   try {
@@ -4493,6 +4583,14 @@ function parseStrudel(code) {
       }
       const bodyTrimStart = stripped.body.search(/\S/);
       const innerOffset = stripped.offset + (bodyTrimStart >= 0 ? bodyTrimStart : 0);
+      const bound = buildBindingMap(stripped.body, stripped.offset);
+      if (bound) {
+        const inner2 = parseExpression(bound.finalExpr, bound.finalOffset, void 0, bound.bindings);
+        const innerIsBareCode = inner2.tag === "Code" && inner2.via === void 0;
+        if (!innerIsBareCode) {
+          return IR.track("d1", inner2);
+        }
+      }
       const inner = parseExpression(stripped.body.trim(), innerOffset);
       return IR.track("d1", inner);
     }
@@ -4607,13 +4705,19 @@ function skipWhitespaceAndLineComments(src, pos) {
   }
   return i2;
 }
-function parseExpression(expr, baseOffset = 0, isSampleKey) {
+function parseExpression(expr, baseOffset = 0, isSampleKey, bindings) {
   if (!expr.trim()) return IR.pure();
+  if (bindings) {
+    const bareId = expr.trim();
+    if (/^[A-Za-z_$][\w$]*$/.test(bareId) && bindings.has(bareId)) {
+      return bindings.get(bareId);
+    }
+  }
   try {
     const leadingWs = expr.length - expr.trimStart().length;
     const trimmedOffset = baseOffset + leadingWs;
     const { root, chain } = splitRootAndChain(expr.trim());
-    const rootIR = parseRoot(root, trimmedOffset, isSampleKey);
+    const rootIR = parseRoot(root, trimmedOffset, isSampleKey, bindings);
     const rootIsBareCode = rootIR.tag === "Code" && rootIR.via === void 0;
     if (rootIsBareCode && !chain.trim()) {
       return IR.code(expr);
@@ -4628,7 +4732,7 @@ function parseExpression(expr, baseOffset = 0, isSampleKey) {
     return IR.code(expr);
   }
 }
-function parseRoot(root, baseOffset = 0, isSampleKey) {
+function parseRoot(root, baseOffset = 0, isSampleKey, bindings) {
   const trimmed = root.trim();
   const leadingWs = root.length - root.trimStart().length;
   const backtickInnerToIR = (inner, isSample, innerOffset) => {
@@ -4706,7 +4810,7 @@ function parseRoot(root, baseOffset = 0, isSampleKey) {
       const innerAbsOffset = baseOffset + leadingWs + innerStartInTrimmed;
       const argsWithOffsets = splitArgsWithOffsets(inner);
       const tracks = argsWithOffsets.map(
-        (a) => parseExpression(a.value, innerAbsOffset + a.offset)
+        (a) => parseExpression(a.value, innerAbsOffset + a.offset, void 0, bindings)
       );
       if (tracks.length === 0) return IR.pure();
       if (tracks.length === 1) return tracks[0];

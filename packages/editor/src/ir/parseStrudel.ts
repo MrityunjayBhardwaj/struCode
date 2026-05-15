@@ -256,6 +256,153 @@ export function stripParserPrelude(code: string): { body: string; offset: number
   return { body: code.slice(i), offset: i }
 }
 
+/**
+ * 20-15 G1 (#134 / D-02) — minimal single-assignment binding map.
+ *
+ * NEW PK16(b) stage 0.5 — runs AFTER prelude-strip (stage 1; prelude still
+ * does NOT skip let/const, pS:~127) and BEFORE splitRootAndChain (stage 2).
+ *
+ * Scope (D-02, the matcher-not-interpreter line — DO NOT cross it):
+ *   - ONLY `let/const/var x = <pattern>` where `x` is a SINGLE identifier
+ *     (destructuring `{a}=`/`[a]=` does not match `[A-Za-z_$]` → returns
+ *     null → caller falls back to whole-program Code).
+ *   - Each name defined EXACTLY ONCE (reassignment/shadowing → null).
+ *   - No use-before-def is enforced at the SUBSTITUTION site (a ref whose
+ *     name is not yet in the map when its arg is resolved → not
+ *     substituted → that arg parses as a bare ident → bare Code → the
+ *     stack arm's existing fallback → whole expression Code; topology
+ *     preserved, never a crash).
+ *   - The RHS is parsed via `parseExpression` and KEEPS its definition-site
+ *     source offsets (R6 — click-to-source lands on the DEFINITION).
+ *   - RHS that itself parses to bare Code → null (the binding is opaque;
+ *     do not pretend it is structured).
+ *
+ * Returns:
+ *   - `null` when the body is NOT a clean "N bindings then one final
+ *     expression" shape, or any D-02 violation → caller MUST fall back to
+ *     the existing whole-program `IR.code(code)` (topology-preserving, one
+ *     Code node — NEVER a throw; the parseStrudel try/catch stays the last
+ *     resort, not the mechanism).
+ *   - `{ bindings, finalExpr, finalOffset }` on success; `bindings` is the
+ *     resolved subtree map, `finalExpr`/`finalOffset` the trailing
+ *     non-binding expression + its absolute offset into ORIGINAL source.
+ */
+function splitTopLevelStatements(
+  body: string,
+  baseOffset: number,
+): { text: string; offset: number }[] {
+  // Split on `;` or newline at depth 0, string/comment aware. REUSE the
+  // lexStateAt walker discipline inline (PV49 spirit) — a statement
+  // boundary is a `;`/`\n` that is at brace/paren/bracket depth 0 and not
+  // inside a string/template/`//` comment.
+  const out: { text: string; offset: number }[] = []
+  let depth = 0
+  let inString = false
+  let stringChar = ''
+  let escaped = false
+  let segStart = 0
+  let i = 0
+  const flush = (end: number): void => {
+    const raw = body.slice(segStart, end)
+    if (raw.trim().length > 0) {
+      const lead = raw.length - raw.trimStart().length
+      out.push({ text: raw.trim(), offset: baseOffset + segStart + lead })
+    }
+    segStart = end + 1
+  }
+  while (i < body.length) {
+    const ch = body[i]
+    if (escaped) {
+      escaped = false
+      i++
+      continue
+    }
+    if (inString) {
+      if (ch === '\\') escaped = true
+      else if (ch === stringChar) inString = false
+      i++
+      continue
+    }
+    if (ch === '/' && body[i + 1] === '/') {
+      while (i < body.length && body[i] !== '\n') i++
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      inString = true
+      stringChar = ch
+      i++
+      continue
+    }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth++
+      i++
+      continue
+    }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      depth--
+      i++
+      continue
+    }
+    if (depth === 0 && (ch === ';' || ch === '\n')) {
+      flush(i)
+      i++
+      continue
+    }
+    i++
+  }
+  flush(body.length)
+  return out
+}
+
+const BINDING_RE = /^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/
+
+function buildBindingMap(
+  body: string,
+  baseOffset: number,
+):
+  | { bindings: ReadonlyMap<string, PatternIR>; finalExpr: string; finalOffset: number }
+  | null {
+  const stmts = splitTopLevelStatements(body, baseOffset)
+  if (stmts.length < 2) return null // need ≥1 binding + 1 final expr
+
+  const bindings = new Map<string, PatternIR>()
+  let finalIdx = -1
+  for (let s = 0; s < stmts.length; s++) {
+    const { text, offset } = stmts[s]
+    const bm = text.match(BINDING_RE)
+    if (!bm) {
+      // First non-binding statement is the final expression. Anything
+      // AFTER it (a trailing binding) makes this not a clean
+      // "bindings then expr" shape → D-02 fallback.
+      finalIdx = s
+      break
+    }
+    const name = bm[1]
+    const rhs = bm[2].trim()
+    // D-02: reassignment / shadowing (duplicate name) → fallback.
+    if (bindings.has(name)) return null
+    // RHS absolute offset = statement offset + (where rhs starts in text).
+    const rhsStartInText = text.length - rhs.length // bm[2] was end-anchored, then trimmed
+    const rhsOffset = offset + rhsStartInText
+    const rhsIR = parseExpression(rhs, rhsOffset)
+    const rhsIsBareCode =
+      rhsIR.tag === 'Code' && (rhsIR as { via?: unknown }).via === undefined
+    // D-02: an RHS that itself parses to bare Code is opaque — do not
+    // pretend the binding is structured. Whole-program fallback.
+    if (rhsIsBareCode) return null
+    bindings.set(name, rhsIR)
+  }
+  if (finalIdx === -1) return null // all statements were bindings, no final expr
+  // Everything AFTER finalIdx must NOT exist (no trailing bindings /
+  // multiple final expressions — keep the shape strictly "bindings*, expr").
+  if (finalIdx !== stmts.length - 1) return null
+  return {
+    bindings,
+    finalExpr: stmts[finalIdx].text,
+    finalOffset: stmts[finalIdx].offset,
+  }
+}
+
 /** Parse a Strudel code string. Always returns a tree (Code node for unsupported). */
 export function parseStrudel(code: string): PatternIR {
   if (!code.trim()) return IR.pure()
@@ -294,6 +441,29 @@ export function parseStrudel(code: string): PatternIR {
       }
       const bodyTrimStart = stripped.body.search(/\S/)
       const innerOffset = stripped.offset + (bodyTrimStart >= 0 ? bodyTrimStart : 0)
+      // 20-15 G1 (#134 / D-02) — NEW PK16(b) stage 0.5: try the minimal
+      // single-assignment binding map. Only the clean
+      // `let p1=… / let p2=… / stack(p1,p2)` shape (R4 partial — the
+      // measured 2/10 Bakery case). buildBindingMap returns null on ANY
+      // D-02 violation (reassignment / shadowing / opaque RHS / not a
+      // "bindings* then one expr" shape) → fall through to the existing
+      // whole-program parse below (topology-preserving; use-before-def is
+      // handled at the substitution site, never a throw).
+      const bound = buildBindingMap(stripped.body, stripped.offset)
+      if (bound) {
+        const inner = parseExpression(bound.finalExpr, bound.finalOffset, undefined, bound.bindings)
+        // P67: if the final expression resolved to bare Code (the binding
+        // map did not help — e.g. a non-stack final expr), keep the
+        // existing whole-program fallback shape rather than wrapping a
+        // bare-Code body in a Track. Otherwise the substituted subtrees
+        // are real structured IR flowing through the pS:~620 chokepoint.
+        const innerIsBareCode =
+          inner.tag === 'Code' && (inner as { via?: unknown }).via === undefined
+        if (!innerIsBareCode) {
+          return IR.track('d1', inner)
+        }
+        // else: fall through to the plain parse (whole-program Code).
+      }
       const inner = parseExpression(stripped.body.trim(), innerOffset)
       return IR.track('d1', inner)
     }
@@ -594,8 +764,24 @@ export function parseExpression(
   // lost otherwise); note/n/mini stay false. `undefined` = unchanged
   // pre-β-2 behavior (the bare-string arm's own default of false).
   isSampleKey?: boolean,
+  // 20-15 G1 (#134 / D-02) — when set, a bare-identifier stack arg that
+  // matches a key is substituted with the bound (definition-site) subtree.
+  // `undefined` = no binding map (every call site except the no-`$:`
+  // G1 entry). Threaded ONLY parseExpression → parseRoot → stack-arg.
+  bindings?: ReadonlyMap<string, PatternIR>,
 ): PatternIR {
   if (!expr.trim()) return IR.pure()
+
+  // 20-15 G1 — if the WHOLE expression is a bare identifier bound in the
+  // map, substitute its subtree directly (covers the single-arg
+  // `stack(p1)` path which unwraps to one arg before reaching here, and
+  // any bare-ident root). Definition-site loc preserved (R6).
+  if (bindings) {
+    const bareId = expr.trim()
+    if (/^[A-Za-z_$][\w$]*$/.test(bareId) && bindings.has(bareId)) {
+      return bindings.get(bareId) as PatternIR
+    }
+  }
 
   try {
     // Compute the offset of `expr.trim()[0]` within `code` so the
@@ -615,7 +801,7 @@ export function parseExpression(
     // those wrappers as opaque and discarded the entire structure — surfaces
     // for `stack(single-arg-with-unmapped-pattern-chain)` shapes such as
     // `stack(s("bd").delay("<0 .5>")...).sometimes(...)` in delay.strudel.
-    const rootIR = parseRoot(root, trimmedOffset, isSampleKey)
+    const rootIR = parseRoot(root, trimmedOffset, isSampleKey, bindings)
     const rootIsBareCode =
       rootIR.tag === 'Code' && (rootIR as { via?: unknown }).via === undefined
     if (rootIsBareCode && !chain.trim()) {
@@ -656,6 +842,11 @@ export function parseRoot(
   // the loose recursive arm so `s("bd".jux(rev))`'s inner `"bd"` parses
   // with sample semantics (β-1 probe resolution).
   isSampleKey?: boolean,
+  // 20-15 G1 (#134 / D-02) — binding map threaded to the stack-arg loop
+  // so a bare-identifier arg matching a key substitutes the bound subtree
+  // (the cleanest hook per research R4). `undefined` everywhere except the
+  // no-`$:` G1 entry.
+  bindings?: ReadonlyMap<string, PatternIR>,
 ): PatternIR {
   const trimmed = root.trim()
   const leadingWs = root.length - root.trimStart().length
@@ -801,8 +992,15 @@ export function parseRoot(
       const innerStartInTrimmed = stackKwIdx + 'stack('.length
       const innerAbsOffset = baseOffset + leadingWs + innerStartInTrimmed
       const argsWithOffsets = splitArgsWithOffsets(inner)
+      // 20-15 G1 (#134 / D-02) — thread the binding map so a bare-ident
+      // arg (`stack(p1, p2)`) substitutes the bound subtree at THIS
+      // insertion point (the cleanest hook per R4). A ref whose name is
+      // NOT in the map (use-before-def, undefined ident) is NOT
+      // substituted → parses as a bare ident → bare Code → the
+      // whole-expression Code fallback (D-02 topology-preserving, no
+      // throw). Substituted subtrees keep definition-site loc (R6).
       const tracks = argsWithOffsets.map((a) =>
-        parseExpression(a.value, innerAbsOffset + a.offset),
+        parseExpression(a.value, innerAbsOffset + a.offset, undefined, bindings),
       )
       if (tracks.length === 0) return IR.pure()
       if (tracks.length === 1) return tracks[0]

@@ -112,3 +112,43 @@ consumer reads by field, additive contract held).
 parity-corpus 34/34 (no churn, zero `-u`) · editor 1564/1564 · timeline
 specs 178/178 (MusicalTimeline.test.tsx 51/51, no flake). Deferred
 trackMeta-by-slotKey re-keying NOT reopened (D-01 scope guard held).
+
+## γ-3: G1 minimal stack()-of-bare-idents binding partial (#134, D-02)
+
+NEW PK16(b) stage 0.5 (`buildBindingMap`) — AFTER prelude-strip, BEFORE
+splitRootAndChain. Splits top-level statements (depth/string-aware,
+lexStateAt-discipline reuse), matches
+`^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$`, parses each
+RHS via parseExpression (definition-site loc, R6), threads a
+`ReadonlyMap<string,PatternIR>` parseExpression→parseRoot→stack-arg.
+
+### D-02 boundary PROVEN (observed via vitest source-import probe)
+
+| Case | Result | Verdict |
+|---|---|---|
+| (a) `let p1=n("0 2").s("piano")\nstack(p1)` | `Track(d1, Param)` structured, threw=false | ✓ structured |
+| (b) #134 `let p1=…\nlet p2=…\nstack(p1,p2)` | `Track(d1, Stack[Param, Seq])` structured | ✓ #134 closed |
+| (c) use-before-def `stack(p1)\nlet p1=n("0")` | `Track(d1, Code)` bareCode, threw=false | ✓ graceful Code |
+| (d) reassignment `let p1=…\nlet p1=…` | `Track(d1, Code)` bareCode, threw=false | ✓ graceful Code |
+| (e) `const p1=s("bd")\nstack(p1)` | `Track(d1, Play)` structured | ✓ structured |
+| (f) destructuring `let {a}=foo` | `Track(d1, Code)` bareCode, threw=false | ✓ graceful Code |
+| (g) arrow-fn rhs `let f=(x)=>x.fast(2)` | `Track(d1, Code)` bareCode, threw=false | ✓ graceful Code |
+| (h) opaque rhs `let p1=someUnknownThing(@@)` | `Track(d1, Code)` bareCode, threw=false | ✓ graceful Code |
+| P67 | (a) substituted subtree tag=Param, via=undefined, isBareCode=false | ✓ structured IR |
+
+Every D-02 violation → graceful single Code node, NEVER a throw, NEVER
+partial-eval. Matcher-not-interpreter line held exactly.
+
+### #134 before/after
+
+- BEFORE (9e2a384): no buildBindingMap; `let/const` NOT prelude-stripped
+  (pS comment) → `splitRootAndChain` reads `let` as root → whole-program
+  Code-fallback.
+- AFTER: `let p1=n("0 2").s("piano")\nlet p2=s("bd hh")\nstack(p1,p2)` →
+  `Track(d1, Stack[Param, Seq])` structured.
+
+### Regression oracle (γ-3)
+
+parity-corpus 34/34 (no churn, zero `-u` — no corpus tune uses top-level
+let/const; buildBindingMap returns null and falls through) · editor
+1564/1564 · timeline specs 178/178 (no flake).
